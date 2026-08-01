@@ -94,6 +94,26 @@ describe('Penguncian akun', () => {
   });
 });
 
+describe('Penyajian berkas statis', () => {
+  test('rute aplikasi dilayani kerangka halaman', async () => {
+    const r = await fetch(`${asal}/anggota/12`);
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('content-type'), /text\/html/);
+  });
+
+  test('berkas yang tidak ada menjawab 404, bukan HTML bersandi 200', async () => {
+    for (const jalur of ['/ecms.db', '/.env', '/js/tidak-ada.js', '/gaya-hilang.css']) {
+      const r = await fetch(`${asal}${jalur}`);
+      assert.equal(r.status, 404, `${jalur} seharusnya 404`);
+    }
+  });
+
+  test('naik folder tidak dapat keluar dari direktori publik', async () => {
+    const r = await fetch(`${asal}/../server/db.js`);
+    assert.ok(r.status >= 400, `seharusnya ditolak, bukan ${r.status}`);
+  });
+});
+
 describe('Akun contoh pada halaman masuk', () => {
   test('tidak diumumkan bila kata sandi administrator ditentukan sendiri', async () => {
     const info = await (await fetch(`${asal}/api/info`)).json();

@@ -211,12 +211,12 @@ tersebut yang masih hidup.
 npm test
 ```
 
-45 uji otomatis mencakup: penolakan jurnal tidak seimbang, penyaringan periode
+48 uji otomatis mencakup: penolakan jurnal tidak seimbang, penyaringan periode
 laporan, persamaan akuntansi (aset = kewajiban + ekuitas), kesamaan total arus
 kas dengan mutasi kas sesungguhnya, netralisasi jurnal balik, penguncian periode,
 ketepatan amortisasi flat/menurun/anuitas, aturan simpanan, siklus pinjaman,
 klasifikasi kolektibilitas, HPP rata-rata bergerak, alokasi SHU, serta ambang dan
-kedaluwarsa penguncian akun.
+kedaluwarsa penguncian akun, serta penyajian berkas statis.
 
 ---
 

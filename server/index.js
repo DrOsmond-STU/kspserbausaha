@@ -69,7 +69,20 @@ async function sajikanStatis(req, res, pathname) {
     const info = await stat(file);
     if (info.isDirectory()) file = join(file, 'index.html');
   } catch {
-    // SPA fallback: seluruh rute non-API dilayani index.html
+    // Rute aplikasi dilayani index.html supaya penyegaran halaman di tengah
+    // navigasi tetap bekerja. Permintaan yang jelas-jelas menyebut nama berkas
+    // tidak ikut: aset yang hilang harus menjawab 404 yang jujur, bukan HTML
+    // yang menyamar sebagai skrip atau gaya dan menghasilkan galat MIME yang
+    // menyesatkan saat ditelusuri.
+    //
+    // Nama berawalan titik (.env, .git) diperiksa terpisah karena extname()
+    // menganggapnya tanpa ekstensi - tanpa ini justru berkas yang paling sering
+    // diintip pemindai otomatis yang lolos menjadi jawaban 200.
+    const namaBerkas = bersih.slice(bersih.lastIndexOf('/') + 1);
+    if (extname(namaBerkas) || namaBerkas.startsWith('.')) {
+      sendText(res, 404, 'Berkas tidak ditemukan');
+      return;
+    }
     file = join(PUBLIC_DIR, 'index.html');
   }
   try {
