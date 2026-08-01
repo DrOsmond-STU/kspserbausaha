@@ -97,7 +97,7 @@ async function detail(id) {
     { judul: 'Sisa', angka: true, render: (d) => el(d.qty - d.qty_diterima > 0 ? 'span.neg' : 'span.samar',
       desimal(d.qty - d.qty_diterima)) },
     { judul: 'Harga', angka: true, render: (d) => rp(d.harga) },
-    { judul: 'Subtotal', angka: true, render: (d) => el('strong', rp(d.subtotal)) },
+    { judul: 'Subtotal', kunci: 'subtotal', angka: true, render: (d) => el('strong', rp(d.subtotal)) },
   ], p.detail, {
     kaki: { nama: 'TOTAL', subtotal: rp(p.total) },
   })));

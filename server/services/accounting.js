@@ -180,6 +180,12 @@ const WHERE_POSTED = "j.status IN ('posted','void')";
 function filterSql(f = {}) {
   const w = [WHERE_POSTED];
   const p = [];
+  // Jurnal penutup memindahkan seluruh saldo pendapatan dan beban ke ekuitas.
+  // Untuk laporan posisi keuangan pemindahan itu memang harus ikut terhitung,
+  // tetapi untuk laporan hasil usaha tidak: kalau ikut, tahun buku yang sudah
+  // ditutup akan tersaji berpendapatan nol dan berbeban nol - dan seluruh
+  // turunannya (rasio, realisasi anggaran, dasar pembagian SHU) ikut nol.
+  if (f.tanpa_penutup) w.push("j.tipe <> 'penutup'");
   if (f.dari) { w.push('j.tanggal >= ?'); p.push(f.dari); }
   if (f.sampai) { w.push('j.tanggal <= ?'); p.push(f.sampai); }
   if (f.cabang_id) { w.push('COALESCE(d.cabang_id, j.cabang_id) = ?'); p.push(Number(f.cabang_id)); }
@@ -268,9 +274,15 @@ const prevDay = (d) => {
   return t.toISOString().slice(0, 10);
 };
 
-/** Laporan Laba Rugi (Perhitungan Hasil Usaha). */
+/**
+ * Laporan Laba Rugi (Perhitungan Hasil Usaha).
+ *
+ * Jurnal penutup selalu dikeluarkan: yang ingin dibaca adalah hasil usaha
+ * periode tersebut, bukan sisa saldo akun nominal sesudah dipindahkan ke
+ * ekuitas. Tanpa ini, laporan tahun buku yang sudah ditutup akan nol.
+ */
 export function labaRugi(f = {}) {
-  const tb = trialBalance(f);
+  const tb = trialBalance({ ...f, tanpa_penutup: true });
   const pendapatan = tb.baris.filter((r) => r.tipe === 'pendapatan');
   const beban = tb.baris.filter((r) => r.tipe === 'beban');
   const totalPendapatan = pendapatan.reduce((s, r) => s + r.saldo, 0);
@@ -290,6 +302,23 @@ export function labaRugi(f = {}) {
   };
 }
 
+/**
+ * Nilai hasil usaha satu tahun buku yang sudah dipindahkan ke akun SHU Tahun
+ * Berjalan melalui jurnal penutup, sampai dengan tanggal tertentu.
+ */
+function labaDipindahKeEkuitas(tahun, sampai, f = {}) {
+  const { where, params } = filterSql({
+    dari: `${tahun}-01-01`, sampai, cabang_id: f.cabang_id, unit_usaha_id: f.unit_usaha_id,
+  });
+  const row = get(
+    `SELECT COALESCE(SUM(d.kredit), 0) - COALESCE(SUM(d.debit), 0) AS n
+       FROM jurnal_detail d JOIN jurnal j ON j.id = d.jurnal_id
+      WHERE ${where} AND j.tipe = 'penutup' AND d.coa_kode = ?`,
+    [...params, AKUN.shu_berjalan()],
+  );
+  return row?.n || 0;
+}
+
 /** Neraca (Laporan Posisi Keuangan). */
 export function neraca(f = {}) {
   const sampai = f.sampai || new Date().toISOString().slice(0, 10);
@@ -300,9 +329,15 @@ export function neraca(f = {}) {
   const totalAset = aset.reduce((s, r) => s + r.saldo, 0);
   const totalKewajiban = kewajiban.reduce((s, r) => s + r.saldo, 0);
   const totalEkuitasTercatat = ekuitas.reduce((s, r) => s + r.saldo, 0);
-  // SHU berjalan tahun ini (belum ditutup ke ekuitas) menjadi bagian ekuitas
+
+  // Hasil usaha tahun berjalan adalah bagian dari ekuitas walaupun belum
+  // dipindahkan lewat jurnal penutup. Begitu jurnal penutup dibuat, nilainya
+  // sudah duduk pada akun SHU Tahun Berjalan dan ikut terhitung pada
+  // totalEkuitasTercatat - karena itu bagian yang sudah dipindahkan dikurangkan
+  // kembali, supaya tidak terhitung dua kali dan neraca tetap seimbang.
   const lr = labaRugi({ ...f, dari: `${sampai.slice(0, 4)}-01-01`, sampai });
-  const totalEkuitas = totalEkuitasTercatat + lr.shu_bersih;
+  const sudahDitutup = labaDipindahKeEkuitas(sampai.slice(0, 4), sampai, f);
+  const totalEkuitas = totalEkuitasTercatat + lr.shu_bersih - sudahDitutup;
   return {
     per_tanggal: sampai,
     aset, kewajiban, ekuitas,
@@ -417,12 +452,15 @@ export function perubahanEkuitas(f = {}) {
     return { ...a, saldo_awal: awal, penambahan: mut.kredit, pengurangan: mut.debit, saldo_akhir: awal + mut.saldo };
   });
   const lr = labaRugi({ dari, sampai });
+  // Sama seperti pada neraca: bagian hasil usaha yang sudah dipindahkan ke
+  // ekuitas lewat jurnal penutup tidak boleh dijumlahkan dua kali.
+  const sudahDitutup = labaDipindahKeEkuitas(dari.slice(0, 4), sampai);
   return {
     periode: { dari, sampai },
     baris,
     shu_periode_berjalan: lr.shu_bersih,
     total_awal: baris.reduce((s, r) => s + r.saldo_awal, 0),
-    total_akhir: baris.reduce((s, r) => s + r.saldo_akhir, 0) + lr.shu_bersih,
+    total_akhir: baris.reduce((s, r) => s + r.saldo_akhir, 0) + lr.shu_bersih - sudahDitutup,
   };
 }
 
@@ -502,7 +540,9 @@ export function jurnalPenutup(tahun, ctx) {
     [`penutup:${tahun}`]);
   if (sudah) throw conflict(`Jurnal penutup tahun ${tahun} sudah pernah dibuat`);
 
-  const tb = trialBalance({ dari, sampai });
+  // Jurnal penutup sebelumnya dikeluarkan agar penutupan ulang - misalnya
+  // sesudah jurnal penutup lama dibatalkan - tidak menutup saldo yang sama dua kali.
+  const tb = trialBalance({ dari, sampai, tanpa_penutup: true });
   const lines = [];
   let laba = 0;
   for (const r of tb.baris) {

@@ -88,7 +88,7 @@ async function lihat(id) {
         { judul: 'Qty', angka: true, render: (d) => `${desimal(d.qty)} ${d.satuan}` },
         { judul: 'Harga', angka: true, render: (d) => rp(d.harga) },
         { judul: 'Diskon', angka: true, render: (d) => (d.diskon ? rp(d.diskon) : '-') },
-        { judul: 'Subtotal', angka: true, render: (d) => el('strong', rp(d.subtotal)) },
+        { judul: 'Subtotal', kunci: 'subtotal', angka: true, render: (d) => el('strong', rp(d.subtotal)) },
       ], p.detail, {
         kaki: { nama: 'TOTAL', subtotal: rp(p.total) },
       })]),

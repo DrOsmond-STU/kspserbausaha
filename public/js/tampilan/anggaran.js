@@ -70,8 +70,8 @@ async function realisasi(id) {
     { judul: 'Kode', render: (r) => el('span.mono.kecil', r.coa_kode) },
     { judul: 'Akun', kunci: 'akun_nama' },
     { judul: 'Tipe', render: (r) => judul(r.tipe) },
-    { judul: 'Anggaran', angka: true, render: (r) => rp(r.anggaran) },
-    { judul: 'Realisasi', angka: true, render: (r) => rp(r.realisasi) },
+    { judul: 'Anggaran', kunci: 'anggaran', angka: true, render: (r) => rp(r.anggaran) },
+    { judul: 'Realisasi', kunci: 'realisasi', angka: true, render: (r) => rp(r.realisasi) },
     { judul: 'Selisih', angka: true, render: (r) => el(r.selisih >= 0 ? 'span.pos' : 'span.neg', rp(r.selisih)) },
     { judul: 'Capaian', render: (r) => el('div', { gaya: { minWidth: '120px' } }, [
       el('div.kecil', persen(r.persen_realisasi)),

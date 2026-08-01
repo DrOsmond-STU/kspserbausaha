@@ -187,10 +187,10 @@ const GAMBAR = {
   'perubahan-ekuitas': (d) => panelTabel('Laporan Perubahan Ekuitas', tabel([
     { judul: 'Akun', render: (r) => el('span.mono.kecil', r.kode) },
     { judul: 'Uraian', kunci: 'nama' },
-    { judul: 'Saldo Awal', angka: true, render: (r) => rp(r.saldo_awal) },
+    { judul: 'Saldo Awal', kunci: 'saldo_awal', angka: true, render: (r) => rp(r.saldo_awal) },
     { judul: 'Penambahan', angka: true, render: (r) => el('span.pos', rp(r.penambahan)) },
     { judul: 'Pengurangan', angka: true, render: (r) => el('span.neg', rp(r.pengurangan)) },
-    { judul: 'Saldo Akhir', angka: true, render: (r) => el('strong', rp(r.saldo_akhir)) },
+    { judul: 'Saldo Akhir', kunci: 'saldo_akhir', angka: true, render: (r) => el('strong', rp(r.saldo_akhir)) },
   ], [...d.baris, { kode: '', nama: 'SHU Periode Berjalan', saldo_awal: 0,
     penambahan: d.shu_periode_berjalan, pengurangan: 0, saldo_akhir: d.shu_periode_berjalan }], {
     kaki: { nama: 'TOTAL EKUITAS', saldo_awal: rp(d.total_awal), saldo_akhir: rp(d.total_akhir) },
@@ -200,8 +200,8 @@ const GAMBAR = {
     { judul: 'Kode', render: (r) => el('span.mono.kecil', r.kode) },
     { judul: 'Nama Akun', kunci: 'nama' },
     { judul: 'Tipe', render: (r) => judul(r.tipe) },
-    { judul: 'Mutasi Debit', angka: true, render: (r) => rp(r.debit) },
-    { judul: 'Mutasi Kredit', angka: true, render: (r) => rp(r.kredit) },
+    { judul: 'Mutasi Debit', kunci: 'debit', angka: true, render: (r) => rp(r.debit) },
+    { judul: 'Mutasi Kredit', kunci: 'kredit', angka: true, render: (r) => rp(r.kredit) },
     { judul: 'Saldo', angka: true, render: (r) => el('strong', rp(r.saldo)) },
   ], d.baris, {
     kaki: { nama: 'TOTAL', debit: rp(d.total_debit), kredit: rp(d.total_kredit) },

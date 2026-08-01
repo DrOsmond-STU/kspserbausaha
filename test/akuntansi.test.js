@@ -143,6 +143,45 @@ describe('Pembatalan jurnal', () => {
   });
 });
 
+describe('Tutup buku tahunan', () => {
+  // Tahun 2024 dipakai supaya tidak bertabrakan dengan data uji tahun lain.
+  before(() => {
+    acc.postJournal({
+      tanggal: '2024-04-10', keterangan: 'penjualan tahun 2024',
+      lines: [{ coa_kode: '1-1101', debit: 40_000_000 }, { coa_kode: '4-1101', kredit: 40_000_000 }],
+    });
+    acc.postJournal({
+      tanggal: '2024-06-20', keterangan: 'beban tahun 2024',
+      lines: [{ coa_kode: '5-2201', debit: 15_000_000 }, { coa_kode: '1-1101', kredit: 15_000_000 }],
+    });
+  });
+
+  test('laba rugi tahun yang sudah ditutup tetap menampilkan hasil usahanya', () => {
+    const sebelum = acc.labaRugi({ dari: '2024-01-01', sampai: '2024-12-31' });
+    assert.equal(sebelum.total_pendapatan, 40_000_000);
+    assert.equal(sebelum.shu_bersih, 25_000_000);
+
+    acc.jurnalPenutup(2024, null);
+
+    // Inti perbaikan: jurnal penutup memindahkan saldo nominal ke ekuitas,
+    // tetapi laporan hasil usaha tahun itu tidak boleh ikut menjadi nol.
+    const sesudah = acc.labaRugi({ dari: '2024-01-01', sampai: '2024-12-31' });
+    assert.equal(sesudah.total_pendapatan, 40_000_000, 'pendapatan tetap terbaca sesudah tutup buku');
+    assert.equal(sesudah.total_beban, 15_000_000, 'beban tetap terbaca sesudah tutup buku');
+    assert.equal(sesudah.shu_bersih, 25_000_000, 'SHU tahun buku tetap terbaca sesudah tutup buku');
+  });
+
+  test('hasil usaha yang sudah ditutup tidak terhitung dua kali pada neraca', () => {
+    const n = acc.neraca({ sampai: '2024-12-31' });
+    assert.equal(n.seimbang, true, 'neraca tetap seimbang sesudah tutup buku');
+    assert.equal(n.selisih, 0);
+  });
+
+  test('menolak penutupan tahun yang sama dua kali', () => {
+    assert.throws(() => acc.jurnalPenutup(2024, null), /sudah pernah dibuat/i);
+  });
+});
+
 describe('Penutupan periode', () => {
   test('menolak posting pada periode yang sudah ditutup', () => {
     acc.tutupPeriode(2025, 12, null);

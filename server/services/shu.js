@@ -23,6 +23,32 @@ export const KOMPONEN = [
   { kode: 'dana_pembangunan', nama: 'Dana Pembangunan Daerah Kerja', default: 2, coa: () => setting('coa.dana_pembangunan', '2-1406') },
 ];
 
+/**
+ * Menyesuaikan pembulatan agar sekumpulan nominal berjumlah persis `target`.
+ *
+ * Pembagian menurut persentase selalu menyisakan pecahan rupiah. Bila selisih
+ * itu dibiarkan, jurnal yang menyandingkan total dengan rinciannya akan ditolak
+ * karena tidak seimbang. Selisih dititipkan pada baris bernominal terbesar -
+ * dampaknya paling kecil secara relatif dan tidak pernah membuat baris menjadi
+ * negatif.
+ *
+ * @param {Array<{nominal:number}>} baris diubah di tempat
+ */
+function seimbangkan(baris, target, kunci = 'nominal') {
+  if (!baris.length) return baris;
+  const selisih = target - baris.reduce((s, b) => s + b[kunci], 0);
+  if (selisih === 0) return baris;
+  // Bila seluruh baris masih nol - misalnya SHU yang begitu kecil sehingga
+  // setiap komponen membulat ke nol - selisih dititipkan pada baris pertama,
+  // yang menurut urutan KOMPONEN adalah dana cadangan.
+  const berisi = baris.filter((b) => b[kunci] !== 0);
+  const sasaran = berisi.length
+    ? berisi.reduce((a, b) => (Math.abs(b[kunci]) > Math.abs(a[kunci]) ? b : a))
+    : baris[0];
+  sasaran[kunci] += selisih;
+  return baris;
+}
+
 export function persentaseAlokasi() {
   return KOMPONEN.map((k) => ({
     ...k, persentase: settingNum(`shu.${k.kode}`, k.default),
@@ -93,6 +119,12 @@ export function simulasi(tahun, shuOverride = null) {
     komponen: a.kode, nama: a.nama, persentase: a.persentase,
     nominal: rupiah(shuBersih * a.persentase / 100), coa_kode: a.coa(),
   }));
+  // Setiap komponen dibulatkan ke rupiah penuh, sehingga jumlahnya dapat
+  // meleset beberapa rupiah dari SHU bersih. Selisih itu dibebankan ke
+  // komponen terbesar - tanpa langkah ini jurnal pengesahan SHU tidak akan
+  // pernah seimbang dan pembagian gagal diposting.
+  seimbangkan(rincianAlokasi, shuBersih);
+
   const poolModal = rincianAlokasi.find((a) => a.komponen === 'jasa_modal')?.nominal || 0;
   const poolUsaha = rincianAlokasi.find((a) => a.komponen === 'jasa_usaha')?.nominal || 0;
 
@@ -117,6 +149,13 @@ export function simulasi(tahun, shuOverride = null) {
       shu_jasa_modal: jm, shu_jasa_usaha: ju, shu_total: jm + ju,
     };
   }).filter((r) => r.shu_total > 0 || r.simpanan_rata > 0);
+
+  // Pembulatan per anggota juga disesuaikan supaya jumlah yang dibagikan persis
+  // sama dengan pool jasa modal dan jasa usaha. Bila tidak, akun "SHU Yang Akan
+  // Dibagikan" menyisakan saldo receh yang tidak pernah bisa dinolkan.
+  seimbangkan(perAnggota, poolModal, 'shu_jasa_modal');
+  seimbangkan(perAnggota, poolUsaha, 'shu_jasa_usaha');
+  for (const r of perAnggota) r.shu_total = r.shu_jasa_modal + r.shu_jasa_usaha;
 
   return {
     tahun,

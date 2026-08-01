@@ -182,14 +182,14 @@ async function usahaTab() {
       panelTabel('Nilai Persediaan', tabel([
         { judul: 'Barang', kunci: 'nama' },
         { judul: 'Stok', angka: true, render: (b) => desimal(b.qty) },
-        { judul: 'Nilai', angka: true, render: (b) => rp(b.nilai) },
+        { judul: 'Nilai', kunci: 'nilai', angka: true, render: (b) => rp(b.nilai) },
       ], d.persediaan.baris.slice(0, 10), {
         kaki: { nama: 'TOTAL', nilai: rp(d.persediaan.total_nilai) },
       })),
       panelTabel('Aset Tetap per Kategori', tabel([
-        { judul: 'Kategori', render: (a) => judul(a.kategori || '-') },
+        { judul: 'Kategori', kunci: 'kategori', render: (a) => judul(a.kategori || '-') },
         { judul: 'Unit', angka: true, render: (a) => angka(a.jumlah) },
-        { judul: 'Nilai Buku', angka: true, render: (a) => rp(a.nilai_buku) },
+        { judul: 'Nilai Buku', kunci: 'nilai_buku', angka: true, render: (a) => rp(a.nilai_buku) },
       ], d.aset.per_kategori, {
         kaki: { kategori: 'TOTAL', nilai_buku: rp(d.aset.total_nilai_buku) },
       })),

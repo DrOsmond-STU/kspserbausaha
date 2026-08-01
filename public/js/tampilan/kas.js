@@ -46,7 +46,7 @@ async function transaksiTab() {
     { judul: 'Jenis', render: (b) => (b.is_kas ? 'Kas' : 'Bank') },
     { judul: 'Penerimaan', angka: true, render: (b) => rp(b.debit) },
     { judul: 'Pengeluaran', angka: true, render: (b) => rp(b.kredit) },
-    { judul: 'Saldo', angka: true, render: (b) => el('strong', rp(b.saldo)) },
+    { judul: 'Saldo', kunci: 'saldo', angka: true, render: (b) => el('strong', rp(b.saldo)) },
   ], posisi.baris, { kaki: { nama: 'TOTAL', saldo: rp(posisi.total) } })));
 
   const daftar = el('div');

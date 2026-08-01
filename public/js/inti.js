@@ -51,9 +51,13 @@ export function el(tag, props = {}, anak = []) {
   }
   if (kelas.length) node.className = kelas.join(' ');
 
-  if (props && (Array.isArray(props) || props instanceof Node || typeof props === 'string')) {
-    anak = props; props = {};
-  }
+  // Argumen kedua boleh berupa properti ATAU langsung anak. Yang dianggap
+  // properti hanyalah objek biasa; selain itu - teks, ANGKA, senarai, simpul -
+  // diperlakukan sebagai anak. Sebelumnya angka luput dari pemeriksaan sehingga
+  // el('td', 2025) menghasilkan sel kosong tanpa peringatan apa pun.
+  const propsPolos = props === null || props === undefined
+    || (typeof props === 'object' && !Array.isArray(props) && !(props instanceof Node));
+  if (!propsPolos) { anak = props; props = {}; }
   for (const [k, v] of Object.entries(props || {})) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') node.className = `${node.className} ${v}`.trim();

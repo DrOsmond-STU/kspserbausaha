@@ -97,8 +97,8 @@ async function detailJurnal(id) {
     { judul: 'Akun', render: (d) => el('span.mono.kecil', d.coa_kode) },
     { judul: 'Nama Akun', kunci: 'akun_nama' },
     { judul: 'Keterangan', render: (d) => el('span.kecil.lembut', d.keterangan || '-') },
-    { judul: 'Debit', angka: true, render: (d) => (d.debit ? rp(d.debit) : '-') },
-    { judul: 'Kredit', angka: true, render: (d) => (d.kredit ? rp(d.kredit) : '-') },
+    { judul: 'Debit', kunci: 'debit', angka: true, render: (d) => (d.debit ? rp(d.debit) : '-') },
+    { judul: 'Kredit', kunci: 'kredit', angka: true, render: (d) => (d.kredit ? rp(d.kredit) : '-') },
   ], j.detail, {
     kaki: { akun_nama: 'TOTAL', debit: rp(j.total_debit), kredit: rp(j.total_kredit) },
   })));

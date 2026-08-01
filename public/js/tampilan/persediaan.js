@@ -64,7 +64,7 @@ async function stokTab() {
     { judul: 'Barang', kunci: 'nama' },
     { judul: 'Stok', angka: true, render: (b) => `${desimal(b.qty)} ${b.satuan}` },
     { judul: 'HPP Rata-rata', angka: true, render: (b) => rp(b.harga_beli) },
-    { judul: 'Nilai', angka: true, render: (b) => el('strong', rp(b.nilai)) },
+    { judul: 'Nilai', kunci: 'nilai', angka: true, render: (b) => el('strong', rp(b.nilai)) },
     { judul: 'Status', render: (b) => el(`span.lencana-status.${WARNA_STOK[b.status_stok]}`, judul(b.status_stok)) },
   ], d.baris, { kaki: { nama: 'TOTAL NILAI PERSEDIAAN', nilai: rp(d.total_nilai) } }), [
     izin('persediaan.update') && el('button.btn', { onclick: () => formPenyesuaian() }, '± Penyesuaian Stok'),

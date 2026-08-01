@@ -23,7 +23,7 @@ export async function render(param) {
 
   wadah.append(panelTabel('Alokasi SHU sesuai AD/ART', tabel([
     { judul: 'Komponen', kunci: 'nama' },
-    { judul: 'Persentase', angka: true, render: (a) => persen(a.persentase) },
+    { judul: 'Persentase', kunci: 'persentase', angka: true, render: (a) => persen(a.persentase) },
   ], d.alokasi_default, {
     kaki: { nama: 'TOTAL', persentase: persen(d.alokasi_default.reduce((s, a) => s + a.persentase, 0)) },
   })));
@@ -99,7 +99,7 @@ function tampilSimulasi(h) {
       { judul: 'Nilai Transaksi', angka: true, render: (a) => rp(a.nilai_transaksi) },
       { judul: 'Jasa Modal', angka: true, render: (a) => rp(a.shu_jasa_modal) },
       { judul: 'Jasa Usaha', angka: true, render: (a) => rp(a.shu_jasa_usaha) },
-      { judul: 'Total SHU', angka: true, render: (a) => el('strong.pos', rp(a.shu_total)) },
+      { judul: 'Total SHU', kunci: 'shu_total', angka: true, render: (a) => el('strong.pos', rp(a.shu_total)) },
     ], h.per_anggota, {
       kosongTeks: 'Belum ada anggota yang memenuhi dasar perhitungan',
       kaki: { nama: `TOTAL (${h.per_anggota.length} anggota)`, shu_total: rp(h.total_dibagikan) },
@@ -179,12 +179,12 @@ async function detail(id) {
 
   wadah.append(panelTabel('Pembagian SHU per Anggota', tabel([
     { judul: 'No. Anggota', render: (a) => el('span.mono.kecil', a.nomor_anggota) },
-    { judul: 'Nama', render: (a) => el('a', { href: `#/anggota/${a.anggota_id}` }, a.nama) },
+    { judul: 'Nama', kunci: 'nama', render: (a) => el('a', { href: `#/anggota/${a.anggota_id}` }, a.nama) },
     { judul: 'Simpanan Rata-rata', angka: true, render: (a) => rp(a.simpanan_rata) },
     { judul: 'Nilai Transaksi', angka: true, render: (a) => rp(a.nilai_transaksi) },
     { judul: 'Jasa Modal', angka: true, render: (a) => rp(a.shu_jasa_modal) },
     { judul: 'Jasa Usaha', angka: true, render: (a) => rp(a.shu_jasa_usaha) },
-    { judul: 'Total', angka: true, render: (a) => el('strong.pos', rp(a.shu_total)) },
+    { judul: 'Total', kunci: 'shu_total', angka: true, render: (a) => el('strong.pos', rp(a.shu_total)) },
     { judul: 'Dibayar', render: (a) => (a.dibayar ? status('lunas', judul(a.metode_bayar || 'ya'))
       : status('netral', 'Belum')) },
   ], p.per_anggota, {

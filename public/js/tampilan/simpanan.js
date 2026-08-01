@@ -35,7 +35,7 @@ export async function render(param) {
     { judul: 'Produk', kunci: 'nama' },
     { judul: 'Jenis', render: (x) => judul(x.jenis) },
     { judul: 'Rekening', angka: true, render: (x) => angka(x.jumlah_rekening) },
-    { judul: 'Saldo', angka: true, render: (x) => el('strong', rp(x.saldo)) },
+    { judul: 'Saldo', kunci: 'saldo', angka: true, render: (x) => el('strong', rp(x.saldo)) },
   ], r.per_produk, {
     kaki: { nama: 'TOTAL', saldo: rp(r.per_produk.reduce((s, x) => s + x.saldo, 0)) },
   })));

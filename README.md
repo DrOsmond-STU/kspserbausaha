@@ -36,6 +36,32 @@ npm run seed     # memastikan data awal ada (tanpa menghapus data)
 npm test         # menjalankan uji otomatis
 ```
 
+### Data contoh
+
+`node server/seed.js --reset` membangun kurang lebih **dua tahun buku** data
+operasional — dari 1 Januari tahun lalu sampai hari ini — sehingga seluruh
+laporan dan dasbor terisi:
+
+| | |
+|---|---|
+| Anggota | 100 aktif, 5 calon, 3 keluar |
+| Simpanan | pokok, wajib bulanan, sukarela, berjangka, deposito |
+| Pinjaman | 72 berkas dari pengajuan sampai lunas, seluruh kelas kolektibilitas, NPL ±2,6% |
+| Toko | ±9.400 transaksi kasir, pembelian rutin bulanan, retur, penjualan kredit |
+| Keuangan | jurnal harian, kas & bank, rekonsiliasi, cash opname, stock opname |
+| Tahun buku lalu | ditutup penuh: jurnal penutup → RAT dengan kehadiran & voting → SHU disahkan dan dibagikan |
+| Tata kelola | kepatuhan, audit internal, risk register, dokumen berversi, persuratan, persetujuan berjenjang |
+| Layanan anggota | tiket berbalasan, broadcast, survei kepuasan (NPS) |
+
+Seluruh transaksi keuangan dibuat lewat service yang sama dengan yang dipakai
+antarmuka, jadi setiap angka pada laporan benar-benar berasal dari buku besar —
+bukan baris tabel yang ditanam langsung. Penyemaian memakai bilangan acak
+deterministik sehingga hasilnya selalu sama.
+
+Menjalankan `--reset` **menghapus seluruh data yang ada**. Untuk memakainya pada
+koperasi sungguhan, jalankan `npm run seed` (tanpa `--reset`) yang hanya
+menyiapkan bagan akun dan parameter, tanpa data contoh.
+
 ### Akun demonstrasi
 
 Hanya berlaku untuk basis data yang disemai tanpa `ECMS_ADMIN_PASSWORD`. Pada
@@ -230,12 +256,13 @@ tersebut yang masih hidup.
 npm test
 ```
 
-48 uji otomatis mencakup: penolakan jurnal tidak seimbang, penyaringan periode
+53 uji otomatis mencakup: penolakan jurnal tidak seimbang, penyaringan periode
 laporan, persamaan akuntansi (aset = kewajiban + ekuitas), kesamaan total arus
 kas dengan mutasi kas sesungguhnya, netralisasi jurnal balik, penguncian periode,
-ketepatan amortisasi flat/menurun/anuitas, aturan simpanan, siklus pinjaman,
-klasifikasi kolektibilitas, HPP rata-rata bergerak, alokasi SHU, serta ambang dan
-kedaluwarsa penguncian akun, serta penyajian berkas statis.
+keterbacaan hasil usaha sesudah tutup buku tahunan, ketepatan amortisasi
+flat/menurun/anuitas, aturan simpanan, siklus pinjaman, klasifikasi
+kolektibilitas, HPP rata-rata bergerak, ketepatan pembulatan alokasi SHU, ambang
+dan kedaluwarsa penguncian akun, serta penyajian berkas statis.
 
 ---
 

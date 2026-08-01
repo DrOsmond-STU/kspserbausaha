@@ -257,6 +257,34 @@ describe('Pembagian SHU', () => {
     const cadangan = hasil.alokasi.find((a) => a.komponen === 'cadangan');
     assert.equal(cadangan.nominal, 25_000_000, 'dana cadangan 25% sesuai AD/ART bawaan');
     const totalAlokasi = hasil.alokasi.reduce((s, a) => s + a.nominal, 0);
-    assert.ok(Math.abs(totalAlokasi - 100_000_000) <= 10, 'alokasi menjumlah mendekati SHU bersih');
+    assert.equal(totalAlokasi, 100_000_000, 'alokasi menjumlah persis sama dengan SHU bersih');
+  });
+
+  test('alokasi tetap menjumlah persis pada nilai yang tidak habis dibagi', async () => {
+    const shu = await import('../server/services/shu.js');
+    // Nilai-nilai ini menyisakan pecahan rupiah pada hampir setiap komponen.
+    // Bila selisih pembulatan dibiarkan, jurnal pengesahan SHU menjadi tidak
+    // seimbang dan pembagian tidak pernah dapat diposting.
+    for (const nilai of [93_118_107, 1, 7, 999_999_999, 12_345_679]) {
+      const h = shu.simulasi(2026, nilai);
+      const total = h.alokasi.reduce((s, a) => s + a.nominal, 0);
+      assert.equal(total, nilai, `alokasi harus menjumlah persis untuk SHU ${nilai}`);
+      assert.ok(h.alokasi.every((a) => a.nominal >= 0), 'tidak ada komponen bernilai negatif');
+    }
+  });
+
+  test('pembagian per anggota menjumlah persis sama dengan pool jasa', async () => {
+    const shu = await import('../server/services/shu.js');
+    const h = shu.simulasi(2026, 93_118_107);
+    if (!h.per_anggota.length) return;      // belum ada anggota bertransaksi pada data uji
+    const poolModal = h.alokasi.find((a) => a.komponen === 'jasa_modal').nominal;
+    const poolUsaha = h.alokasi.find((a) => a.komponen === 'jasa_usaha').nominal;
+    const jm = h.per_anggota.reduce((s, r) => s + r.shu_jasa_modal, 0);
+    const ju = h.per_anggota.reduce((s, r) => s + r.shu_jasa_usaha, 0);
+    // Pool hanya terbagi habis bila ada dasar pembagiannya; bila dasar nol,
+    // seluruh pool memang tidak dibagikan.
+    if (h.dasar.total_simpanan > 0) assert.equal(jm, poolModal, 'jasa modal terbagi habis');
+    if (h.dasar.total_transaksi > 0) assert.equal(ju, poolUsaha, 'jasa usaha terbagi habis');
+    assert.equal(h.per_anggota.reduce((s, r) => s + r.shu_total, 0), jm + ju);
   });
 });
