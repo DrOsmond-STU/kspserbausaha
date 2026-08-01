@@ -6,6 +6,7 @@ import {
   kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, kosong,
 } from '../inti.js';
 import { izin } from '../app.js';
+import { ikon } from '../ikon.js';
 
 export async function render() {
   const wadah = el('div');
@@ -42,7 +43,7 @@ async function tiketTab() {
           kpi('Tiket Baru', angka(r.baru), { jenis: r.baru ? 'peringatan' : 'sukses' }),
           kpi('Sedang Diproses', angka(r.diproses)),
           kpi('Selesai', angka(r.selesai), { jenis: 'sukses' }),
-          kpi('Rata-rata Rating', `${desimal(r.rata_rating)} / 5`, { ikon: '⭐' }),
+          kpi('Rata-rata Rating', `${desimal(r.rata_rating)} / 5`, { ikon: ikon('bintang') }),
         ]),
         panelTabel('Tiket Layanan Anggota', tabel([
           { judul: 'Nomor', render: (t) => el('span.mono.kecil', t.nomor) },

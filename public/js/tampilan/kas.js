@@ -6,6 +6,7 @@ import {
   pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
+import { ikon } from '../ikon.js';
 
 export async function render() {
   const wadah = el('div');
@@ -34,8 +35,8 @@ async function transaksiTab() {
   const posisi = await api.get('/api/kas/posisi');
 
   wadah.append(el('div.grid.k3.mb16', [
-    kpi('Total Kas', rp(posisi.total_kas), { ikon: '💵' }),
-    kpi('Total Bank', rp(posisi.total_bank), { ikon: '🏛' }),
+    kpi('Total Kas', rp(posisi.total_kas), { ikon: ikon('uang') }),
+    kpi('Total Bank', rp(posisi.total_bank), { ikon: ikon('gedung') }),
     kpi('Total Kas & Bank', rp(posisi.total), { jenis: 'sukses' }),
   ]));
 

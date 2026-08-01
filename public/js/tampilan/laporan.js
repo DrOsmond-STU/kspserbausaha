@@ -54,7 +54,7 @@ export async function render() {
     unit.data.length ? el('select', { onchange: (e) => { unitId = e.target.value; muat(); } },
       [el('option', { value: '' }, 'Seluruh unit usaha'),
         ...unit.data.map((u) => el('option', { value: u.id }, u.nama))]) : null,
-    el('button.btn', { onclick: () => window.print() }, '🖨 Cetak'),
+    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
     el('button.btn', { onclick: () => unduh(jenis, isi) }, '⬇ Unduh CSV'),
   ].filter(Boolean));
 
@@ -65,7 +65,7 @@ export async function render() {
     try {
       const q = { dari, sampai, unit_usaha_id: unitId || undefined };
       if (jenis === 'buku-besar') {
-        if (!kodeAkun) { kosongkan(isi).append(kosong('Pilih akun terlebih dahulu', null, '📒')); return; }
+        if (!kodeAkun) { kosongkan(isi).append(kosong('Pilih akun terlebih dahulu', null, 'buku')); return; }
         q.kode = kodeAkun;
       }
       const d = await api.get(`/api/laporan/${jenis}`, q);

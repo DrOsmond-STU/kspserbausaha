@@ -6,6 +6,7 @@ import {
   kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, kosong, hariIni,
 } from '../inti.js';
 import { negara } from '../app.js';
+import { ikon } from '../ikon.js';
 
 export async function render() {
   const wadah = el('div');
@@ -60,10 +61,10 @@ async function berandaTab() {
     ])]),
 
     el('div.grid.k4.mb16', [
-      kpi('Total Simpanan', rp(d.simpanan.total_simpanan), { jenis: 'sukses', ikon: '🏦' }),
+      kpi('Total Simpanan', rp(d.simpanan.total_simpanan), { jenis: 'sukses', ikon: ikon('dompet') }),
       kpi('Simpanan Pokok', rp(d.simpanan.total_pokok)),
       kpi('Simpanan Wajib', rp(d.simpanan.total_wajib)),
-      kpi('Poin Loyalti', `${angka(d.poin_loyalty)} poin`, { ikon: '⭐' }),
+      kpi('Poin Loyalti', `${angka(d.poin_loyalty)} poin`, { ikon: ikon('bintang') }),
     ]),
 
     d.tagihan_terdekat.length ? panelTabel('Tagihan Angsuran Terdekat', tabel([
@@ -136,13 +137,13 @@ async function pinjamanTab() {
   const wadah = el('div');
   const d = await api.get('/api/portal/pinjaman');
   wadah.append(el('div.alat', [
-    el('button.btn', { onclick: simulasi }, '🧮 Simulasi Angsuran'),
+    el('button.btn', { onclick: simulasi }, 'Simulasi Angsuran'),
     el('button.btn.utama', { onclick: ajukan }, '+ Ajukan Pinjaman'),
   ]));
 
   if (!d.data.length) {
     wadah.append(kosong('Belum pernah mengajukan pinjaman',
-      'Gunakan tombol di atas untuk mensimulasikan dan mengajukan pinjaman.', '💳'));
+      'Gunakan tombol di atas untuk mensimulasikan dan mengajukan pinjaman.', 'Bayar'));
     return wadah;
   }
 
@@ -280,7 +281,7 @@ async function belanjaTab() {
   const d = await api.get('/api/portal/belanja');
   return el('div', [
     el('div.grid.k2.mb16', [
-      kpi('Saldo Poin', `${angka(d.poin.saldo)} poin`, { ikon: '⭐', jenis: 'sukses' }),
+      kpi('Saldo Poin', `${angka(d.poin.saldo)} poin`, { ikon: ikon('bintang'), jenis: 'sukses' }),
       kpi('Transaksi Belanja', angka(d.riwayat.length)),
     ]),
     panelTabel('Riwayat Belanja di Toko Koperasi', tabel([
@@ -304,7 +305,7 @@ async function ratTab() {
   const wadah = el('div');
   const d = await api.get('/api/portal/rat');
   if (!d.data.length) {
-    wadah.append(kosong('Belum ada Rapat Anggota', 'Anda akan diundang saat RAT dijadwalkan.', '🗳️'));
+    wadah.append(kosong('Belum ada Rapat Anggota', 'Anda akan diundang saat RAT dijadwalkan.', 'papan'));
     return wadah;
   }
   for (const r of d.data) {
@@ -358,7 +359,7 @@ async function layananTab() {
       kosongkan(wadah).append(
         el('div.alat', [
           el('button.btn.utama', { onclick: () => formTiket(muat) }, '+ Ajukan Pertanyaan / Pengaduan'),
-          el('button.btn', { onclick: () => formProfil() }, '👤 Perbarui Data Kontak'),
+          el('button.btn', { onclick: () => formProfil() }, 'Perbarui Data Kontak'),
         ]),
         d.data.length ? el('div', d.data.map((t) => panel(`${t.nomor} — ${t.judul}`, el('div', [
           el('div.antara.mb8', [status(t.status), el('span.kecil.samar', tgl(t.created_at))]),
@@ -371,7 +372,7 @@ async function layananTab() {
             el('div.kecil', b.isi),
           ]))) : el('div.kecil.samar', 'Menunggu tanggapan petugas'),
         ])))) : kosong('Belum ada tiket layanan',
-          'Ajukan pertanyaan, pengaduan, atau saran kepada pengurus koperasi.', '💬'),
+          'Ajukan pertanyaan, pengaduan, atau saran kepada pengurus koperasi.', 'Balas'),
       );
     } catch (err) { galat(err); }
   }

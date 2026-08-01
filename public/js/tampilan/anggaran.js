@@ -56,7 +56,7 @@ async function realisasi(id) {
         } catch (err) { galat(err); }
       },
     }, '✓ Setujui RKAP'),
-    el('button.btn', { onclick: () => window.print() }, '🖨 Cetak'),
+    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [

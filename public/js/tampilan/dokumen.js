@@ -114,7 +114,7 @@ async function lihat(id, saatSelesai) {
           toast(h.valid === null ? 'Dokumen tanpa berkas' : h.valid ? 'Berkas UTUH ✓' : 'PERINGATAN: berkas berubah',
             h.valid === false ? 'bahaya' : h.valid ? 'sukses' : 'peringatan', h.pesan);
         } catch (err) { galat(err); }
-      } }, '🔒 Verifikasi Integritas'),
+      } }, 'Verifikasi Integritas'),
       izin('dokumen.update') && !d.ttd_elektronik && el('button.btn.sukses', { onclick: async () => {
         if (!await konfirmasi('Tandatangani dokumen ini secara elektronik? Tindakan ini tidak dapat dibatalkan.',
           { ya: 'Tandatangani' })) return;
@@ -123,7 +123,7 @@ async function lihat(id, saatSelesai) {
           toast('Dokumen ditandatangani secara elektronik', 'sukses');
           tutup(); saatSelesai?.();
         } catch (err) { galat(err); }
-      } }, '✍ Tandatangani'),
+      } }, 'Tandatangani'),
       el('button.btn.utama', { onclick: () => tutup() }, 'Tutup'),
     ].filter(Boolean),
   });

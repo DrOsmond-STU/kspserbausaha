@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
+import { ikon } from '../ikon.js';
 
 const KATEGORI = ['legalitas', 'perpajakan', 'ketenagakerjaan', 'perkoperasian', 'oss'];
 
@@ -18,7 +19,7 @@ export async function render() {
       const d = await api.get('/api/compliance/dashboard/ringkasan');
       kosongkan(wadah).append(
         el('div.grid.k4.mb16', [
-          kpi('Total Kewajiban', angka(d.total), { ikon: '⚖️' }),
+          kpi('Total Kewajiban', angka(d.total), { ikon: ikon('neraca') }),
           kpi('Patuh', angka(d.patuh), { jenis: 'sukses' }),
           kpi('Perlu Perhatian', angka(d.perlu_perhatian), {
             jenis: d.perlu_perhatian ? 'peringatan' : '', catatan: 'Kedaluwarsa ≤ 90 hari' }),

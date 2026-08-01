@@ -6,6 +6,7 @@ import {
   pilih, bacaForm, toast, galat, kosongkan, kosong, hariIni, status,
 } from '../inti.js';
 import { negara } from '../app.js';
+import { ikon } from '../ikon.js';
 
 export async function render() {
   const [gudang, rekap] = await Promise.all([
@@ -30,7 +31,7 @@ export async function render() {
   function gambarKeranjang() {
     kosongkan(daftarItem);
     if (!keranjang.length) {
-      daftarItem.append(kosong('Keranjang kosong', 'Pindai barcode atau cari barang untuk memulai', '🛒'));
+      daftarItem.append(kosong('Keranjang kosong', 'Pindai barcode atau cari barang untuk memulai', 'keranjang'));
     } else {
       daftarItem.append(el('div.tabel-bungkus', [tabel([
         { judul: 'Barang', render: (i) => el('div', [
@@ -79,7 +80,7 @@ export async function render() {
         el('strong', anggota.nama),
         el('div.kecil', `${anggota.nomor_anggota} · harga khusus anggota berlaku`),
       ]), el('button.btn.kecil.polos', { onclick: () => { anggota = null; gambarAnggota(); muatUlangHarga(); } }, '✕')])
-      : el('button.btn.blok', { onclick: pilihAnggota }, '👤 Pilih Anggota (opsional)'));
+      : el('button.btn.blok', { onclick: pilihAnggota }, 'Pilih Anggota (opsional)'));
   }
 
   async function muatUlangHarga() {
@@ -221,8 +222,8 @@ export async function render() {
 
   // ------------------------------ Tata letak ------------------------------
   wadah.append(el('div.grid.k4.mb16', [
-    kpi('Transaksi Hari Ini', angka(rekap.jumlah_transaksi), { ikon: '🧾' }),
-    kpi('Omzet Hari Ini', rp(rekap.total), { ikon: '💵' }),
+    kpi('Transaksi Hari Ini', angka(rekap.jumlah_transaksi), { ikon: ikon('struk') }),
+    kpi('Omzet Hari Ini', rp(rekap.total), { ikon: ikon('uang') }),
     kpi('Laba Kotor', rp(rekap.laba_kotor), { jenis: 'sukses' }),
     kpi('Diskon Diberikan', rp(rekap.diskon)),
   ]));
@@ -241,7 +242,7 @@ export async function render() {
       panel('Ringkasan', el('div', [
         ringkas,
         el('button.btn.utama.blok.mt16', { gaya: { padding: '12px', fontSize: '15px' }, onclick: bayar },
-          '💳 Bayar'),
+          'Bayar'),
         el('button.btn.blok.mt8', {
           onclick: () => { keranjang.length = 0; gambarKeranjang(); },
         }, 'Kosongkan Keranjang'),
@@ -304,7 +305,7 @@ function tampilkanStruk(h) {
   const tutup = modal({
     judul: 'Transaksi Berhasil', lebar: 'sempit', isi: struk,
     kaki: [
-      el('button.btn', { onclick: () => window.print() }, '🖨 Cetak Struk'),
+      el('button.btn', { onclick: () => window.print() }, 'Cetak Struk'),
       el('button.btn.utama', { onclick: () => tutup() }, 'Selesai'),
     ],
   });

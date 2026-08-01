@@ -61,11 +61,11 @@ async function detail(id) {
           segarkan();
         } catch (err) { galat(err); }
       },
-    }, '📨 Kirim Undangan'),
+    }, 'Kirim Undangan'),
     izin('rat.update') && ['undangan', 'berlangsung'].includes(r.status) && el('button.btn', {
       onclick: () => formHadir(r, segarkan) }, '✋ Catat Kehadiran'),
-    izin('rat.create') && el('button.btn', { onclick: () => formVoting(r, segarkan) }, '🗳️ Buat Voting'),
-    el('button.btn', { onclick: () => beritaAcara(id) }, '📄 Berita Acara'),
+    izin('rat.create') && el('button.btn', { onclick: () => formVoting(r, segarkan) }, 'Buat Voting'),
+    el('button.btn', { onclick: () => beritaAcara(id) }, 'Berita Acara'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [
@@ -265,6 +265,6 @@ async function beritaAcara(id) {
       ], b.perangkat_organisasi, { kosongTeks: 'Belum ada data pengurus/pengawas' })]),
       el('div.kecil.samar.mt16', b.dasar_hukum),
     ]),
-    kaki: [el('button.btn.utama', { onclick: () => window.print() }, '🖨 Cetak Berita Acara')],
+    kaki: [el('button.btn.utama', { onclick: () => window.print() }, 'Cetak Berita Acara')],
   });
 }

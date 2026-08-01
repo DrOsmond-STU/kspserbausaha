@@ -59,7 +59,7 @@ async function daftar(q) {
             toast(h.dieskalasi ? `${h.dieskalasi} permintaan dieskalasi` : 'Tidak ada yang melewati SLA',
               'sukses');
           } catch (err) { galat(err); }
-        } }, '⏫ Jalankan Eskalasi SLA'),
+        } }, 'Jalankan Eskalasi SLA'),
       ]));
     } catch (err) { galat(err); }
   }

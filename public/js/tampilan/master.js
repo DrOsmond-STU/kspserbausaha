@@ -172,7 +172,7 @@ export async function render() {
                 await api.del(`${def.path}/${r.id}`);
                 toast('Data dihapus', 'sukses'); muat();
               } catch (err) { galat(err); }
-            } }, '🗑'),
+            } }, 'Hapus'),
         ].filter(Boolean)) },
       ], d.data, { kosongTeks: `Belum ada data ${def.nama.toLowerCase()}` }), [
         izin('master.create') && el('button.btn.utama', { onclick: () => form(def, null, muat) },

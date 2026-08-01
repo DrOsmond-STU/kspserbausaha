@@ -83,9 +83,28 @@ public/
 └── js/
     ├── app.js            kerangka, autentikasi, perutean
     ├── inti.js           pemanggilan API, pembentuk DOM, format, dialog
+    ├── ikon.js           set ikon garis SVG sebaris
     ├── grafik.js         grafik SVG tanpa pustaka eksternal
     └── tampilan/         satu berkas per modul
 ```
+
+### Antarmuka
+
+Seluruh gaya berada pada satu berkas `public/app.css` yang dibangun di atas token
+warna, radius, bayangan, dan gerak — komponen tidak pernah menuliskan nilai warna
+secara langsung, sehingga mode gelap cukup mengganti nilai token.
+
+Beberapa keputusan yang membentuk tampilannya:
+
+- **Navigasi selalu gelap**, di mode terang maupun gelap. Kontras tetap ini
+  menjadi jangkar visual: mata langsung tahu mana navigasi dan mana isi.
+- **Ikon digambar sendiri sebagai SVG sebaris** (`ikon.js`), bukan emoji. Emoji
+  praktis, tetapi bentuk, berat, dan warnanya ditentukan sistem operasi
+  masing-masing perangkat sehingga antarmuka tidak pernah benar-benar rapi.
+- **Gerak seperlunya** — menyambut, menegaskan, menuntun — dan seluruhnya tunduk
+  pada `prefers-reduced-motion`.
+- **Status tidak pernah bergantung warna semata**: setiap lencana memuat teks
+  keadaannya, dan seri grafik diberi label langsung selain warna.
 
 ### Prinsip perancangan
 

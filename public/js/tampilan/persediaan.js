@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
+import { ikon } from '../ikon.js';
 
 const WARNA_STOK = { habis: 'st-bahaya', kritis: 'st-bahaya', perlu_order: 'st-peringatan', aman: 'st-sukses' };
 
@@ -39,10 +40,10 @@ async function stokTab() {
   ]);
 
   wadah.append(el('div.grid.k4.mb16', [
-    kpi('Nilai Persediaan', rp(d.total_nilai), { ikon: '📦' }),
+    kpi('Nilai Persediaan', rp(d.total_nilai), { ikon: ikon('kotak') }),
     kpi('Jenis Barang', angka(d.baris.length)),
     kpi('Perlu Dipesan Ulang', angka(reorder.data.length), {
-      jenis: reorder.data.length ? 'peringatan' : 'sukses', ikon: '🔔' }),
+      jenis: reorder.data.length ? 'peringatan' : 'sukses', ikon: ikon('lonceng') }),
     kpi('Stok Habis', angka(d.baris.filter((b) => b.status_stok === 'habis').length), {
       jenis: d.baris.some((b) => b.status_stok === 'habis') ? 'bahaya' : 'sukses' }),
   ]));

@@ -40,7 +40,7 @@ export async function render(param) {
     saatKlik: (p) => { location.hash = `#/shu/${p.id}`; },
     kosongTeks: 'Belum ada periode SHU. Jalankan simulasi untuk membuat usulan.',
   }), [
-    el('button.btn', { onclick: simulasi }, '🧮 Simulasi SHU'),
+    el('button.btn', { onclick: simulasi }, 'Simulasi SHU'),
     izin('shu.create') && el('button.btn.utama', { onclick: () => buatUsulan() }, '+ Buat Usulan Pembagian'),
   ].filter(Boolean)));
 
@@ -147,8 +147,8 @@ async function detail(id) {
     izin('shu.approve') && p.status === 'diajukan' && el('button.btn.sukses', {
       onclick: () => sahkan(p, segarkan) }, '✓ Sahkan (RAT)'),
     izin('shu.approve') && p.status === 'disetujui' && el('button.btn.utama', {
-      onclick: () => bagikan(p, segarkan) }, '💸 Bagikan ke Anggota'),
-    el('button.btn', { onclick: () => window.print() }, '🖨 Cetak'),
+      onclick: () => bagikan(p, segarkan) }, 'Bagikan ke Anggota'),
+    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [

@@ -2,6 +2,7 @@
  * Inti aplikasi klien: pemanggilan API, pembentukan elemen, format,
  * notifikasi, dan dialog.
  */
+import { ikon as ikonSvg } from './ikon.js';
 
 // ------------------------------- API -------------------------------
 
@@ -201,9 +202,13 @@ export function konfirmasi(pesan, { judul: jdl = 'Konfirmasi', ya = 'Ya, lanjutk
 
 export const memuat = (pesan = 'Memuat data…') => el('div.memuat-baris', [el('div.spinner', { gaya: { margin: '0 auto 12px' } }), pesan]);
 
-export const kosong = (judulTeks = 'Belum ada data', catatan = null, ikon = '📄') =>
+/**
+ * Keadaan kosong. Argumen ketiga adalah NAMA ikon dari ikon.js - bukan emoji -
+ * supaya bentuk dan ketebalannya sama di semua perangkat.
+ */
+export const kosong = (judulTeks = 'Belum ada data', catatan = null, namaIkon = 'berkas') =>
   el('div.kosong', [
-    el('div.ikon', ikon),
+    el('div.ikon', ikonSvg(namaIkon, { ukuran: 34, tebal: 1.3 })),
     el('div.judul', judulTeks),
     catatan && el('div.kecil', catatan),
   ]);
@@ -228,9 +233,13 @@ export function panelTabel(judulTeks, isi, aksi = []) {
   ]);
 }
 
+/**
+ * Kartu indikator. `ikon` menerima teks (emoji) maupun simpul SVG dari ikon.js;
+ * keduanya dibungkus keping berwarna yang mengikuti `jenis`.
+ */
 export function kpi(label, nilai, { catatan, jenis = '', ikon } = {}) {
   return el(`div.kpi${jenis ? `.${jenis}` : ''}`, [
-    el('div.label', [ikon && el('span', ikon), label]),
+    el('div.label', [ikon && el('span.kpi-ikon', ikon), label]),
     el('div.nilai', nilai),
     catatan && el('div.catatan', catatan),
   ]);

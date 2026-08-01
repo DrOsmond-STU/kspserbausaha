@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { grafikBatang, grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
+import { ikon } from '../ikon.js';
 
 const STATUS = ['', 'calon', 'aktif', 'nonaktif', 'keluar', 'meninggal', 'ditolak'];
 
@@ -17,11 +18,11 @@ export async function render(param) {
   const st = await api.get('/api/anggota/statistik');
 
   wadah.append(el('div.grid.k4.mb16', [
-    kpi('Anggota Aktif', angka(st.aktif), { ikon: '👥' }),
-    kpi('Calon Anggota', angka(st.calon), { catatan: 'Menunggu verifikasi', ikon: '👤',
+    kpi('Anggota Aktif', angka(st.aktif), { ikon: ikon('anggota') }),
+    kpi('Calon Anggota', angka(st.calon), { catatan: 'Menunggu verifikasi', ikon: ikon('orang'),
       jenis: st.calon ? 'peringatan' : '' }),
-    kpi('Total Terdaftar', angka(st.total), { ikon: '📋' }),
-    kpi('Keluar / Meninggal', angka(st.keluar), { ikon: '📤' }),
+    kpi('Total Terdaftar', angka(st.total), { ikon: ikon('papan') }),
+    kpi('Keluar / Meninggal', angka(st.keluar), { ikon: ikon('keluar') }),
   ]));
 
   wadah.append(el('div.grid.k2', [

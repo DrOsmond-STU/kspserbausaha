@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { grafikGaris } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
+import { ikon } from '../ikon.js';
 
 export async function render(param) {
   if (param[0]) return detail(Number(param[0]));
@@ -15,9 +16,9 @@ export async function render(param) {
   const wadah = el('div');
 
   wadah.append(el('div.grid.k3.mb16', [
-    kpi('Total Simpanan', rpRingkas(r.total_simpanan), { catatan: rp(r.total_simpanan), ikon: '🏦' }),
-    kpi('Jumlah Rekening', angka(r.jumlah_rekening), { ikon: '📒' }),
-    kpi('Jumlah Penyimpan', angka(r.jumlah_penyimpan), { catatan: 'Anggota dengan rekening aktif', ikon: '👥' }),
+    kpi('Total Simpanan', rpRingkas(r.total_simpanan), { catatan: rp(r.total_simpanan), ikon: ikon('dompet') }),
+    kpi('Jumlah Rekening', angka(r.jumlah_rekening), { ikon: ikon('buku') }),
+    kpi('Jumlah Penyimpan', angka(r.jumlah_penyimpan), { catatan: 'Anggota dengan rekening aktif', ikon: ikon('anggota') }),
   ]));
 
   wadah.append(panel('Mutasi Simpanan Bulanan', grafikGaris({
@@ -88,7 +89,7 @@ async function detail(id) {
       && el('button.btn.utama', { onclick: () => formTransaksi('setoran', r, () => navigasi(location.hash, true)) }, '↓ Setoran'),
     izin('simpanan.create') && r.status === 'aktif' && r.boleh_tarik
       && el('button.btn', { onclick: () => formTransaksi('penarikan', r, () => navigasi(location.hash, true)) }, '↑ Penarikan'),
-    el('button.btn', { onclick: () => window.print() }, '🖨 Cetak Buku'),
+    el('button.btn', { onclick: () => window.print() }, 'Cetak Buku'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [

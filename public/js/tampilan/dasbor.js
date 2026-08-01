@@ -4,6 +4,7 @@
 import { api, el, kpi, panel, panelTabel, tabel, rp, rpRingkas, angka, persen, tgl, waktu, status, judul, kosong }
   from '../inti.js';
 import { grafikGaris, grafikBatang, grafikCincin, grafikPeringkat, SERI } from '../grafik.js';
+import { ikon } from '../ikon.js';
 import { periodeLabel } from '../inti.js';
 
 export async function render() {
@@ -14,44 +15,42 @@ export async function render() {
 
   // ------------------------------ Perhatian ------------------------------
   const butir = [];
-  if (p.approval_menunggu) butir.push(['✅', `${p.approval_menunggu} permintaan menunggu persetujuan Anda`, '#/approval']);
-  if (p.tagihan_tertunggak) butir.push(['⏰', `${p.tagihan_tertunggak} angsuran tertunggak senilai ${rp(p.nilai_tertunggak)}`, '#/pinjaman']);
-  if (p.calon_anggota) butir.push(['👤', `${p.calon_anggota} calon anggota menunggu verifikasi`, '#/anggota']);
-  if (p.stok_perlu_order) butir.push(['📦', `${p.stok_perlu_order} barang mencapai titik pemesanan ulang`, '#/persediaan']);
-  if (p.izin_segera_kadaluarsa) butir.push(['⚖️', `${p.izin_segera_kadaluarsa} dokumen kepatuhan akan kedaluwarsa`, '#/compliance']);
-  if (p.temuan_audit_terbuka) butir.push(['🔍', `${p.temuan_audit_terbuka} temuan audit belum ditindaklanjuti`, '#/audit']);
-  if (p.risiko_tinggi) butir.push(['⚠️', `${p.risiko_tinggi} risiko berkategori tinggi/ekstrem`, '#/risiko']);
-  if (p.tiket_terbuka) butir.push(['💬', `${p.tiket_terbuka} tiket layanan anggota belum selesai`, '#/crm']);
+  if (p.approval_menunggu) butir.push(['centang', `${p.approval_menunggu} permintaan menunggu persetujuan Anda`, '#/approval']);
+  if (p.tagihan_tertunggak) butir.push(['jam', `${p.tagihan_tertunggak} angsuran tertunggak senilai ${rp(p.nilai_tertunggak)}`, '#/pinjaman']);
+  if (p.calon_anggota) butir.push(['orang', `${p.calon_anggota} calon anggota menunggu verifikasi`, '#/anggota']);
+  if (p.stok_perlu_order) butir.push(['kotak', `${p.stok_perlu_order} barang mencapai titik pemesanan ulang`, '#/persediaan']);
+  if (p.izin_segera_kadaluarsa) butir.push(['neraca', `${p.izin_segera_kadaluarsa} dokumen kepatuhan akan kedaluwarsa`, '#/compliance']);
+  if (p.temuan_audit_terbuka) butir.push(['kaca', `${p.temuan_audit_terbuka} temuan audit belum ditindaklanjuti`, '#/audit']);
+  if (p.risiko_tinggi) butir.push(['waspada', `${p.risiko_tinggi} risiko berkategori tinggi/ekstrem`, '#/risiko']);
+  if (p.tiket_terbuka) butir.push(['obrol', `${p.tiket_terbuka} tiket layanan anggota belum selesai`, '#/crm']);
 
   if (butir.length) {
-    wadah.append(panel('Perlu Perhatian', el('div', { gaya: {
-      display: 'grid', gap: '8px', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' } },
-    butir.map(([ikon, teks, tautan]) => el('a', {
-      href: tautan,
-      gaya: { display: 'flex', gap: '10px', alignItems: 'center', padding: '10px 12px',
-        background: 'var(--bg-subtle)', border: '1px solid var(--border)',
-        borderRadius: '8px', color: 'var(--teks)', textDecoration: 'none', fontSize: '13px' },
-    }, [el('span', { gaya: { fontSize: '17px' } }, ikon), el('span', teks)])))));
+    wadah.append(panel('Perlu Perhatian', el('div.perhatian',
+      butir.map(([nama, teks, tautan]) => el('a.perhatian-butir', { href: tautan }, [
+        el('span.perhatian-ikon', ikon(nama, { ukuran: 17 })),
+        el('span.perhatian-teks', teks),
+        el('span.perhatian-panah', '→'),
+      ])))));
   }
 
   // -------------------------------- KPI --------------------------------
   wadah.append(el('div.grid.k4.mb16', [
     kpi('Total Anggota', angka(k.total_anggota), {
-      catatan: `+${k.anggota_baru_bulan_ini} anggota baru bulan ini`, ikon: '👥' }),
-    kpi('Total Simpanan', rpRingkas(k.total_simpanan), { catatan: rp(k.total_simpanan), ikon: '🏦' }),
-    kpi('Pinjaman Beredar', rpRingkas(k.total_pinjaman), { catatan: rp(k.total_pinjaman), ikon: '💳' }),
+      catatan: `+${k.anggota_baru_bulan_ini} anggota baru bulan ini`, ikon: ikon('anggota') }),
+    kpi('Total Simpanan', rpRingkas(k.total_simpanan), { catatan: rp(k.total_simpanan), ikon: ikon('dompet') }),
+    kpi('Pinjaman Beredar', rpRingkas(k.total_pinjaman), { catatan: rp(k.total_pinjaman), ikon: ikon('kartu') }),
     kpi('SHU Berjalan', rpRingkas(k.shu_berjalan), {
-      catatan: rp(k.shu_berjalan), ikon: '🧮',
+      catatan: rp(k.shu_berjalan), ikon: ikon('bagan'),
       jenis: k.shu_berjalan >= 0 ? 'sukses' : 'bahaya' }),
   ]));
 
   wadah.append(el('div.grid.k4.mb16', [
-    kpi('Kas & Bank', rpRingkas(k.kas_dan_bank), { catatan: rp(k.kas_dan_bank), ikon: '💰' }),
-    kpi('Total Aset', rpRingkas(k.total_aset), { catatan: `Ekuitas ${rpRingkas(k.total_ekuitas)}`, ikon: '📊' }),
+    kpi('Kas & Bank', rpRingkas(k.kas_dan_bank), { catatan: rp(k.kas_dan_bank), ikon: ikon('uang') }),
+    kpi('Total Aset', rpRingkas(k.total_aset), { catatan: `Ekuitas ${rpRingkas(k.total_ekuitas)}`, ikon: ikon('dasbor') }),
     kpi('Omzet Toko (bulan ini)', rpRingkas(k.omzet_toko_bulan_ini), {
-      catatan: `Persediaan ${rpRingkas(k.nilai_persediaan)}`, ikon: '🛒' }),
+      catatan: `Persediaan ${rpRingkas(k.nilai_persediaan)}`, ikon: ikon('keranjang') }),
     kpi('Rasio NPL', persen(k.npl_ratio), {
-      catatan: `Kredit bermasalah ${rpRingkas(k.kredit_macet)}`, ikon: '⚠️',
+      catatan: `Kredit bermasalah ${rpRingkas(k.kredit_macet)}`, ikon: ikon('waspada'),
       jenis: k.npl_ratio < 5 ? 'sukses' : k.npl_ratio < 10 ? 'peringatan' : 'bahaya' }),
   ]));
 

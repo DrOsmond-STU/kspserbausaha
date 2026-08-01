@@ -6,6 +6,7 @@ import {
   input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
+import { ikon } from '../ikon.js';
 
 const RATING = ['rendah', 'sedang', 'tinggi', 'kritis'];
 const kelasRating = (r) => ({ rendah: 'st-sukses', sedang: 'st-peringatan',
@@ -39,7 +40,7 @@ async function ikhtisarTab() {
   const d = await api.get('/api/audit/dashboard/ringkasan');
   return el('div', [
     el('div.grid.k4.mb16', [
-      kpi('Total Temuan', angka(d.total_temuan), { ikon: '🔍' }),
+      kpi('Total Temuan', angka(d.total_temuan), { ikon: ikon('kaca') }),
       kpi('Terbuka', angka(d.terbuka), { jenis: d.terbuka ? 'peringatan' : 'sukses' }),
       kpi('Selesai', angka(d.selesai), { jenis: 'sukses' }),
       kpi('Tingkat Penyelesaian', persen(d.tingkat_penyelesaian), {

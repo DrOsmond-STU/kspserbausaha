@@ -55,13 +55,13 @@ async function penggunaTab() {
           izin('admin.update') && el('button.btn.kecil', {
             onclick: () => formPengguna(u, muat) }, 'Ubah'),
           izin('admin.update') && el('button.btn.kecil', {
-            onclick: () => resetSandi(u) }, '🔑'),
+            onclick: () => resetSandi(u) }, 'Reset'),
           izin('admin.delete') && u.id !== negara.user.id && el('button.btn.kecil.polos', {
             onclick: async () => {
               if (!await konfirmasi(`Hapus pengguna "${u.username}"?`, { ya: 'Hapus', jenis: 'bahaya' })) return;
               try { await api.del(`/api/admin/users/${u.id}`); toast('Pengguna dihapus', 'sukses'); muat(); }
               catch (err) { galat(err); }
-            } }, '🗑'),
+            } }, 'Hapus'),
         ].filter(Boolean)) },
       ], d.data), [
         izin('admin.create') && el('button.btn.utama', { onclick: () => formPengguna(null, muat) },
@@ -297,9 +297,9 @@ async function sistemTab() {
             ? el('span.pos', '✓ Aktif') : el('span.neg', 'Belum diaktifkan')),
         ]),
         el('div.gap8', [
-          el('button.btn', { onclick: gantiSandi }, '🔑 Ganti Kata Sandi'),
+          el('button.btn', { onclick: gantiSandi }, 'Ganti Kata Sandi'),
           !negara.user.mfa_enabled && el('button.btn.utama', { onclick: siapkanMfa },
-            '🔐 Aktifkan MFA'),
+            'Aktifkan MFA'),
         ].filter(Boolean)),
       ])),
     ]),
@@ -320,7 +320,7 @@ async function sistemTab() {
           const h = await api.post('/api/admin/backup', {});
           toast('Pencadangan berhasil', 'sukses', h.berkas);
         } catch (err) { galat(err); } finally { e.currentTarget.disabled = false; }
-      } }, '💾 Buat Cadangan Sekarang'),
+      } }, 'Buat Cadangan Sekarang'),
     ])) : null,
   ]);
 }

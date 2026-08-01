@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { grafikCincin } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
+import { ikon } from '../ikon.js';
 
 export async function render(param) {
   if (param[0]) return detail(Number(param[0]));
@@ -15,7 +16,7 @@ export async function render(param) {
   const [r, d] = await Promise.all([api.get('/api/aset/ringkasan'), api.get('/api/aset')]);
 
   wadah.append(el('div.grid.k4.mb16', [
-    kpi('Jumlah Aset', angka(r.jumlah_aset), { ikon: '🏗️' }),
+    kpi('Jumlah Aset', angka(r.jumlah_aset), { ikon: ikon('lapis') }),
     kpi('Harga Perolehan', rp(r.total_perolehan)),
     kpi('Akumulasi Penyusutan', rp(r.total_akumulasi), { jenis: 'peringatan' }),
     kpi('Nilai Buku', rp(r.total_nilai_buku), { jenis: 'sukses' }),
@@ -60,7 +61,7 @@ export async function render(param) {
   ], d.data, { saatKlik: (a) => { location.hash = `#/aset/${a.id}`; },
     kosongTeks: 'Belum ada aset tetap terdaftar' }), [
     izin('aset.create') && el('button.btn.utama', { onclick: () => formAset() }, '+ Tambah Aset'),
-    izin('aset.post') && el('button.btn', { onclick: () => formPenyusutan() }, '📉 Jalankan Penyusutan'),
+    izin('aset.post') && el('button.btn', { onclick: () => formPenyusutan() }, 'Jalankan Penyusutan'),
   ].filter(Boolean)));
 
   return wadah;
@@ -73,9 +74,9 @@ async function detail(id) {
   wadah.append(el('div.gap8.mb16', [
     el('button.btn', { onclick: () => { location.hash = '#/aset'; } }, '← Kembali'),
     izin('aset.update') && a.status === 'aktif' && el('button.btn', {
-      onclick: () => formMaintenance(a) }, '🔧 Catat Pemeliharaan'),
+      onclick: () => formMaintenance(a) }, 'Catat Pemeliharaan'),
     izin('aset.update') && a.status !== 'dilepas' && el('button.btn.bahaya', {
-      onclick: () => formDisposal(a) }, '📤 Pelepasan Aset'),
+      onclick: () => formDisposal(a) }, 'Pelepasan Aset'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [

@@ -3,6 +3,7 @@
  */
 import { api, el, kosongkan, toast, galat, memuat, modal, kolom, input, bacaForm } from './inti.js';
 import { MENU, TAMPILAN } from './menu.js';
+import { ikon, lambang } from './ikon.js';
 
 export const negara = { user: null, notifikasi: 0 };
 
@@ -52,27 +53,41 @@ function layarMasuk(pesanAwal) {
     }
   }
 
-  kosongkan(app).className = '';
-  app.append(el('div.layar-masuk', [
-    el('div.kartu-masuk', [
-      el('div.merek', [
-        el('div.logo', 'ECMS'),
-        el('div.sub', 'Enterprise Cooperative Management System'),
-        el('div.sub', { gaya: { fontWeight: '600', marginTop: '2px' } }, 'Koperasi Serba Usaha'),
-      ]),
-      pesanAwal ? el('div.notis.peringatan', pesanAwal) : null,
-      form,
-      // Hanya pada pemasangan demonstrasi. Di server sungguhan kata sandi
-      // administrator berbeda, sehingga daftar ini akan menyesatkan sekaligus
-      // memancing percobaan masuk yang berujung akun terkunci.
-      negara.aplikasi?.demo ? el('div.kredensial', [
-        el('div', { gaya: { fontWeight: '650', marginBottom: '5px' } }, 'Akun demonstrasi'),
-        el('div', [el('code', 'admin'), ' / ', el('code', 'Admin12345'), ' — Super Administrator']),
-        el('div', [el('code', 'pengurus1'), ' · ', el('code', 'bendahara1'), ' · ',
-          el('code', 'kasir1'), ' · ', el('code', 'anggota1'), ' / ', el('code', 'Demo12345')]),
-      ]) : null,
+  // Kolom kiri hanya identitas dan konteks regulasi; ia disembunyikan pada
+  // layar sempit (lihat app.css) sehingga formulir tidak pernah terdesak.
+  const panelMerek = el('section.masuk-merek', [
+    el('div.merek-atas', [lambang(38), el('div.nama', 'ECMS')]),
+    el('div', [
+      el('h2', 'Kelola seluruh usaha koperasi dari satu tempat'),
+      el('p.kalimat', 'Keanggotaan, simpan pinjam, toko, akuntansi, hingga tata kelola '
+        + 'dalam satu buku besar yang saling terhubung.'),
+      el('div.acuan', ['UU 25/1992', 'Permenkop 2/2024', 'SAK EP', 'PSAK 14 & 16', 'UU ITE']
+        .map((t) => el('span', t))),
     ]),
-  ]));
+    el('div.kaki', `Enterprise Cooperative Management System · ${new Date().getFullYear()}`),
+  ]);
+
+  const kartu = el('div.kartu-masuk', [
+    el('div.merek', [
+      el('div.logo', 'ECMS'),
+      el('h1', 'Masuk ke sistem'),
+      el('div.sub', 'Gunakan akun yang diberikan pengurus koperasi.'),
+    ]),
+    pesanAwal ? el('div.notis.peringatan', pesanAwal) : null,
+    form,
+    // Hanya pada pemasangan demonstrasi. Di server sungguhan kata sandi
+    // administrator berbeda, sehingga daftar ini akan menyesatkan sekaligus
+    // memancing percobaan masuk yang berujung akun terkunci.
+    negara.aplikasi?.demo ? el('div.kredensial', [
+      el('div', { gaya: { fontWeight: '650', marginBottom: '5px' } }, 'Akun demonstrasi'),
+      el('div', [el('code', 'admin'), ' / ', el('code', 'Admin12345'), ' — Super Administrator']),
+      el('div', [el('code', 'pengurus1'), ' · ', el('code', 'bendahara1'), ' · ',
+        el('code', 'kasir1'), ' · ', el('code', 'anggota1'), ' / ', el('code', 'Demo12345')]),
+    ]) : null,
+  ]);
+
+  kosongkan(app).className = '';
+  app.append(el('div.layar-masuk', [panelMerek, el('section.masuk-form', [kartu])]));
 }
 
 // ------------------------------ Kerangka ------------------------------
@@ -85,38 +100,45 @@ async function gambarKerangka() {
 
   const sidebar = el('aside.sidebar#sidebar', [
     el('div.sidebar-kepala', [
-      el('div.logo', 'ECMS'),
-      el('div.nama-koperasi', negara.koperasi || 'Koperasi Serba Usaha'),
+      el('div.tanda', lambang(22)),
+      el('div', { gaya: { minWidth: 0 } }, [
+        el('div.logo', 'ECMS'),
+        el('div.nama-koperasi', negara.koperasi || 'Koperasi Serba Usaha'),
+      ]),
     ]),
     el('nav.nav#nav', menu.map((g) => el('div.nav-grup', [
       el('div.nav-judul', g.judul),
       ...g.item.map((i) => el('a', {
         href: `#${i.rute}`, 'data-rute': i.rute,
-        onclick: () => { if (window.innerWidth <= 900) tutupSidebar(); },
-      }, [el('span.ikon', i.ikon), el('span', i.nama),
+        onclick: () => { if (window.innerWidth <= 1000) tutupSidebar(); },
+      }, [el('span.ikon', ikon(i.ikon, { ukuran: 17 })), el('span', i.nama),
         i.rute === '/approval' ? el('span.lencana#lencana-approval', { gaya: { display: 'none' } }) : null])),
     ]))),
     el('div.sidebar-kaki', [
-      el('div.antara', [
-        el('div', { gaya: { minWidth: 0 } }, [
-          el('div.tebal.kecil', { gaya: { overflow: 'hidden', textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap' } }, negara.user.nama),
-          el('div.kecil.samar', negara.user.role_info?.nama || negara.user.role),
+      el('div.kartu-pengguna', [
+        el('div.avatar', inisial(negara.user.nama)),
+        el('div', { gaya: { minWidth: 0, flex: '1' } }, [
+          el('div.nama', negara.user.nama),
+          el('div.peran', negara.user.role_info?.nama || negara.user.role),
         ]),
-        el('button.btn.polos.kecil', { title: 'Keluar', onclick: keluar }, '⇥'),
+        el('button.btn.polos.kecil', { title: 'Keluar', 'aria-label': 'Keluar', onclick: keluar },
+          ikon('keluar', { ukuran: 17 })),
       ]),
     ]),
   ]);
 
   const topbar = el('header.topbar', [
-    el('button.btn.polos.tombol-menu', { onclick: bukaSidebar, 'aria-label': 'Menu' }, '☰'),
+    el('button.btn-ikon.tombol-menu', { onclick: bukaSidebar, 'aria-label': 'Buka menu' },
+      ikon('menu', { ukuran: 20 })),
     el('div', { gaya: { minWidth: 0 } }, [
       el('h1#judul-halaman', 'Dasbor'),
       el('div.sub#sub-halaman', ''),
     ]),
     el('div.kanan', [
-      el('button.btn.polos.kecil#tombol-notif', { title: 'Notifikasi', onclick: bukaNotifikasi }, '🔔'),
-      el('button.btn.polos.kecil', { title: 'Ganti tema', onclick: gantiTema }, '◐'),
+      el('button.btn-ikon#tombol-notif', { title: 'Notifikasi', 'aria-label': 'Notifikasi',
+        onclick: bukaNotifikasi }, [ikon('lonceng', { ukuran: 19 })]),
+      el('button.btn-ikon#tombol-tema', { title: 'Ganti tema', 'aria-label': 'Ganti tema',
+        onclick: gantiTema }, [ikon(namaIkonTema(), { ukuran: 19 })]),
     ]),
   ]);
 
@@ -135,12 +157,26 @@ const tutupSidebar = () => {
   document.querySelector('.tirai')?.remove();
 };
 
+/** Inisial nama untuk avatar: "Budi Santoso" -> "BS". */
+function inisial(nama) {
+  const kata = String(nama || '?').trim().split(/\s+/).slice(0, 2);
+  return kata.map((k) => k[0]).join('').toUpperCase() || '?';
+}
+
+/** Ikon yang mewakili tema aktif: gelap, terang, atau mengikuti sistem. */
+const namaIkonTema = () => ({ gelap: 'gelap', terang: 'terang' })[
+  document.documentElement.dataset.tema] || 'otomatis';
+
 function gantiTema() {
   const kini = document.documentElement.dataset.tema;
   const baru = kini === 'gelap' ? 'terang' : kini === 'terang' ? '' : 'gelap';
   if (baru) document.documentElement.dataset.tema = baru;
   else delete document.documentElement.dataset.tema;
   try { localStorage.setItem('ecms-tema', baru); } catch { /* penyimpanan tidak tersedia */ }
+
+  const tombol = document.getElementById('tombol-tema');
+  if (tombol) kosongkan(tombol).append(ikon(namaIkonTema(), { ukuran: 19 }));
+  toast(`Tema: ${{ gelap: 'gelap', terang: 'terang' }[baru] || 'mengikuti sistem'}`);
   navigasi(location.hash, true);
 }
 
@@ -166,8 +202,15 @@ export async function segarkanNotifikasi() {
   try {
     const n = await api.get('/api/notifikasi', { belum: 1 });
     negara.notifikasi = n.belum_dibaca;
+    // Jumlah ditempel sebagai gelembung terpisah, bukan menimpa isi tombol —
+    // ikonnya harus tetap ada supaya tombol tidak berubah bentuk saat ada pesan.
     const tombol = document.getElementById('tombol-notif');
-    if (tombol) tombol.textContent = n.belum_dibaca > 0 ? `🔔 ${n.belum_dibaca}` : '🔔';
+    if (tombol) {
+      tombol.querySelector('.titik')?.remove();
+      if (n.belum_dibaca > 0) {
+        tombol.append(el('span.titik', n.belum_dibaca > 99 ? '99+' : String(n.belum_dibaca)));
+      }
+    }
     if (izin('approval.view')) {
       const a = await api.get('/api/approval', { saya: 1 });
       const lencana = document.getElementById('lencana-approval');

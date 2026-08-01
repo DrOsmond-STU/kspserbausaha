@@ -79,7 +79,7 @@ async function detailJurnal(id) {
     izin('akuntansi.post') && j.status === 'posted' && el('button.btn.bahaya', {
       onclick: () => batalkan(j),
     }, '↩ Batalkan Jurnal'),
-    el('button.btn', { onclick: () => window.print() }, '🖨 Cetak'),
+    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
   ].filter(Boolean)));
 
   wadah.append(panel(`Jurnal ${j.nomor}`, el('dl.deskripsi', [

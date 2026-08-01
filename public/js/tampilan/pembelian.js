@@ -68,8 +68,8 @@ async function detail(id) {
   wadah.append(el('div.gap8.mb16', [
     el('button.btn', { onclick: () => { location.hash = '#/pembelian'; } }, '← Kembali'),
     izin('pembelian.update') && !['selesai', 'batal'].includes(p.status)
-      && el('button.btn.utama', { onclick: () => formTerima(p) }, '📥 Terima Barang'),
-    el('button.btn', { onclick: () => window.print() }, '🖨 Cetak'),
+      && el('button.btn.utama', { onclick: () => formTerima(p) }, 'Terima Barang'),
+    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [

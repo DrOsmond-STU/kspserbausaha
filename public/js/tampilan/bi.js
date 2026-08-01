@@ -6,6 +6,7 @@ import {
   memuat, kosongkan, galat, periodeLabel,
 } from '../inti.js';
 import { grafikGaris, grafikBatang, grafikPeringkat, grafikCincin, SERI } from '../grafik.js';
+import { ikon } from '../ikon.js';
 
 export async function render() {
   const wadah = el('div');
@@ -37,7 +38,7 @@ async function kesehatanTab() {
   const warna = d.skor_kesehatan >= 80 ? 'sukses' : d.skor_kesehatan >= 60 ? 'peringatan' : 'bahaya';
   return el('div', [
     el('div.grid.k2.mb16', [
-      kpi('Skor Kesehatan', `${d.skor_kesehatan} / 100`, { jenis: warna, ikon: '❤️' }),
+      kpi('Skor Kesehatan', `${d.skor_kesehatan} / 100`, { jenis: warna, ikon: ikon('perisai') }),
       kpi('Predikat', d.predikat, { jenis: warna }),
     ]),
     el('div.notis.info', [el('div.isi', [

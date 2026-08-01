@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { grafikCincin } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
+import { ikon } from '../ikon.js';
 
 const WARNA_KOL = ['#1baf7a', '#eda100', '#eb6834', '#e34948', '#8b1a1a'];
 const kelasKol = (k) => (k === 1 ? 'st-sukses' : k === 2 ? 'st-peringatan' : 'st-bahaya');
@@ -18,12 +19,12 @@ export async function render(param) {
   const wadah = el('div');
 
   wadah.append(el('div.grid.k4.mb16', [
-    kpi('Pinjaman Beredar', rpRingkas(pf.total_outstanding), { catatan: rp(pf.total_outstanding), ikon: '💳' }),
-    kpi('Kredit Bermasalah', rpRingkas(pf.npl_nominal), { ikon: '⚠️',
+    kpi('Pinjaman Beredar', rpRingkas(pf.total_outstanding), { catatan: rp(pf.total_outstanding), ikon: ikon('kartu') }),
+    kpi('Kredit Bermasalah', rpRingkas(pf.npl_nominal), { ikon: ikon('waspada'),
       jenis: pf.npl_ratio < 5 ? 'sukses' : 'bahaya' }),
     kpi('Rasio NPL', persen(pf.npl_ratio), { catatan: `Status: ${judul(pf.status_kesehatan)}`,
       jenis: pf.npl_ratio < 5 ? 'sukses' : pf.npl_ratio < 10 ? 'peringatan' : 'bahaya' }),
-    kpi('Debitur Aktif', angka(pf.per_kolektibilitas.reduce((s, x) => s + x.jumlah, 0)), { ikon: '👥' }),
+    kpi('Debitur Aktif', angka(pf.per_kolektibilitas.reduce((s, x) => s + x.jumlah, 0)), { ikon: ikon('anggota') }),
   ]));
 
   wadah.append(el('div.grid.k2', [
@@ -94,7 +95,7 @@ export async function render(param) {
         pilih('f', ['', 'diajukan', 'dianalisis', 'disetujui', 'dicairkan', 'lunas', 'ditolak',
           'restrukturisasi'].map((s) => ({ nilai: s, teks: s ? judul(s) : 'Semua status' })), filter,
         { onchange: (e) => { filter = e.target.value; muat(); } }),
-        el('button.btn', { onclick: simulasi }, '🧮 Simulasi Angsuran'),
+        el('button.btn', { onclick: simulasi }, 'Simulasi Angsuran'),
         izin('pinjaman.create') && el('button.btn.utama', { onclick: () => formAjukan(muat) }, '+ Ajukan Pinjaman'),
       ].filter(Boolean)));
     } catch (err) { galat(err); }
@@ -112,21 +113,21 @@ async function detail(id) {
 
   const aksi = [el('button.btn', { onclick: () => { location.hash = '#/pinjaman'; } }, '← Kembali')];
   if (izin('pinjaman.update') && ['diajukan', 'survey', 'dianalisis'].includes(p.status)) {
-    aksi.push(el('button.btn', { onclick: () => formSurvey(p, segarkan) }, '🔎 Survey / Analisis'));
+    aksi.push(el('button.btn', { onclick: () => formSurvey(p, segarkan) }, 'Survey / Analisis'));
   }
   if (izin('pinjaman.approve') && ['diajukan', 'survey', 'dianalisis'].includes(p.status)) {
     aksi.push(el('button.btn.sukses', { onclick: () => formPutusan(p, true, segarkan) }, '✓ Setujui'));
     aksi.push(el('button.btn.bahaya', { onclick: () => formPutusan(p, false, segarkan) }, '✕ Tolak'));
   }
   if (izin('pinjaman.post') && p.status === 'disetujui') {
-    aksi.push(el('button.btn.utama', { onclick: () => formCairkan(p, segarkan) }, '💸 Cairkan'));
+    aksi.push(el('button.btn.utama', { onclick: () => formCairkan(p, segarkan) }, 'Cairkan'));
   }
   if (izin('pinjaman.create') && ['dicairkan', 'restrukturisasi'].includes(p.status)) {
-    aksi.push(el('button.btn.utama', { onclick: () => formAngsuran(p, segarkan) }, '💰 Bayar Angsuran'));
-    aksi.push(el('button.btn', { onclick: () => formPelunasan(p, segarkan) }, '⚡ Pelunasan Dipercepat'));
+    aksi.push(el('button.btn.utama', { onclick: () => formAngsuran(p, segarkan) }, 'Bayar Angsuran'));
+    aksi.push(el('button.btn', { onclick: () => formPelunasan(p, segarkan) }, 'Pelunasan Dipercepat'));
   }
   if (izin('pinjaman.approve') && p.status === 'dicairkan') {
-    aksi.push(el('button.btn', { onclick: () => formRestruktur(p, segarkan) }, '🔄 Restrukturisasi'));
+    aksi.push(el('button.btn', { onclick: () => formRestruktur(p, segarkan) }, 'Restrukturisasi'));
   }
   wadah.append(el('div.gap8.mb16', aksi));
 
@@ -295,7 +296,7 @@ async function formAjukan(saatSelesai) {
             `• ${r.aspek}: ${r.nilai}/${r.maks} — ${r.catatan}`))),
         ])]));
       } catch (err) { galat(err); }
-    } }, '🧮 Cek Kelayakan & Skor Kredit'),
+    } }, 'Cek Kelayakan & Skor Kredit'),
     kotakSkor,
   ]);
 
