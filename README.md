@@ -222,7 +222,8 @@ Contoh penerapan pada `ksp.semestateknologiutama.com`:
 ```
 ~/ksp-app/     berkas aplikasi (server/, public/, package.json)
 ~/ksp-data/    basis data SQLite — di luar docroot, tidak terjangkau HTTP
-~/ksp-runner.sh   pemasang + penjaga proses, dipanggil cron tiap 5 menit
+~/ksp-runner.sh   pemasang + penjaga proses, dipanggil cron tiap 7 menit
+~/ksp-verify.sh   pemeriksaan kesehatan, hasilnya di ~/ksp-verify.log
 ~/ksp-app.log     keluaran aplikasi
 ```
 
@@ -231,17 +232,43 @@ internet. Apache mengakhiri TLS lalu meneruskan permintaan lewat `.htaccess`
 pada document root:
 
 ```apache
+DirectoryIndex index.html
+
+RewriteEngine On
+RewriteBase /
+
 RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
-RewriteRule ^\.well-known/ - [L]
-RewriteCond %{REQUEST_URI} !^/\.well-known/ [NC]
-RewriteRule .* http://127.0.0.1:3300%{REQUEST_URI} [P,QSA,L]
+
+# Verifikasi AutoSSL dilayani Apache, jangan di-proxy.
+RewriteCond %{REQUEST_URI} ^/\.well-known/ [NC]
+RewriteRule ^ - [L]
+
+# Halaman akar dilayani dari salinan statis, lihat catatan di bawah.
+RewriteRule ^$ index.html [L]
+RewriteRule ^index\.html$ - [L]
+
+RewriteCond %{REQUEST_URI} ^/(.*)$
+RewriteRule ^ http://127.0.0.1:3300/%1 [P,QSA,L]
 ```
 
-Document root sengaja dibiarkan kosong (hanya berisi `.htaccess`): seluruh kode
-dan basis data berada di luar jangkauan HTTP. Setel `ECMS_SECURE_COOKIE=1` dan
-`ECMS_ADMIN_PASSWORD` pada skrip runner; keduanya tidak boleh memakai nilai
-bawaan di lingkungan yang terbuka ke internet.
+`RequestHeader set X-Forwarded-Proto "https" env=HTTPS` perlu ditambahkan pula,
+karena tanpa itu aplikasi mengira permintaan datang lewat HTTP polos.
+
+**Halaman akar.** Permintaan ke `/` diselesaikan Apache sebagai permintaan
+direktori sebelum aturan proxy sempat berlaku, sehingga yang muncul adalah
+daftar folder, bukan aplikasi — meski semua jalur lain sudah benar diteruskan.
+Karena itu akar ditulis ulang ke `index.html` yang disalin runner dari
+`public/index.html` ke document root. Berkas itu hanya kerangka statis dan
+selalu identik dengan yang dikirim Node, sedangkan seluruh isinya tetap dimuat
+dari `/app.css` dan `/js/app.js` yang melewati proxy — jadi tidak ada versi
+ganda yang bisa basi.
+
+Selain `.htaccess` dan `index.html` itu, document root dibiarkan kosong:
+seluruh kode dan basis data berada di luar jangkauan HTTP. Setel
+`ECMS_SECURE_COOKIE=1` dan `ECMS_ADMIN_PASSWORD` pada skrip runner; keduanya
+tidak boleh memakai nilai bawaan di lingkungan yang terbuka ke internet.
 
 Pembaruan dilakukan dengan menaruh paket baru di `~/ksp-deploy.zip` — runner
 menghentikan proses, menyalin berkas aplikasi, lalu menyalakannya kembali.
