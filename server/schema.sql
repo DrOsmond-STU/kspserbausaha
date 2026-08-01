@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS users (
   status        TEXT NOT NULL DEFAULT 'aktif',
   last_login_at TEXT,
   gagal_login   INTEGER NOT NULL DEFAULT 0,
+  terkunci_sampai TEXT,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -62,12 +62,15 @@ function layarMasuk(pesanAwal) {
       ]),
       pesanAwal ? el('div.notis.peringatan', pesanAwal) : null,
       form,
-      el('div.kredensial', [
+      // Hanya pada pemasangan demonstrasi. Di server sungguhan kata sandi
+      // administrator berbeda, sehingga daftar ini akan menyesatkan sekaligus
+      // memancing percobaan masuk yang berujung akun terkunci.
+      negara.aplikasi?.demo ? el('div.kredensial', [
         el('div', { gaya: { fontWeight: '650', marginBottom: '5px' } }, 'Akun demonstrasi'),
         el('div', [el('code', 'admin'), ' / ', el('code', 'Admin12345'), ' — Super Administrator']),
         el('div', [el('code', 'pengurus1'), ' · ', el('code', 'bendahara1'), ' · ',
           el('code', 'kasir1'), ' · ', el('code', 'anggota1'), ' / ', el('code', 'Demo12345')]),
-      ]),
+      ]) : null,
     ]),
   ]));
 }

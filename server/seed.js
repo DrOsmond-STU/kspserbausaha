@@ -249,6 +249,11 @@ export function pastikanDataAwal() {
       const { hash, salt } = hashPassword(sandiAwal);
       run(`INSERT INTO users(username, nama, email, password_hash, password_salt, role, cabang_id)
            VALUES('admin','Administrator Sistem','admin@koperasi.id',?,?,'super_admin',1)`, [hash, salt]);
+      // Halaman masuk hanya menampilkan daftar akun contoh bila kata sandi yang
+      // dipakai memang kata sandi bawaan. Di server sungguhan daftar itu bukan
+      // sekadar salah, tetapi mengundang orang mencoba dan mengunci akun admin.
+      setSetting('mode_demo', process.env.ECMS_ADMIN_PASSWORD ? '0' : '1',
+        'Menampilkan daftar akun contoh pada halaman masuk');
       dibuat++;
     }
 

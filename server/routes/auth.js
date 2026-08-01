@@ -11,7 +11,20 @@ import { logAudit, unreadCount } from '../lib/audit.js';
 import { ROLES, visibleModules, roleInfo } from '../lib/rbac.js';
 
 const router = createRouter();
+
+/**
+ * Ambang penguncian akun.
+ *
+ * Kunci sengaja dibuat SEMENTARA, bukan permanen. Aplikasi ini terbuka ke
+ * internet, jadi kunci permanen berarti siapa pun yang menebak lima kali salah
+ * dapat mematikan akun Super Administrator tanpa perlu tahu kata sandinya sama
+ * sekali. Jeda 15 menit tetap membuat penebakan paksa tidak berguna (paling
+ * banyak 20 percobaan per jam) tanpa memberi orang luar tombol matikan akun.
+ *
+ * Administrator tetap dapat membuka kunci lebih awal lewat reset kata sandi.
+ */
 const MAKS_GAGAL = 5;
+const MENIT_KUNCI = 15;
 
 router.post('/api/auth/login', null, async ({ body, req, res, setCookie }) => {
   const username = String(body.username || '').trim().toLowerCase();
@@ -28,12 +41,25 @@ router.post('/api/auth/login', null, async ({ body, req, res, setCookie }) => {
   if (user.status !== 'aktif') {
     throw new AppError(403, 'Akun Anda tidak aktif. Silakan hubungi administrator koperasi.');
   }
-  if (user.gagal_login >= MAKS_GAGAL) {
-    throw new AppError(423, 'Akun terkunci setelah 5 kali gagal masuk',
-      'Hubungi Super Administrator untuk membuka kembali akun Anda.');
+  const sisaKunci = user.terkunci_sampai
+    ? Math.ceil((Date.parse(`${user.terkunci_sampai}Z`) - Date.now()) / 60000) : 0;
+  if (sisaKunci > 0) {
+    throw new AppError(423, `Akun terkunci setelah ${MAKS_GAGAL} kali gagal masuk`,
+      `Coba lagi dalam ${sisaKunci} menit, atau minta Super Administrator mereset kata sandi Anda.`);
+  }
+  if (user.terkunci_sampai) {
+    // Masa kunci sudah lewat - hitungan diulang dari nol.
+    run('UPDATE users SET gagal_login = 0, terkunci_sampai = NULL WHERE id = ?', [user.id]);
+    user.gagal_login = 0;
   }
   if (!verifyPassword(password, user.password_hash, user.password_salt)) {
-    run('UPDATE users SET gagal_login = gagal_login + 1 WHERE id = ?', [user.id]);
+    const gagalBaru = user.gagal_login + 1;
+    run(
+      `UPDATE users SET gagal_login = ?, terkunci_sampai = ${
+        gagalBaru >= MAKS_GAGAL ? `datetime('now', '+${MENIT_KUNCI} minutes')` : 'NULL'
+      } WHERE id = ?`,
+      [gagalBaru, user.id],
+    );
     gagal();
   }
   if (user.mfa_enabled) {
@@ -47,7 +73,8 @@ router.post('/api/auth/login', null, async ({ body, req, res, setCookie }) => {
     }
   }
 
-  run("UPDATE users SET gagal_login = 0, last_login_at = datetime('now') WHERE id = ?", [user.id]);
+  run("UPDATE users SET gagal_login = 0, terkunci_sampai = NULL, last_login_at = datetime('now') WHERE id = ?",
+    [user.id]);
   const sesi = createSession(user.id, req.socket.remoteAddress, req.headers['user-agent']);
   setCookie(sesi.token, sesi.expires);
   logAudit({ user, ip: req.socket.remoteAddress }, { aksi: 'login', modul: 'admin', entitas_id: user.id,

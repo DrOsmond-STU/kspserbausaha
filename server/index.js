@@ -7,7 +7,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { migrate, run } from './db.js';
+import { migrate, run, setting } from './db.js';
 import {
   AppError, readBody, sendJson, sendText, mergeRouters,
 } from './lib/http.js';
@@ -111,6 +111,10 @@ const server = http.createServer(async (req, res) => {
       versi: '1.0.0',
       acuan: ['UU No. 25 Tahun 1992', 'Permenkop UKM No. 2 Tahun 2024', 'SAK EP',
         'UU ITE No. 11/2008 jo. UU No. 19/2016'],
+      // Halaman masuk memakai penanda ini untuk memutuskan apakah daftar akun
+      // contoh boleh ditampilkan. Bila pengaturan belum ada - misalnya basis
+      // data lama - jawabannya tidak, karena itu pilihan yang aman.
+      demo: setting('mode_demo', '0') === '1',
     });
     return;
   }
@@ -192,7 +196,9 @@ server.listen(PORT, HOST, () => {
   console.log('  ╚══════════════════════════════════════════════════════════════╝');
   console.log('');
   console.log(`  Server berjalan  : http://localhost:${PORT}`);
-  console.log('  Akun contoh      : admin / Admin12345  (Super Administrator)');
+  if (setting('mode_demo', '0') === '1') {
+    console.log('  Akun contoh      : admin / Admin12345  (Super Administrator)');
+  }
   console.log('  Dokumentasi      : lihat README.md');
   console.log('');
 });

@@ -17,9 +17,24 @@ db.exec('PRAGMA journal_mode = WAL');
 db.exec('PRAGMA foreign_keys = ON');
 db.exec('PRAGMA busy_timeout = 5000');
 
+/**
+ * Kolom yang ditambahkan sesudah skema awal dirilis.
+ *
+ * schema.sql memakai CREATE TABLE IF NOT EXISTS, sehingga kolom baru tidak
+ * pernah sampai ke basis data yang sudah terlanjur dibuat di server produksi.
+ * Daftar ini menutup celah tersebut tanpa perlu memuat ulang data.
+ */
+const KOLOM_SUSULAN = [
+  ['users', 'terkunci_sampai', 'TEXT'],
+];
+
 /** Menjalankan skema (idempoten - seluruh DDL memakai IF NOT EXISTS). */
 export function migrate() {
   db.exec(readFileSync(join(__dirname, 'schema.sql'), 'utf8'));
+  for (const [tabel, kolom, tipe] of KOLOM_SUSULAN) {
+    const ada = db.prepare(`PRAGMA table_info(${tabel})`).all().some((k) => k.name === kolom);
+    if (!ada) db.exec(`ALTER TABLE ${tabel} ADD COLUMN ${kolom} ${tipe}`);
+  }
 }
 
 const plain = (row) => (row ? { ...row } : row);

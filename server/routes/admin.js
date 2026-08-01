@@ -92,7 +92,8 @@ router.post('/api/admin/users/:id/reset-sandi', 'admin.update', ({ params, body,
   const sandi = str(body, 'password', { max: 100, label: 'Kata sandi baru' });
   validatePassword(sandi);
   const { hash, salt } = hashPassword(sandi);
-  run('UPDATE users SET password_hash = ?, password_salt = ?, gagal_login = 0 WHERE id = ?', [hash, salt, id]);
+  run(`UPDATE users SET password_hash = ?, password_salt = ?, gagal_login = 0,
+         terkunci_sampai = NULL WHERE id = ?`, [hash, salt, id]);
   run('DELETE FROM sessions WHERE user_id = ?', [id]);
   logAudit(ctx, { aksi: 'update', modul: 'admin', entitas_id: id,
     keterangan: `Kata sandi pengguna "${u.username}" direset oleh administrator` });
