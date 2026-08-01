@@ -38,6 +38,10 @@ npm test         # menjalankan uji otomatis
 
 ### Akun demonstrasi
 
+Hanya berlaku untuk basis data yang disemai tanpa `ECMS_ADMIN_PASSWORD`. Pada
+pemasangan produksi kata sandi `admin` ditentukan lewat variabel tersebut dan
+daftar di bawah tidak ditampilkan pada halaman masuk.
+
 | Pengguna | Kata sandi | Peran |
 |---|---|---|
 | `admin` | `Admin12345` | Super Administrator |
@@ -171,11 +175,33 @@ pengawasan dari fungsi pelaksanaan.
 - Sesi memakai cookie **HttpOnly + SameSite=Strict**; setel `ECMS_SECURE_COOKIE=1`
   bila dilayani melalui HTTPS.
 - **MFA TOTP** (RFC 6238) kompatibel dengan Google Authenticator/Authy.
-- Akun terkunci otomatis setelah 5 kali gagal masuk.
+- Akun terkunci otomatis setelah 5 kali gagal masuk, dan terbuka kembali dengan
+  sendirinya sesudah 15 menit. Kunci sengaja tidak permanen: pada aplikasi yang
+  terbuka ke internet, kunci permanen berarti siapa pun yang menebak lima kali
+  salah dapat mematikan akun Super Administrator tanpa perlu tahu kata sandinya.
+- Daftar akun contoh hanya muncul pada pemasangan demonstrasi (ditandai
+  pengaturan `mode_demo`), tidak pernah pada pemasangan produksi.
 - Seluruh masukan divalidasi di sisi server; kueri memakai *prepared statement*
   sehingga bebas dari injeksi SQL.
 - Penyusunan DOM di sisi klien memakai `textContent`, bukan `innerHTML`, sehingga
   data pengguna tidak dapat dieksekusi sebagai skrip.
+
+### Bila tidak seorang pun dapat masuk
+
+Akun terkunci atau kata sandi administrator terlupa dipulihkan dari baris
+perintah server, tanpa perlu menyentuh basis data secara manual:
+
+```bash
+node tools/pulihkan-akun.mjs                       # buka kunci "admin"
+node tools/pulihkan-akun.mjs admin 'SandiBaru123'  # sekaligus ganti kata sandi
+```
+
+Mengganti kata sandi lewat cara ini juga menghentikan seluruh sesi pengguna
+tersebut yang masih hidup.
+
+> **Jangan pernah** membiarkan skrip pemantauan mencoba masuk secara berkala.
+> Percobaan yang gagal ikut terhitung sebagai gagal masuk dan akan mengunci akun
+> yang dipantau; periksa kesehatan lewat jalur yang tidak memerlukan sesi.
 
 ---
 
@@ -185,11 +211,12 @@ pengawasan dari fungsi pelaksanaan.
 npm test
 ```
 
-39 uji otomatis mencakup: penolakan jurnal tidak seimbang, penyaringan periode
+45 uji otomatis mencakup: penolakan jurnal tidak seimbang, penyaringan periode
 laporan, persamaan akuntansi (aset = kewajiban + ekuitas), kesamaan total arus
 kas dengan mutasi kas sesungguhnya, netralisasi jurnal balik, penguncian periode,
 ketepatan amortisasi flat/menurun/anuitas, aturan simpanan, siklus pinjaman,
-klasifikasi kolektibilitas, HPP rata-rata bergerak, dan alokasi SHU.
+klasifikasi kolektibilitas, HPP rata-rata bergerak, alokasi SHU, serta ambang dan
+kedaluwarsa penguncian akun.
 
 ---
 
