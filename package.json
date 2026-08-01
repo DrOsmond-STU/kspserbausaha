@@ -1,0 +1,26 @@
+{
+  "name": "ecms-koperasi-serba-usaha",
+  "version": "1.0.0",
+  "description": "Enterprise Cooperative Management System (ECMS) untuk Koperasi Serba Usaha - UU 25/1992, Permenkop 2/2024, SAK EP",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --no-warnings server/index.js",
+    "dev": "node --no-warnings --watch server/index.js",
+    "seed": "node --no-warnings server/seed.js",
+    "reset": "node --no-warnings server/seed.js --reset",
+    "test": "node --no-warnings --test test/*.test.js"
+  },
+  "keywords": [
+    "koperasi",
+    "ksu",
+    "simpan-pinjam",
+    "akuntansi",
+    "shu",
+    "erp"
+  ],
+  "license": "MIT"
+}

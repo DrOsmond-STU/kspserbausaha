@@ -1,0 +1,200 @@
+/**
+ * ECMS - Enterprise Cooperative Management System
+ * Titik masuk aplikasi: server HTTP, routing API, dan penyajian berkas statis.
+ */
+import http from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { join, extname, normalize, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { migrate, run } from './db.js';
+import {
+  AppError, readBody, sendJson, sendText, mergeRouters,
+} from './lib/http.js';
+import { can } from './lib/rbac.js';
+import {
+  COOKIE_NAME, parseCookies, requireUser, sessionCookie, clearCookie, purgeExpiredSessions,
+} from './lib/auth.js';
+import { pastikanDataAwal } from './seed.js';
+
+import authRoutes from './routes/auth.js';
+import dashboardRoutes from './routes/dashboard.js';
+import masterRoutes from './routes/master.js';
+import anggotaRoutes from './routes/anggota.js';
+import simpananRoutes from './routes/simpanan.js';
+import pinjamanRoutes from './routes/pinjaman.js';
+import akuntansiRoutes from './routes/akuntansi.js';
+import kasRoutes from './routes/kas.js';
+import perdaganganRoutes from './routes/perdagangan.js';
+import organisasiRoutes from './routes/organisasi.js';
+import dokumenRoutes from './routes/dokumen.js';
+import tatakelolaRoutes from './routes/tatakelola.js';
+import adminRoutes from './routes/admin.js';
+import portalRoutes from './routes/portal.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = join(__dirname, '..', 'public');
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+
+const router = mergeRouters(
+  authRoutes, dashboardRoutes, masterRoutes, anggotaRoutes, simpananRoutes, pinjamanRoutes,
+  akuntansiRoutes, kasRoutes, perdaganganRoutes, organisasiRoutes, dokumenRoutes,
+  tatakelolaRoutes, adminRoutes, portalRoutes,
+);
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+};
+
+/** Rute publik yang tidak memerlukan sesi. */
+const PUBLIK = new Set(['POST /api/auth/login', 'POST /api/auth/logout', 'GET /api/info']);
+
+async function sajikanStatis(req, res, pathname) {
+  const bersih = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
+  let file = join(PUBLIC_DIR, bersih === '/' ? 'index.html' : bersih);
+  if (!file.startsWith(PUBLIC_DIR)) {
+    sendText(res, 403, 'Akses ditolak');
+    return;
+  }
+  try {
+    const info = await stat(file);
+    if (info.isDirectory()) file = join(file, 'index.html');
+  } catch {
+    // SPA fallback: seluruh rute non-API dilayani index.html
+    file = join(PUBLIC_DIR, 'index.html');
+  }
+  try {
+    const data = await readFile(file);
+    res.writeHead(200, {
+      'Content-Type': MIME[extname(file)] || 'application/octet-stream',
+      'Content-Length': data.length,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': extname(file) === '.html' ? 'no-cache' : 'public, max-age=300',
+    });
+    res.end(data);
+  } catch {
+    sendText(res, 404, 'Berkas tidak ditemukan');
+  }
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const { pathname } = url;
+
+  // Header keamanan dasar
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+
+  if (!pathname.startsWith('/api/')) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      sendText(res, 405, 'Metode tidak diizinkan');
+      return;
+    }
+    await sajikanStatis(req, res, pathname);
+    return;
+  }
+
+  if (pathname === '/api/info') {
+    sendJson(res, 200, {
+      aplikasi: 'ECMS - Enterprise Cooperative Management System',
+      untuk: 'Koperasi Serba Usaha',
+      versi: '1.0.0',
+      acuan: ['UU No. 25 Tahun 1992', 'Permenkop UKM No. 2 Tahun 2024', 'SAK EP',
+        'UU ITE No. 11/2008 jo. UU No. 19/2016'],
+    });
+    return;
+  }
+
+  const cookies = parseCookies(req.headers.cookie || '');
+  const token = cookies[COOKIE_NAME];
+  let ctx = null;
+
+  try {
+    const kunci = `${req.method} ${pathname}`;
+    const publik = PUBLIK.has(kunci);
+
+    if (!publik) {
+      const user = requireUser(token);
+      ctx = { user, token, ip: req.socket.remoteAddress };
+    } else if (token) {
+      try {
+        ctx = { user: requireUser(token), token, ip: req.socket.remoteAddress };
+      } catch { /* sesi kedaluwarsa pada rute publik diabaikan */ }
+    }
+
+    const hasil = router.match(req.method, pathname);
+    if (!hasil) throw new AppError(404, `Endpoint ${req.method} ${pathname} tidak tersedia`);
+    if (hasil.methodNotAllowed) throw new AppError(405, `Metode ${req.method} tidak diizinkan untuk ${pathname}`);
+
+    const { route, params } = hasil;
+
+    // Pemeriksaan hak akses (RBAC)
+    if (route.permission && !can(ctx.user.role, route.permission)) {
+      throw new AppError(403,
+        'Anda tidak memiliki hak akses untuk tindakan ini',
+        `Diperlukan izin "${route.permission}". Peran Anda saat ini: ${ctx.user.role}.`);
+    }
+    // Peran anggota hanya boleh mengakses portal
+    if (ctx?.user?.role === 'anggota' && !pathname.startsWith('/api/portal/')
+      && !pathname.startsWith('/api/auth/') && !pathname.startsWith('/api/notifikasi')) {
+      throw new AppError(403, 'Peran Anggota hanya dapat mengakses layanan portal anggota');
+    }
+
+    const body = ['POST', 'PUT', 'PATCH'].includes(req.method) ? await readBody(req) : {};
+    const query = Object.fromEntries(url.searchParams);
+
+    const data = await route.handler({
+      params, query, body, ctx, req, res, token,
+      setCookie: (t, exp) => res.setHeader('Set-Cookie', sessionCookie(t, exp)),
+      clear: () => res.setHeader('Set-Cookie', clearCookie()),
+    });
+
+    if (res.headersSent) return;
+    sendJson(res, req.method === 'POST' ? 201 : 200, data ?? { berhasil: true });
+  } catch (err) {
+    if (res.headersSent) return;
+    const status = err instanceof AppError ? err.status : 500;
+    if (status >= 500) {
+      console.error(`[ECMS] ${req.method} ${pathname}:`, err);
+    }
+    sendJson(res, status, {
+      error: true,
+      pesan: status >= 500 ? 'Terjadi kesalahan pada server' : err.message,
+      detail: err.detail || null,
+      ...(process.env.NODE_ENV !== 'production' && status >= 500 ? { debug: err.message } : {}),
+    });
+  }
+});
+
+// Pemeliharaan berkala: pembersihan sesi kedaluwarsa
+setInterval(() => {
+  try { purgeExpiredSessions(); } catch { /* diabaikan */ }
+}, 30 * 60 * 1000).unref();
+
+migrate();
+pastikanDataAwal();
+
+server.listen(PORT, HOST, () => {
+  console.log('');
+  console.log('  ╔══════════════════════════════════════════════════════════════╗');
+  console.log('  ║   ECMS · Enterprise Cooperative Management System             ║');
+  console.log('  ║   Aplikasi Koperasi Serba Usaha                               ║');
+  console.log('  ╚══════════════════════════════════════════════════════════════╝');
+  console.log('');
+  console.log(`  Server berjalan  : http://localhost:${PORT}`);
+  console.log('  Akun contoh      : admin / Admin12345  (Super Administrator)');
+  console.log('  Dokumentasi      : lihat README.md');
+  console.log('');
+});
+
+export default server;
