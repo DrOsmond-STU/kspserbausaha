@@ -242,7 +242,11 @@ export function pastikanDataAwal() {
     }
 
     if (!scalar('SELECT COUNT(*) FROM users')) {
-      const { hash, salt } = hashPassword('Admin12345');
+      // Kata sandi awal dapat ditentukan lewat ECMS_ADMIN_PASSWORD saat pemasangan
+      // di server produksi, sehingga kata sandi bawaan yang tercantum pada
+      // dokumentasi tidak pernah dipakai di lingkungan yang terbuka ke internet.
+      const sandiAwal = process.env.ECMS_ADMIN_PASSWORD || 'Admin12345';
+      const { hash, salt } = hashPassword(sandiAwal);
       run(`INSERT INTO users(username, nama, email, password_hash, password_salt, role, cabang_id)
            VALUES('admin','Administrator Sistem','admin@koperasi.id',?,?,'super_admin',1)`, [hash, salt]);
       dibuat++;

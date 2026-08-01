@@ -202,11 +202,50 @@ klasifikasi kolektibilitas, HPP rata-rata bergerak, dan alokasi SHU.
 | `ECMS_DATA_DIR` | `./data` | Direktori basis data |
 | `ECMS_DB` | `<data>/ecms.db` | Berkas SQLite |
 | `ECMS_SECURE_COOKIE` | – | Setel `1` bila memakai HTTPS |
+| `ECMS_ADMIN_PASSWORD` | `Admin12345` | Kata sandi administrator saat basis data **pertama kali** dibuat. Wajib diisi pada pemasangan produksi. |
 
 Parameter operasional — identitas koperasi, persentase pembagian SHU sesuai
 AD/ART, batas pinjaman, masa tenggang denda, nilai poin loyalti, dan pemetaan
 akun bawaan — diubah melalui antarmuka pada **Administrator → Parameter Sistem**,
 tanpa perlu menyunting kode.
+
+---
+
+## Pemasangan di shared hosting cPanel
+
+Aplikasi tidak memerlukan `npm install` maupun langkah build, sehingga cukup
+menyalin berkas dan menjalankan satu proses Node. Karena cPanel di banyak
+penyedia tidak menyediakan Passenger, proses dijaga hidup oleh cron.
+
+Contoh penerapan pada `ksp.semestateknologiutama.com`:
+
+```
+~/ksp-app/     berkas aplikasi (server/, public/, package.json)
+~/ksp-data/    basis data SQLite — di luar docroot, tidak terjangkau HTTP
+~/ksp-runner.sh   pemasang + penjaga proses, dipanggil cron tiap 5 menit
+~/ksp-app.log     keluaran aplikasi
+```
+
+Proses Node mendengarkan `127.0.0.1:3300` saja — tidak terbuka langsung ke
+internet. Apache mengakhiri TLS lalu meneruskan permintaan lewat `.htaccess`
+pada document root:
+
+```apache
+RewriteCond %{HTTPS} !=on
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+RewriteRule ^\.well-known/ - [L]
+RewriteCond %{REQUEST_URI} !^/\.well-known/ [NC]
+RewriteRule .* http://127.0.0.1:3300%{REQUEST_URI} [P,QSA,L]
+```
+
+Document root sengaja dibiarkan kosong (hanya berisi `.htaccess`): seluruh kode
+dan basis data berada di luar jangkauan HTTP. Setel `ECMS_SECURE_COOKIE=1` dan
+`ECMS_ADMIN_PASSWORD` pada skrip runner; keduanya tidak boleh memakai nilai
+bawaan di lingkungan yang terbuka ke internet.
+
+Pembaruan dilakukan dengan menaruh paket baru di `~/ksp-deploy.zip` — runner
+menghentikan proses, menyalin berkas aplikasi, lalu menyalakannya kembali.
+Direktori `~/ksp-data` tidak pernah tersentuh oleh pembaruan.
 
 ---
 
