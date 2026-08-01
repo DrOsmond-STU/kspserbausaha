@@ -1424,7 +1424,13 @@ if (dijalankanLangsung) {
   }
   console.log('');
   console.log('  Akun yang tersedia:');
-  console.log('    admin      / Admin12345  → Super Administrator');
+  // Kata sandi administrator hanya dicetak bila memang kata sandi bawaan.
+  // Pada pemasangan produksi nilainya datang dari ECMS_ADMIN_PASSWORD, dan
+  // mencetak "Admin12345" di sana bukan sekadar salah - ia menyesatkan orang
+  // yang membaca log pemasangan menjadi mengira sandi itulah yang berlaku.
+  console.log(process.env.ECMS_ADMIN_PASSWORD
+    ? '    admin      / (sesuai ECMS_ADMIN_PASSWORD)  → Super Administrator'
+    : '    admin      / Admin12345  → Super Administrator');
   for (const u of all("SELECT username, role FROM users WHERE username <> 'admin' ORDER BY id")) {
     console.log(`    ${u.username.padEnd(10)} / Demo12345   → ${u.role}`);
   }
