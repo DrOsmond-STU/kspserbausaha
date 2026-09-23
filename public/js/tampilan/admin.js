@@ -178,22 +178,107 @@ function resetMfa(u, saatSelesai) {
 
 // ------------------------------ Peran ------------------------------
 
+const NAMA_MODUL = {
+  dashboard: 'Dasbor', master: 'Master Data', anggota: 'Keanggotaan', simpanan: 'Simpanan',
+  pinjaman: 'Pinjaman', shu: 'SHU', akuntansi: 'Akuntansi', laporan: 'Laporan', kas: 'Kas & Bank',
+  anggaran: 'Anggaran', persediaan: 'Persediaan', pos: 'Kasir (POS)', pembelian: 'Pembelian',
+  penjualan: 'Penjualan', unit: 'Unit Usaha', aset: 'Aset Tetap', rat: 'RAT', dokumen: 'Dokumen',
+  surat: 'Surat', approval: 'Persetujuan', compliance: 'Kepatuhan', audit: 'Audit Internal',
+  risiko: 'Risiko', crm: 'CRM', bi: 'Business Intelligence', admin: 'Administrator',
+};
+
+/** Pencocokan izin sama dengan server: "koreksi" tidak ikut wildcard modul. */
+const punya = (daftar, izinPerlu) => {
+  const [m, a] = izinPerlu.split('.');
+  return daftar.includes('*') || daftar.includes(izinPerlu) || (a !== 'koreksi' && daftar.includes(`${m}.*`));
+};
+
 async function peranTab() {
-  const d = await api.get('/api/admin/roles');
-  return el('div', [
-    el('div.notis.info', [el('div.isi', [
-      el('strong', 'Role Based Access Control (RBAC)'),
-      el('div.kecil', 'Hak akses melekat pada peran, bukan pada individu. Format izin: '
-        + '"modul.aksi" — tanda bintang berarti seluruh aksi pada modul tersebut. '
-        + 'Peran Pengawas sengaja dibuat hanya-baca sesuai prinsip pemisahan fungsi pengawasan '
-        + 'dan pelaksanaan (Good Cooperative Governance).'),
-    ])]),
-    ...d.data.map((p) => panel(`${p.nama} (${p.jumlah_pengguna} pengguna)`, el('div', [
-      el('div.kecil.lembut.mb8', p.deskripsi),
-      el('div.gap8', p.permissions.map((x) => el('span.lencana-status.st-netral',
-        { gaya: { fontFamily: 'var(--mono)', fontSize: '11px' } }, x))),
-    ]))),
-  ]);
+  const wadah = el('div');
+  async function muat() {
+    kosongkan(wadah).append(memuat());
+    try {
+      const d = await api.get('/api/admin/roles');
+      kosongkan(wadah).append(
+        el('div.notis.info', [el('div.isi', [
+          el('strong', 'Hak akses per peran'),
+          el('div.kecil', 'Hak akses melekat pada peran, bukan pada individu. Centang aksi yang boleh dilakukan '
+            + 'setiap peran pada setiap modul. Kolom "Koreksi" memberi wewenang mengubah atau membatalkan transaksi '
+            + 'yang sudah tersimpan (jurnal balik otomatis) — berikan hanya kepada pejabat berwenang seperti ketua, '
+            + 'manajer, atau bendahara. Super Administrator selalu memiliki seluruh akses dan Anggota hanya portal, '
+            + 'sehingga keduanya tidak dapat diubah.'),
+        ])]),
+        ...d.data.map((p) => panel(`${p.nama} (${p.jumlah_pengguna} pengguna)`, el('div', [
+          el('div.kecil.lembut.mb8', [p.deskripsi, p.diatur ? ' · susunan hak akses sudah diubah dari bawaan' : '']),
+          p.tetap
+            ? el('div.gap8', p.permissions.map((x) => el('span.lencana-status.st-netral',
+              { gaya: { fontFamily: 'var(--mono)', fontSize: '11px' } }, x)))
+            : el('div.gap8', [
+              el('span.kecil', `${p.permissions.length} izin`),
+              p.permissions.some((x) => x.endsWith('.koreksi'))
+                ? el('span.lencana-status.st-peringatan', `Koreksi: ${p.permissions.filter((x) => x.endsWith('.koreksi'))
+                  .map((x) => NAMA_MODUL[x.split('.')[0]] || x).join(', ')}`)
+                : el('span.lencana-status.st-netral', 'Tanpa wewenang koreksi'),
+              el('button.btn.kecil', { onclick: () => editor(p, d) }, izin('admin.update') ? 'Atur Hak Akses' : 'Lihat Rincian'),
+            ]),
+        ]))),
+      );
+    } catch (err) { galat(err); }
+  }
+
+  function editor(peran, d) {
+    const bolehUbah = izin('admin.update');
+    const kotak = {};
+    const baris = d.modul.map((m) => el('tr', [
+      el('td', NAMA_MODUL[m] || m),
+      ...d.aksi.map((a) => {
+        const cb = el('input', { type: 'checkbox', checked: punya(peran.permissions, `${m}.${a.kode}`),
+          disabled: !bolehUbah, 'aria-label': `${NAMA_MODUL[m] || m} - ${a.nama}` });
+        kotak[`${m}.${a.kode}`] = cb;
+        return el('td', { gaya: { textAlign: 'center', background: a.kode === 'koreksi' ? 'var(--peringatan-bg)' : '' } }, cb);
+      }),
+    ]));
+    const tabelIzin = el('div', { gaya: { overflowX: 'auto', maxHeight: '60vh' } }, el('table.tabel', [
+      el('thead', el('tr', [el('th', 'Modul'), ...d.aksi.map((a) => el('th', { title: a.nama, gaya: { textAlign: 'center' } },
+        a.kode === 'koreksi' ? 'Koreksi' : a.nama))])),
+      el('tbody', baris),
+    ]));
+    const simpan = async (e) => {
+      const tombol = e.currentTarget;
+      tombol.disabled = true;
+      try {
+        const daftar = Object.entries(kotak).filter(([, cb]) => cb.checked).map(([k]) => k);
+        await api.put(`/api/admin/roles/${peran.kode}`, { permissions: daftar });
+        toast(`Hak akses ${peran.nama} tersimpan`, 'sukses', 'Berlaku untuk pengguna peran ini pada permintaan berikutnya.');
+        tutup();
+        muat();
+      } catch (err) { galat(err); } finally { tombol.disabled = false; }
+    };
+    const kembalikan = async () => {
+      if (!await konfirmasi(`Kembalikan hak akses ${peran.nama} ke susunan bawaan?`)) return;
+      try {
+        await api.del(`/api/admin/roles/${peran.kode}`);
+        toast('Hak akses dikembalikan ke bawaan', 'sukses');
+        tutup();
+        muat();
+      } catch (err) { galat(err); }
+    };
+    const tutup = modal({
+      judul: `Hak Akses — ${peran.nama}`, lebar: 'lebar',
+      isi: el('div', [
+        el('div.kecil.lembut.mb8', 'Aksi Koreksi (kolom berwarna) = ubah/batal transaksi tersimpan dengan jurnal balik otomatis.'),
+        tabelIzin,
+      ]),
+      kaki: bolehUbah ? [
+        peran.diatur ? el('button.btn', { onclick: kembalikan }, 'Kembalikan ke Bawaan') : null,
+        el('button.btn', { onclick: () => tutup() }, 'Batal'),
+        el('button.btn.utama', { onclick: simpan }, 'Simpan Hak Akses'),
+      ].filter(Boolean) : [el('button.btn', { onclick: () => tutup() }, 'Tutup')],
+    });
+  }
+
+  await muat();
+  return wadah;
 }
 
 // --------------------------- Pengaturan ---------------------------

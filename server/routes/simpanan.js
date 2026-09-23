@@ -177,7 +177,7 @@ router.post('/api/simpanan/rekening/:id/tutup', 'simpanan.update', ({ params, bo
   }, ctx));
 
 /** Membatalkan setoran/penarikan yang salah input (jurnal dibalik, saldo dikoreksi). */
-router.post('/api/simpanan/transaksi/:id/batal', 'simpanan.update', ({ params, body, ctx }) =>
+router.post('/api/simpanan/transaksi/:id/batal', 'simpanan.koreksi', ({ params, body, ctx }) =>
   svc.batalTransaksi(idParam(params), str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' }), ctx));
 
 router.get('/api/simpanan/anggota/:id', 'simpanan.view', ({ params }) =>

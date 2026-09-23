@@ -147,7 +147,7 @@ async function bukuRekening(r, saatBerubah) {
   let dari = awalTahun();
   let sampai = hariIni();
 
-  const bisaBatal = (m) => izin('simpanan.update') && r.status !== 'tutup'
+  const bisaBatal = (m) => izin('simpanan.koreksi') && r.status !== 'tutup'
     && ['setoran', 'penarikan'].includes(m.jenis) && m.status !== 'batal' && m.jurnal_id;
 
   async function muat() {
