@@ -347,7 +347,8 @@ export function ubahAngsuran(angsuran_id, data, alasan, ctx) {
     batalAngsuran(angsuran_id, alasan || 'Diubah', ctx);
     const baru = bayarAngsuran({
       pinjaman_id: a.pinjaman_id, tanggal: data.tanggal || a.tanggal, nominal: data.nominal ?? a.total_bayar,
-      metode: data.metode || a.metode, bank_account_id: data.bank_account_id, keterangan: data.keterangan ?? a.keterangan,
+      metode: data.metode || a.metode, bank_account_id: data.bank_account_id ?? a.bank_account_id,
+      keterangan: data.keterangan ?? a.keterangan,
     }, ctx);
     return { dibatalkan: a.nomor, pengganti: baru };
   });

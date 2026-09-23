@@ -509,10 +509,11 @@ export function bayarAngsuran({ pinjaman_id, tanggal, nominal, metode = 'tunai',
     const nomor = nextNumber('ANG', tgl);
     const { lastInsertRowid: angsuranId } = run(
       `INSERT INTO pinjaman_angsuran(nomor, pinjaman_id, tanggal, angsuran_ke, bayar_pokok, bayar_bunga,
-        bayar_denda, total_bayar, metode, keterangan, jurnal_id, petugas)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+        bayar_denda, total_bayar, metode, keterangan, jurnal_id, petugas, bank_account_id)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [nomor, pinjaman_id, tgl, angsuranKe, bayarPokok, bayarBunga, bayarDenda, totalBayar,
-        metode, keterangan || null, jurnal.id, ctx?.user?.username || 'sistem'],
+        metode, keterangan || null, jurnal.id, ctx?.user?.username || 'sistem',
+        metode === 'transfer' ? bank_account_id || null : null],
     );
 
     const outPokok = p.outstanding_pokok - bayarPokok;

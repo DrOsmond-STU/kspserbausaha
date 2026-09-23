@@ -39,6 +39,7 @@ const KOLOM_SUSULAN = [
   ['penjualan', 'alasan_batal', 'TEXT'],
   ['pinjaman_angsuran', 'status', "TEXT NOT NULL DEFAULT 'posted'"],
   ['pinjaman_angsuran', 'alasan_batal', 'TEXT'],
+  ['pinjaman_angsuran', 'bank_account_id', 'INTEGER'],
   ['stock_opname', 'alasan_batal', 'TEXT'],
   // Nilai persediaan per barang disimpan utuh (bukan qty × HPP yang sudah
   // dibulatkan) agar kartu stok selalu sama persis dengan akun persediaan.
