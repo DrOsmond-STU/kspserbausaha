@@ -32,6 +32,7 @@ import dokumenRoutes from './routes/dokumen.js';
 import tatakelolaRoutes from './routes/tatakelola.js';
 import adminRoutes from './routes/admin.js';
 import portalRoutes from './routes/portal.js';
+import pusatLaporanRoutes from './routes/pusat-laporan.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, '..', 'public');
@@ -43,7 +44,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const router = mergeRouters(
   authRoutes, dashboardRoutes, masterRoutes, anggotaRoutes, simpananRoutes, pinjamanRoutes,
   akuntansiRoutes, kasRoutes, perdaganganRoutes, organisasiRoutes, dokumenRoutes,
-  tatakelolaRoutes, adminRoutes, portalRoutes,
+  tatakelolaRoutes, adminRoutes, portalRoutes, pusatLaporanRoutes,
 );
 
 const MIME = {

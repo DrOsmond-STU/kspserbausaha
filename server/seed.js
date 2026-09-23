@@ -103,6 +103,12 @@ const PENGATURAN = [
   ['koperasi.telepon', '(021) 1234567', 'Telepon'],
   ['koperasi.email', 'info@ksusejahtera.co.id', 'Surel resmi'],
   ['koperasi.tahun_berdiri', '2018', 'Tahun pendirian'],
+  ['koperasi.kota', 'Jakarta', 'Kota (dipakai pada tanggal tanda tangan)'],
+  ['koperasi.ketua', '', 'Nama ketua pengurus'],
+  ['koperasi.sekretaris', '', 'Nama sekretaris'],
+  ['koperasi.bendahara', '', 'Nama bendahara'],
+  ['koperasi.ketua_pengawas', '', 'Nama ketua pengawas'],
+  ['koperasi.manajer', '', 'Nama manajer'],
 
   ['shu.cadangan', '25', 'Persentase SHU untuk dana cadangan (AD/ART)'],
   ['shu.jasa_modal', '20', 'Persentase SHU untuk jasa modal (simpanan)'],
@@ -453,6 +459,9 @@ export async function seedDemo() {
        ('3171010101800008','Slamet Riyadi',7,1,'2021-07-01',NULL,NULL),
        ('3171010101800009','Nia Ramadhani',7,1,'2022-02-01',NULL,NULL),
        ('3171010101800010','Doni Setiawan',7,2,'2022-02-01',NULL,NULL)`);
+  // Nama pejabat dipakai pada blok tanda tangan seluruh cetakan
+  for (const [k, v] of [['ketua', 'Hj. Sumarni'], ['sekretaris', 'Muhammad Ridwan'], ['bendahara', 'Yuni Astuti'],
+    ['ketua_pengawas', 'Drs. Hartono'], ['manajer', 'Rizal Fadhilah']]) setSetting(`koperasi.${k}`, v);
 
   // ----------------------------------------------------------------------
   // Keanggotaan

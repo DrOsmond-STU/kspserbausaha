@@ -152,8 +152,11 @@ router.get('/api/admin/roles', 'admin.view', () => ({
 // --------------------------- Pengaturan ---------------------------
 
 router.get('/api/admin/settings', 'admin.view', ({ query }) => {
+  // Profil koperasi, aktivasi, dan tanda tangan dikelola di menu Setup
+  // Koperasi (logo berupa data URI besar tidak pantas tampil sebagai isian teks).
   const rows = all(
-    `SELECT * FROM settings ${query.prefix ? 'WHERE key LIKE ?' : ''} ORDER BY key`,
+    `SELECT * FROM settings WHERE key NOT LIKE 'koperasi.%' AND key NOT LIKE 'aktivasi.%' AND key NOT LIKE 'ttd.%'
+       ${query.prefix ? 'AND key LIKE ?' : ''} ORDER BY key`,
     query.prefix ? [`${query.prefix}%`] : []);
   return {
     data: rows,
