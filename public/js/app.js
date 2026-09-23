@@ -12,6 +12,14 @@ const app = document.getElementById('app');
 
 // ------------------------------- Masuk -------------------------------
 
+/** Ubin-ubin transparan di pojok panel identitas halaman masuk. */
+const POLA_MASUK = '<svg viewBox="0 0 320 140" width="100%" height="100%" preserveAspectRatio="none">'
+  + '<g fill="currentColor">'
+  + [[0, 0, 52, .14], [58, 0, 24, .22], [88, 0, 24, .3], [0, 30, 24, .1], [30, 30, 24, .18],
+    [60, 30, 52, .26], [0, 60, 24, .08], [30, 60, 24, .14], [60, 60, 24, .2], [90, 60, 24, .3]]
+    .map(([x, y, w, o]) => `<rect x="${x}" y="${y}" width="${w}" height="24" rx="6" opacity="${o}"/>`).join('')
+  + '</g></svg>';
+
 function layarMasuk(pesanAwal) {
   const form = el('form', { onsubmit: async (e) => { e.preventDefault(); await kirim(); } }, [
     kolom('Nama Pengguna', input('username', { required: true, autocomplete: 'username',
@@ -58,7 +66,12 @@ function layarMasuk(pesanAwal) {
   // Kolom kiri hanya identitas dan konteks regulasi; ia disembunyikan pada
   // layar sempit (lihat app.css) sehingga formulir tidak pernah terdesak.
   const panelMerek = el('section.masuk-merek', [
-    el('div.merek-atas', [lambang(38), el('div.nama', 'ECMS')]),
+    // Pola ubin dekoratif; murni hiasan sehingga disembunyikan dari pembaca layar.
+    el('div.masuk-pola', { 'aria-hidden': 'true', html: POLA_MASUK }),
+    el('div.merek-atas', [
+      el('span.tanda-masuk', lambang(26)),
+      el('div', [el('div.nama', 'ECMS'), el('div.tag', 'Koperasi Serba Usaha')]),
+    ]),
     el('div', [
       el('h2', 'Kelola seluruh usaha koperasi dari satu tempat'),
       el('p.kalimat', 'Keanggotaan, simpan pinjam, toko, akuntansi, hingga tata kelola '
@@ -129,24 +142,38 @@ async function gambarKerangka() {
     ]),
   ]);
 
-  const topbar = el('header.topbar', [
+  // Bilah ringkas hanya tampil di layar sempit (lihat app.css): tombol menu
+  // dan judul tetap terjangkau walau pita judul sudah tergulir ke atas.
+  const topbarMobile = el('div.topbar-mobile', [
     el('button.btn-ikon.tombol-menu', { onclick: bukaSidebar, 'aria-label': 'Buka menu' },
       ikon('menu', { ukuran: 20 })),
-    el('div', { gaya: { minWidth: 0 } }, [
+    el('span.t#judul-mobile', 'Dasbor'),
+  ]);
+
+  // Pita judul (hero): baris kecil konteks, judul besar, keterangan, dan di
+  // kanan tombol-tombol serta angka utama halaman (lihat metrikHero()).
+  const topbar = el('header.topbar', [
+    el('div.topbar-judul', [
+      el('div.eyebrow#eyebrow-halaman', ''),
       el('h1#judul-halaman', 'Dasbor'),
       el('div.sub#sub-halaman', ''),
     ]),
-    el('div.kanan', [
-      el('a.lencana-aktivasi#lencana-aktivasi', { href: '#/setup', gaya: { display: 'none' } }),
-      el('button.btn-ikon#tombol-notif', { title: 'Notifikasi', 'aria-label': 'Notifikasi',
-        onclick: bukaNotifikasi }, [ikon('lonceng', { ukuran: 19 })]),
-      el('button.btn-ikon#tombol-tema', { title: 'Ganti tema', 'aria-label': 'Ganti tema',
-        onclick: gantiTema }, [ikon(namaIkonTema(), { ukuran: 19 })]),
+    el('div.topbar-kanan', [
+      el('div.kanan', [
+        el('a.lencana-aktivasi#lencana-aktivasi', { href: '#/setup', gaya: { display: 'none' } }),
+        el('button.btn-ikon#tombol-notif', { title: 'Notifikasi', 'aria-label': 'Notifikasi',
+          onclick: bukaNotifikasi }, [ikon('lonceng', { ukuran: 19 })]),
+        el('button.btn-ikon#tombol-tema', { title: 'Ganti tema', 'aria-label': 'Ganti tema',
+          onclick: gantiTema }, [ikon(namaIkonTema(), { ukuran: 19 })]),
+      ]),
+      el('div.hero-metrik#hero-metrik'),
     ]),
   ]);
 
+  const halaman = el('div.halaman#halaman');
   kosongkan(app).className = '';
-  app.append(el('div.kerangka', [sidebar, el('main.konten', [topbar, el('div.halaman#halaman')])]));
+  app.append(el('div.kerangka', [sidebar, el('main.konten', [topbarMobile, topbar, halaman])]));
+  pantauTumpang(halaman);
   segarkanNotifikasi();
   segarkanIdentitas();
 }
@@ -292,9 +319,55 @@ async function bukaNotifikasi() {
 export function judulHalaman(teks, sub = '') {
   const j = document.getElementById('judul-halaman');
   const s = document.getElementById('sub-halaman');
+  const m = document.getElementById('judul-mobile');
   if (j) j.textContent = teks;
   if (s) s.textContent = sub;
+  if (m) m.textContent = teks;
   document.title = `${teks} · ECMS Koperasi`;
+}
+
+/**
+ * Angka utama di sisi kanan pita judul, mis. metrikHero('Rp 1,59 M', 'Total aset').
+ * Dikosongkan otomatis setiap kali berpindah halaman.
+ */
+export function metrikHero(nilai, label = '') {
+  const kotak = document.getElementById('hero-metrik');
+  if (!kotak) return;
+  kosongkan(kotak);
+  if (nilai === null || nilai === undefined || nilai === '') return;
+  kotak.append(el('div.angka', String(nilai)), label ? el('div.lbl', label) : null);
+}
+
+/** Baris konteks di atas judul: kelompok menu (atau nama koperasi) · bulan berjalan. */
+function aturEyebrow(rute) {
+  const node = document.getElementById('eyebrow-halaman');
+  if (!node) return;
+  const bulan = new Date().toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+  const grup = rute === '/' ? (negara.koperasi || 'Koperasi Serba Usaha')
+    : MENU.find((g) => g.item.some((i) => i.rute === rute))?.judul;
+  node.textContent = grup ? `${grup} · ${bulan}` : bulan;
+}
+
+/**
+ * Isi halaman yang diawali kartu (panel, ubin KPI, atau kisi berisi kartu)
+ * ditarik naik menumpang tepi bawah pita judul. Isi yang diawali teks biasa
+ * tidak ditarik, supaya teks tidak jatuh di atas gradasi.
+ */
+function aturTumpang(halaman) {
+  let n = halaman.firstElementChild;
+  while (n && !n.className && n.firstElementChild) n = n.firstElementChild;
+  const kartu = (x) => !!x && x.matches('.panel, .kpi, .pl-tata, .setup-tata');
+  const cocok = kartu(n) || (!!n && n.matches('.grid') && kartu(n.firstElementChild));
+  halaman.classList.toggle('tumpang', cocok);
+}
+
+function pantauTumpang(halaman) {
+  let dijadwal = false;
+  new MutationObserver(() => {
+    if (dijadwal) return;
+    dijadwal = true;
+    requestAnimationFrame(() => { dijadwal = false; aturTumpang(halaman); });
+  }).observe(halaman, { childList: true, subtree: true });
 }
 
 let rutePakai = null;
@@ -322,6 +395,8 @@ export async function navigasi(hash, paksa = false) {
 
   const halaman = document.getElementById('halaman');
   if (!halaman) return;
+  aturEyebrow(rute);
+  metrikHero(null);
   const def = TAMPILAN[rute];
   if (!def) {
     judulHalaman('Halaman tidak ditemukan');

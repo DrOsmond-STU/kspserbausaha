@@ -220,22 +220,28 @@ export const kosong = (judulTeks = 'Belum ada data', catatan = null, namaIkon = 
     catatan && el('div.kecil', catatan),
   ]);
 
-export function panel(judulTeks, isi, aksi = []) {
+/** Kepala panel: judul, keterangan kecil opsional di bawahnya, dan tombol aksi. */
+function kepalaPanel(judulTeks, aksi, sub) {
+  return el('div.panel-kepala', [
+    sub ? el('div.panel-judul', [el('h3', judulTeks), el('div.panel-sub', sub)]) : el('h3', judulTeks),
+    aksi.length ? el('div.aksi', aksi) : null,
+  ]);
+}
+
+/**
+ * Kartu berjudul. Argumen keempat opsional: { sub } untuk keterangan di
+ * bawah judul (mis. rentang waktu atau sumber data).
+ */
+export function panel(judulTeks, isi, aksi = [], { sub } = {}) {
   return el('div.panel', [
-    judulTeks && el('div.panel-kepala', [
-      el('h3', judulTeks),
-      aksi.length ? el('div.aksi', aksi) : null,
-    ]),
+    judulTeks && kepalaPanel(judulTeks, aksi, sub),
     el('div.panel-isi', [isi]),
   ]);
 }
 
-export function panelTabel(judulTeks, isi, aksi = []) {
+export function panelTabel(judulTeks, isi, aksi = [], { sub } = {}) {
   return el('div.panel', [
-    judulTeks && el('div.panel-kepala', [
-      el('h3', judulTeks),
-      aksi.length ? el('div.aksi', aksi) : null,
-    ]),
+    judulTeks && kepalaPanel(judulTeks, aksi, sub),
     el('div.panel-isi.rapat', [el('div.tabel-bungkus', [isi])]),
   ]);
 }

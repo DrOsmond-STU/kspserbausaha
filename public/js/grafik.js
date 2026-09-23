@@ -7,20 +7,38 @@
  * legenda dan label langsung sebagai penanda identitas selain warna.
  */
 
-const gelap = () => {
-  const t = document.documentElement.dataset.tema;
-  if (t === 'gelap') return true;
-  if (t === 'terang') return false;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+// Warna diambil dari token CSS (app.css: --seri-1..4, --teks, --border, ...)
+// sehingga grafik selalu seirama dengan tema aktif, terang maupun gelap.
+// Nilai cadangan dipakai bila stylesheet belum termuat.
+const token = (nama, cadangan) => {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(nama).trim();
+  return v || cadangan;
 };
 
-export const SERI = () => (gelap()
-  ? ['#3987e5', '#d95926', '#199e70', '#c98500']
-  : ['#2a78d6', '#eb6834', '#1baf7a', '#eda100']);
+export const SERI = () => [
+  token('--seri-1', '#11875a'), token('--seri-2', '#e0702a'),
+  token('--seri-3', '#2a78d6'), token('--seri-4', '#c98f00'),
+];
 
-const tinta = () => (gelap()
-  ? { teks: '#e2e8f0', lembut: '#94a3b8', grid: '#1e293b', permukaan: '#111a2b' }
-  : { teks: '#0f172a', lembut: '#475569', grid: '#e2e8f0', permukaan: '#ffffff' });
+const tinta = () => ({
+  teks: token('--teks', '#0a1f16'), lembut: token('--teks-lembut', '#46635a'),
+  grid: token('--border', '#dbe7e0'), permukaan: token('--bg-panel', '#ffffff'),
+  isi: Number(token('--grafik-isi', '.18')) || 0.18,
+});
+
+let nomorGradasi = 0;
+/** Gradasi tegak satu warna (pekat di atas, memudar ke bawah) untuk area & batang. */
+function gradasi(svg, warna, atas, bawah) {
+  const id = `gr-${++nomorGradasi}`;
+  const lg = s('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 }, [
+    s('stop', { offset: '0%', 'stop-color': warna, 'stop-opacity': atas }),
+    s('stop', { offset: '100%', 'stop-color': warna, 'stop-opacity': bawah }),
+  ]);
+  let defs = svg.querySelector('defs');
+  if (!defs) { defs = s('defs'); svg.prepend(defs); }
+  defs.append(lg);
+  return `url(#${id})`;
+}
 
 const NS = 'http://www.w3.org/2000/svg';
 function s(tag, attr = {}, anak = []) {
@@ -153,15 +171,17 @@ export function grafikGaris({ label, seri, tinggi = 240, format = nfRingkas, are
   seri.forEach((sr, si) => {
     const w = warna[si % warna.length];
     const titik = sr.data.map((v, i) => [X(i), Y(Number(v) || 0)]);
-    if (area && seri.length === 1) {
+    if (area) {
+      // Area bergradasi; pada banyak seri dibuat lebih tipis agar tidak menutupi.
+      const pekat = seri.length === 1 ? c.isi * 1.6 : c.isi * 0.8;
       svg.append(s('path', {
         d: `M${titik.map((p) => p.join(',')).join(' L')} L${X(label.length - 1)},${Y(bawah)} L${X(0)},${Y(bawah)} Z`,
-        fill: w, opacity: 0.12,
+        fill: gradasi(svg, w, pekat, 0),
       }));
     }
     svg.append(s('path', {
       d: `M${titik.map((p) => p.join(',')).join(' L')}`,
-      fill: 'none', stroke: w, 'stroke-width': 2,
+      fill: 'none', stroke: w, 'stroke-width': 2.5,
       'stroke-linejoin': 'round', 'stroke-linecap': 'round',
     }));
     // Label langsung di titik terakhir - identitas tidak bergantung warna saja
@@ -271,6 +291,8 @@ export function grafikBatang({ label, data, tinggi = 230, format = nfRingkas, wa
 
   const svg = s('svg', { class: 'grafik', viewBox: `0 0 ${W} ${H}`,
     preserveAspectRatio: 'xMidYMid meet', role: 'img' });
+  // Batang bergradasi: pekat di puncak, sedikit memudar ke dasar.
+  const isiBatang = gradasi(svg, w1, 1, 0.62);
   for (const t of tik) {
     svg.append(s('line', { x1: m.kiri, x2: m.kiri + pw, y1: Y(t), y2: Y(t),
       stroke: c.grid, 'stroke-width': 1 }));
@@ -285,7 +307,7 @@ export function grafikBatang({ label, data, tinggi = 230, format = nfRingkas, wa
     const x = m.kiri + i * lebarSlot + (lebarSlot - lebarBatang) / 2;
     const y = v >= 0 ? Y(v) : Y(0);
     const h = Math.max(1, Math.abs(Y(v) - Y(0)));
-    const btg = s('rect', { x, y, width: lebarBatang, height: h, rx: 4, fill: w1 });
+    const btg = s('rect', { x, y, width: lebarBatang, height: h, rx: 4, fill: isiBatang });
     btg.addEventListener('mouseenter', (ev) => {
       btg.setAttribute('opacity', 0.82);
       tip.innerHTML = '';
@@ -396,8 +418,10 @@ export function grafikCincin({ bagian, tengahLabel, tengahNilai, ukuran = 190 })
     sudut = akhir + celah;
   });
   if (tengahNilai !== undefined) {
-    svg.append(s('text', { x: cx, y: cy - 2, 'text-anchor': 'middle', 'font-size': 17,
-      'font-weight': 700, fill: c.teks }, tengahNilai));
+    // Lubang cincin selebar ±92 satuan; nilai panjang diperkecil supaya muat.
+    const ukuranTeks = Math.min(17, 80 / (Math.max(1, String(tengahNilai).length) * 0.56));
+    svg.append(s('text', { x: cx, y: cy - 2, 'text-anchor': 'middle', 'font-size': ukuranTeks.toFixed(1),
+      'font-weight': 700, fill: c.teks, style: 'font-family:var(--mono)' }, tengahNilai));
     svg.append(s('text', { x: cx, y: cy + 15, 'text-anchor': 'middle', 'font-size': 10.5,
       fill: c.lembut }, tengahLabel || ''));
   }
