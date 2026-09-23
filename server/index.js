@@ -4,6 +4,7 @@
  */
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -65,6 +66,30 @@ const MIME = {
 /** Rute publik yang tidak memerlukan sesi. */
 const PUBLIK = new Set(['POST /api/auth/login', 'POST /api/auth/logout', 'GET /api/info']);
 
+/**
+ * Sidik isi seluruh berkas publik, dihitung sekali saat proses menyala.
+ *
+ * Singgahan hosting di depan aplikasi memaksa berkas .js/.css disimpan 30 hari
+ * (immutable) dan mengabaikan Cache-Control dari aplikasi. Karena itu kerangka
+ * halaman memuat aset lewat /v/<sidik>/...: setiap pemasangan yang mengubah isi
+ * berkas menghasilkan alamat baru, sehingga browser langsung memakai versi
+ * terbaru tanpa perlu Ctrl+F5, sementara versi yang sama tetap boleh disimpan
+ * selamanya.
+ */
+const VERSI_ASET = (() => {
+  const h = createHash('sha1');
+  const telusur = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const jalur = join(dir, e.name);
+      if (e.isDirectory()) telusur(jalur);
+      else { h.update(jalur.slice(PUBLIC_DIR.length)); h.update(readFileSync(jalur)); }
+    }
+  };
+  try { telusur(PUBLIC_DIR); } catch { h.update(String(Date.now())); }
+  return h.digest('hex').slice(0, 12);
+})();
+const AWALAN_VERSI = /^\/v\/[0-9a-z]{1,40}(?=\/)/;
+
 const sidikLogo = (isi) => createHash('sha1').update(isi).digest('hex').slice(0, 12);
 
 /** Nama koperasi & alamat logo untuk halaman yang tampil sebelum masuk. */
@@ -74,6 +99,10 @@ function identitasPublik() {
 }
 
 async function sajikanStatis(req, res, pathname) {
+  // /v/<sidik>/js/app.js dilayani sebagai /js/app.js dan boleh disimpan
+  // selamanya, karena sidik berganti setiap kali isi berkas berganti.
+  const berversi = AWALAN_VERSI.test(pathname);
+  if (berversi) pathname = pathname.replace(AWALAN_VERSI, '');
   const bersih = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   let file = join(PUBLIC_DIR, bersih === '/' ? 'index.html' : bersih);
   if (!file.startsWith(PUBLIC_DIR)) {
@@ -110,7 +139,7 @@ async function sajikanStatis(req, res, pathname) {
     const etag = `"${createHash('sha1').update(data).digest('hex').slice(0, 16)}"`;
     const kepala = {
       'X-Content-Type-Options': 'nosniff',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': berversi && extname(file) !== '.html' ? 'public, max-age=31536000, immutable' : 'no-cache',
       ETag: etag,
     };
     if (req.headers['if-none-match'] === etag) {
@@ -161,6 +190,8 @@ const server = http.createServer(async (req, res) => {
       // Identitas yang memang tampil di setiap cetakan, sehingga aman dibuka
       // sebelum masuk: halaman masuk & ikon tab memakai logo dari Setup Koperasi.
       koperasi: identitasPublik(),
+      // Dipakai kerangka halaman untuk memuat /v/<aset>/app.css & js/app.js.
+      aset: VERSI_ASET,
     });
     return;
   }

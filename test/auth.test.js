@@ -121,6 +121,21 @@ describe('Penyajian berkas statis', () => {
     }
   });
 
+  test('aset berversi /v/<sidik>/ sama isinya dan boleh disimpan selamanya', async () => {
+    const { aset } = await (await fetch(`${asal}/api/info`)).json();
+    assert.match(aset, /^[0-9a-f]{12}$/);
+    for (const jalur of ['/js/app.js', '/js/inti.js', '/app.css']) {
+      const biasa = await (await fetch(`${asal}${jalur}`)).text();
+      const r = await fetch(`${asal}/v/${aset}${jalur}`);
+      assert.equal(r.status, 200, jalur);
+      assert.match(r.headers.get('cache-control'), /immutable/);
+      assert.equal(await r.text(), biasa, `${jalur} berversi harus sama isinya`);
+    }
+    assert.equal((await fetch(`${asal}/v/${aset}/js/tidak-ada.js`)).status, 404);
+    const naik = await fetch(`${asal}/v/${aset}/../../server/db.js`);
+    assert.ok(naik.status >= 400, `seharusnya ditolak, bukan ${naik.status}`);
+  });
+
   test('naik folder tidak dapat keluar dari direktori publik', async () => {
     const r = await fetch(`${asal}/../server/db.js`);
     assert.ok(r.status >= 400, `seharusnya ditolak, bukan ${r.status}`);

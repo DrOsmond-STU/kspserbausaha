@@ -12,7 +12,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
-  <link rel="stylesheet" href="/app.css">
+  <!-- app.css & js/app.js dimuat lewat /v/<sidik>/ oleh skrip di bawah; lihat catatannya. -->
+  <style>
+    html,body{margin:0;height:100%;background:#f1f5fb}
+    @media (prefers-color-scheme:dark){html,body{background:#071220}}
+    .splash{min-height:100vh;display:grid;place-content:center;justify-items:center;gap:18px;
+      background:linear-gradient(135deg,#062b63,#1a7bd4);color:#fff;font:800 28px/1 system-ui,sans-serif;letter-spacing:.14em}
+  </style>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><path d='M24 4 44 15v18L24 44 4 33V15L24 4Z' fill='%230b7d5e'/><path d='M16 30V21m8 9V15m8 15v-6' stroke='%23fff' stroke-width='3' stroke-linecap='round'/></svg>">
 </head>
 <body>
@@ -24,6 +30,27 @@
   </div>
   <div id="toast-host" class="toast-host" aria-live="polite"></div>
   <div id="modal-host"></div>
-  <script type="module" src="/js/app.js"></script>
+  <script>
+    /* Hosting menyimpan berkas .js/.css selama 30 hari dan mengabaikan header
+       aplikasi. Maka aset dimuat lewat /v/<sidik>/: sidik diambil dari
+       /api/info dan berganti setiap kali isi berkas berganti, sehingga versi
+       baru langsung terpakai sesudah pemasangan tanpa Ctrl+F5. Impor relatif
+       di dalam app.js ikut membawa awalan yang sama. */
+    (function () {
+      function muat(versi) {
+        var awal = '/v/' + versi;
+        var gaya = document.createElement('link');
+        gaya.rel = 'stylesheet'; gaya.href = awal + '/app.css';
+        document.head.appendChild(gaya);
+        var skrip = document.createElement('script');
+        skrip.type = 'module'; skrip.src = awal + '/js/app.js';
+        document.body.appendChild(skrip);
+      }
+      fetch('/api/info', { cache: 'no-store', credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (info) { window.INFO_ECMS = info; muat(info.aset || Date.now()); })
+        .catch(function () { muat(Date.now()); });
+    }());
+  </script>
 </body>
 </html>

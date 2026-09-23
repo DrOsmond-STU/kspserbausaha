@@ -463,8 +463,8 @@ window.addEventListener('hashchange', () => navigasi(location.hash));
   } catch { /* penyimpanan tidak tersedia */ }
 
   try {
-    const info = await api.get('/api/info');
-    negara.aplikasi = info;
+    // Kerangka halaman sudah mengambil /api/info untuk menentukan versi aset.
+    negara.aplikasi = window.INFO_ECMS || await api.get('/api/info');
   } catch { /* abaikan */ }
 
   try {
