@@ -51,13 +51,16 @@ router.get('/api/persediaan/penyesuaian', 'persediaan.view', ({ query }) => {
   if (query.sampai) { w.push('m.tanggal <= ?'); p.push(query.sampai); }
   if (query.barang_id) { w.push('m.barang_id = ?'); p.push(Number(query.barang_id)); }
   const limit = Math.min(Number(query.limit) || 100, 500);
+  const offset = Math.max(Number(query.offset) || 0, 0);
   return {
     data: all(
       `SELECT m.*, b.kode, b.nama, b.satuan, g.nama AS gudang_nama,
               (SELECT j.nomor FROM jurnal j WHERE j.referensi = 'stok:' || m.id ORDER BY j.id LIMIT 1) AS jurnal_nomor,
               EXISTS(SELECT 1 FROM mutasi_stok x WHERE x.referensi = 'batal:stok:' || m.id) AS dibatalkan
          FROM mutasi_stok m JOIN barang b ON b.id = m.barang_id JOIN gudang g ON g.id = m.gudang_id
-        WHERE ${w.join(' AND ')} ORDER BY m.tanggal DESC, m.id DESC LIMIT ?`, [...p, limit]),
+        WHERE ${w.join(' AND ')} ORDER BY m.tanggal DESC, m.id DESC LIMIT ? OFFSET ?`, [...p, limit, offset]),
+    total: scalar(`SELECT COUNT(*) FROM mutasi_stok m WHERE ${w.join(' AND ')}`, p),
+    limit, offset,
   };
 });
 
@@ -283,12 +286,14 @@ router.get('/api/pembelian', 'pembelian.view', ({ query }) => {
   if (query.tipe) { w.push('b.tipe = ?'); p.push(query.tipe); }
   const where = w.length ? `WHERE ${w.join(' AND ')}` : '';
   const limit = Math.min(Number(query.limit) || 50, 500);
+  const offset = Math.max(Number(query.offset) || 0, 0);
   return {
     data: all(
       `SELECT b.*, s.nama AS supplier_nama, g.nama AS gudang_nama FROM pembelian b
          LEFT JOIN supplier s ON s.id = b.supplier_id LEFT JOIN gudang g ON g.id = b.gudang_id
-         ${where} ORDER BY b.tanggal DESC, b.id DESC LIMIT ?`, [...p, limit]),
+         ${where} ORDER BY b.tanggal DESC, b.id DESC LIMIT ? OFFSET ?`, [...p, limit, offset]),
     total: scalar(`SELECT COUNT(*) FROM pembelian b ${where}`, p),
+    limit, offset,
   };
 });
 

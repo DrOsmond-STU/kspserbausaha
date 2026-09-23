@@ -2,8 +2,9 @@
  * Modul 5 - Pinjaman.
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, rp, rpRingkas, angka, persen, tgl, status, judul,
-  modal, kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah, kosong,
+  api, el, kpi, panel, panelTabel, tabel, rp, rpRingkas, angka, persen, tgl, status, judul, modal, kolom,
+  input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah, kosong, tabelServer,
+  ukuranHalaman, ambilSemua,
 } from '../inti.js';
 import { grafikCincin } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
@@ -96,8 +97,9 @@ export async function render(param) {
   async function muat() {
     kosongkan(daftar).append(memuat());
     try {
-      const d = await api.get('/api/pinjaman', { q, status: filter, limit: 100 });
-      kosongkan(daftar).append(panelTabel(`Daftar Pinjaman (${angka(d.total)})`, tabel([
+      const ambil = (h) => api.get('/api/pinjaman', { q, status: filter, ...h });
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
+      kosongkan(daftar).append(panelTabel(`Daftar Pinjaman (${angka(d.total)})`, tabelServer([
         { judul: 'Nomor', render: (p) => el('span.mono.kecil', p.nomor) },
         { judul: 'Anggota', render: (p) => el('div', [
           el('div.tebal', p.anggota_nama), el('div.kecil.samar', p.nomor_anggota)]) },
@@ -109,15 +111,15 @@ export async function render(param) {
         { judul: 'Kolek.', render: (p) => (p.status === 'dicairkan' || p.status === 'restrukturisasi'
           ? el(`span.lencana-status.${kelasKol(p.kolektibilitas)}`, `${p.kolektibilitas}`) : el('span.samar', '-')) },
         { judul: 'Status', render: (p) => status(p.status) },
-      ], d.data, { saatKlik: (p) => { location.hash = `#/pinjaman/${p.id}`; } }), [
-        el('input', { type: 'search', placeholder: 'Cari nomor atau nama anggota…',
+      ], { awal: d, ambil, saatKlik: (p) => { location.hash = `#/pinjaman/${p.id}`; } }), [
+        el('input', { type: 'search', placeholder: 'Cari nomor atau nama anggota…', nilai: q,
           oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
         pilih('f', ['', 'diajukan', 'dianalisis', 'disetujui', 'dicairkan', 'lunas', 'ditolak',
           'batal', 'restrukturisasi'].map((s) => ({ nilai: s, teks: s ? judul(s) : 'Semua status' })), filter,
         { onchange: (e) => { filter = e.target.value; muat(); } }),
         el('button.btn', { onclick: simulasi }, 'Simulasi Angsuran'),
         izin('pinjaman.create') && el('button.btn.utama', { onclick: () => formAjukan(muat) }, '+ Ajukan Pinjaman'),
-        tombolCetak(() => ({
+        tombolCetak(async () => { const semua = await ambilSemua(ambil); return {
           judul: 'Daftar Pinjaman Anggota', jenis_ttd: 'laporan', orientasi: 'landscape',
           keterangan: [filter && `Status: ${judul(filter)}`, q && `Pencarian: "${q}"`].filter(Boolean),
           bagian: [{
@@ -127,11 +129,11 @@ export async function render(param) {
               { kunci: 'bunga_tahunan', label: 'Jasa % p.a.', tipe: 'persen' }, { kunci: 'pokok', label: 'Pokok', tipe: 'uang' },
               { kunci: 'outstanding_pokok', label: 'Sisa Pokok', tipe: 'uang' }, { kunci: 'kolektibilitas', label: 'Kolek.', tipe: 'angka' },
               { kunci: 'status', label: 'Status' }],
-            baris: d.data.map((p, i) => ({ ...p, no: i + 1, status: judul(p.status) })),
-            total: { pokok: d.data.reduce((t, p) => t + p.pokok, 0),
-              outstanding_pokok: d.data.reduce((t, p) => t + p.outstanding_pokok, 0) },
+            baris: semua.map((p, i) => ({ ...p, no: i + 1, status: judul(p.status) })),
+            total: { pokok: semua.reduce((t, p) => t + p.pokok, 0),
+              outstanding_pokok: semua.reduce((t, p) => t + p.outstanding_pokok, 0) },
           }],
-        }), { label: 'Cetak' }),
+        }; }, { label: 'Cetak' }),
       ].filter(Boolean)));
     } catch (err) { galat(err); }
   }

@@ -2,8 +2,8 @@
  * Modul 14 - Penjualan & Piutang.
  */
 import {
-  api, el, kpi, panelTabel, tabel, rp, angka, desimal, tgl, status, judul, modal, toast,
-  galat, memuat, kosongkan, hariIni, awalTahun, kolom, input, pilih, bacaForm,
+  api, el, kpi, panelTabel, tabel, rp, angka, desimal, tgl, status, judul, modal, toast, galat, memuat,
+  kosongkan, hariIni, awalTahun, kolom, input, pilih, bacaForm, tabelServer, ukuranHalaman, ambilSemua,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 import { hutangTab, daftarRekeningBank, kolomRekeningBank, aturKolomBank, dialogKoreksi } from './pembelian.js';
@@ -137,10 +137,10 @@ async function transaksiTab() {
   async function muat() {
     kosongkan(wadah).append(memuat());
     try {
-      const d = await api.get('/api/penjualan', { dari, sampai, q, limit: 200 });
+      const ambil = (h) => api.get('/api/penjualan', { dari, sampai, q, ...h });
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
       // Transaksi batal tetap tampil, tetapi tidak dihitung pada omzet/rata-rata/total cetak.
       const batal = d.jumlah_batal ?? d.data.filter((p) => p.status === 'batal').length;
-      const sah = d.data.filter((p) => p.status !== 'batal');
       const koreksi = bolehKoreksiJual();
       kosongkan(wadah).append(
         el('div.grid.k3.mb16', [
@@ -148,7 +148,7 @@ async function transaksiTab() {
           kpi('Omzet Periode', rp(d.omzet), { jenis: 'sukses' }),
           kpi('Rata-rata per Transaksi', rp(d.total - batal ? d.omzet / (d.total - batal) : 0)),
         ]),
-        panelTabel('Transaksi Penjualan', tabel([
+        panelTabel('Transaksi Penjualan', tabelServer([
           { judul: 'Tanggal', render: (p) => el('span.nowrap', tgl(p.tanggal)) },
           { judul: 'Nomor', render: (p) => el('span.mono.kecil', p.nomor) },
           { judul: 'Tipe', render: (p) => p.tipe.toUpperCase() },
@@ -172,12 +172,16 @@ async function transaksiTab() {
             koreksi && p.status === 'selesai' && !p.ada_retur && el('button.btn.kecil.bahaya', {
               onclick: () => batalPenjualan(p, muat) }, 'Batal'),
           ].filter(Boolean)) },
-        ], d.data, { saatKlik: (p) => lihat(p.id, muat).catch(galat), kosongTeks: 'Belum ada transaksi pada periode ini' }), [
-          el('input', { type: 'search', placeholder: 'Cari nomor transaksi…',
+        ], { awal: d, ambil, saatKlik: (p) => lihat(p.id, muat).catch(galat),
+          kosongTeks: 'Belum ada transaksi pada periode ini' }), [
+          el('input', { type: 'search', placeholder: 'Cari nomor transaksi…', nilai: q,
             oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
           el('input', { type: 'date', nilai: dari, onchange: (e) => { dari = e.target.value; muat(); } }),
           el('input', { type: 'date', nilai: sampai, onchange: (e) => { sampai = e.target.value; muat(); } }),
-          tombolCetak(() => ({
+          tombolCetak(async () => {
+            const semua = await ambilSemua(ambil);
+            const sah = semua.filter((p) => p.status !== 'batal');
+            return {
             judul: 'Daftar Transaksi Penjualan', subjudul: `Periode ${tgl(dari, true)} s.d. ${tgl(sampai, true)}`,
             jenis_ttd: 'laporan', orientasi: 'landscape',
             ringkasan: [{ label: 'Jumlah transaksi', nilai: angka(d.total) }, { label: 'Omzet periode', nilai: rp(d.omzet) }],
@@ -186,13 +190,14 @@ async function transaksiTab() {
               { kunci: 'tipe', label: 'Tipe' }, { kunci: 'pembeli', label: 'Pembeli' }, { kunci: 'metode', label: 'Metode' },
               { kunci: 'total', label: 'Total', tipe: 'uang' }, { kunci: 'laba', label: 'Laba Kotor', tipe: 'uang' },
               { kunci: 'status', label: 'Status' },
-            ], baris: d.data.map((p) => ({ ...p, tipe: p.tipe.toUpperCase(), pembeli: pembeli(p),
+            ], baris: semua.map((p) => ({ ...p, tipe: p.tipe.toUpperCase(), pembeli: pembeli(p),
               metode: judul(p.metode_bayar), laba: p.status === 'batal' ? null : p.total - p.hpp,
               status: p.status === 'batal' ? `Batal${p.alasan_batal ? ` (${p.alasan_batal})` : ''}` : judul(p.status) })),
             total: { total: sah.reduce((s, p) => s + p.total, 0), laba: sah.reduce((s, p) => s + p.total - p.hpp, 0) } }],
-            catatan: [d.total > d.data.length ? `Menampilkan ${d.data.length} dari ${d.total} transaksi.` : '',
+            catatan: [d.total > semua.length ? `Menampilkan ${semua.length} dari ${d.total} transaksi.` : '',
               batal ? 'Transaksi berstatus batal tidak dijumlahkan.' : ''].filter(Boolean).join(' ') || undefined,
-          }), { label: 'Cetak' }),
+            };
+          }, { label: 'Cetak' }),
         ]),
       );
     } catch (err) { galat(err); }

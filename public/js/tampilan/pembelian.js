@@ -2,8 +2,8 @@
  * Modul 13 - Pembelian & Utang Usaha.
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, rp, angka, desimal, tgl, status, judul, modal,
-  kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, persen,
+  api, el, kpi, panel, panelTabel, tabel, rp, angka, desimal, tgl, status, judul, modal, kolom, input, pilih,
+  bacaForm, toast, galat, memuat, kosongkan, hariIni, persen, tabelServer, ukuranHalaman, ambilSemua,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 import { cetakDokumen, tombolCetak, tawaranCetak, tandaAir } from '../cetak.js';
@@ -269,8 +269,9 @@ async function dokumenTab() {
   async function muat() {
     kosongkan(wadah).append(memuat());
     try {
-      const d = await api.get('/api/pembelian', { status: filter, limit: 100 });
-      kosongkan(wadah).append(panelTabel(`Dokumen Pembelian (${angka(d.total)})`, tabel([
+      const ambil = (h) => api.get('/api/pembelian', { status: filter, ...h });
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
+      kosongkan(wadah).append(panelTabel(`Dokumen Pembelian (${angka(d.total)})`, tabelServer([
         { judul: 'Nomor', render: (p) => el('span.mono.kecil', p.nomor) },
         { judul: 'Tanggal', render: (p) => tgl(p.tanggal) },
         { judul: 'Tipe', render: (p) => p.tipe.toUpperCase() },
@@ -284,7 +285,7 @@ async function dokumenTab() {
           title: 'Cetak bukti pesanan pembelian',
           onclick: (e) => { e.stopPropagation(); cetakDenganTombol(e, async () => dokPO(await api.get(`/api/pembelian/${p.id}`))); },
         }, 'Cetak') },
-      ], d.data, { saatKlik: (p) => { location.hash = `#/pembelian/${p.id}`; },
+      ], { awal: d, ambil, saatKlik: (p) => { location.hash = `#/pembelian/${p.id}`; },
         kosongTeks: 'Belum ada dokumen pembelian' }), [
         pilih('f', ['', 'draft', 'diajukan', 'disetujui', 'diterima', 'selesai', 'batal']
           .map((s) => ({ nilai: s, teks: s ? judul(s) : 'Semua status' })), filter,

@@ -2,8 +2,8 @@
  * Modul 26 - Administrator.
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, angka, waktu, tgl, status, judul, modal, kolom,
-  input, pilih, bacaForm, toast, galat, memuat, kosongkan, konfirmasi, kosong,
+  api, el, kpi, panel, panelTabel, tabel, angka, waktu, tgl, status, judul, modal, kolom, input, pilih,
+  bacaForm, toast, galat, memuat, kosongkan, konfirmasi, kosong, tabelServer, ukuranHalaman, ambilSemua,
 } from '../inti.js';
 import { izin, negara } from '../app.js';
 
@@ -433,8 +433,9 @@ async function auditTab() {
   async function muat() {
     kosongkan(wadah).append(memuat());
     try {
+      const ambil = (h) => api.get('/api/admin/audit-log', { q, modul, aksi, ...h });
       const [d, v] = await Promise.all([
-        api.get('/api/admin/audit-log', { q, modul, aksi, limit: 200 }),
+        ambil({ limit: ukuranHalaman(), offset: 0 }),
         api.get('/api/admin/audit-log/verifikasi'),
       ]);
       kosongkan(wadah).append(
@@ -444,7 +445,7 @@ async function auditTab() {
           el('div.kecil', v.penjelasan),
           el('div.kecil.samar', { gaya: { marginTop: '4px' } }, v.dasar_hukum),
         ])]),
-        panelTabel(`Jejak Audit (${angka(d.total)})`, tabel([
+        panelTabel(`Jejak Audit (${angka(d.total)})`, tabelServer([
           { judul: 'Waktu', render: (a) => el('span.kecil.nowrap', waktu(a.waktu)) },
           { judul: 'Pengguna', render: (a) => el('span.mono.kecil', a.username || 'sistem') },
           { judul: 'Aksi', render: (a) => status(a.aksi === 'delete' ? 'bahaya'
@@ -454,8 +455,8 @@ async function auditTab() {
           { judul: 'IP', render: (a) => el('span.mono.kecil.samar', a.ip || '-') },
           { judul: 'Hash', render: (a) => el('span.mono.kecil.samar',
             a.hash ? `${a.hash.slice(0, 10)}…` : '-') },
-        ], d.data, { kosongTeks: 'Belum ada jejak audit' }), [
-          el('input', { type: 'search', placeholder: 'Cari keterangan…',
+        ], { awal: d, ambil, kosongTeks: 'Belum ada jejak audit' }), [
+          el('input', { type: 'search', placeholder: 'Cari keterangan…', nilai: q,
             oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
           pilih('m', ['', 'anggota', 'simpanan', 'pinjaman', 'akuntansi', 'kas', 'pos', 'pembelian',
             'shu', 'aset', 'rat', 'dokumen', 'approval', 'admin', 'crm', 'audit', 'risiko',

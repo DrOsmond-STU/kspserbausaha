@@ -2,8 +2,9 @@
  * Modul 3 - Manajemen Keanggotaan.
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, rp, angka, tgl, status, judul, modal, kolom, input,
-  pilih, bacaForm, toast, galat, konfirmasi, kosong, memuat, kosongkan, persen,
+  api, el, kpi, panel, panelTabel, tabel, rp, angka, tgl, status, judul, modal, kolom, input, pilih,
+  bacaForm, toast, galat, konfirmasi, kosong, memuat, kosongkan, persen, tabelServer, ukuranHalaman,
+  ambilSemua,
 } from '../inti.js';
 import { grafikBatang, grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
@@ -48,8 +49,9 @@ export async function render(param) {
   async function muat() {
     kosongkan(daftar).append(memuat());
     try {
-      const d = await api.get('/api/anggota', { q, status: filter, limit: 100 });
-      kosongkan(daftar).append(panelTabel(`Daftar Anggota (${angka(d.total)})`, tabel([
+      const ambil = (h) => api.get('/api/anggota', { q, status: filter, ...h });
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
+      kosongkan(daftar).append(panelTabel(`Daftar Anggota (${angka(d.total)})`, tabelServer([
         { judul: 'No. Anggota', render: (r) => el('span.mono', r.nomor_anggota) },
         { judul: 'Nama', render: (r) => el('div', [
           el('div.tebal', r.nama),
@@ -61,7 +63,8 @@ export async function render(param) {
         { judul: 'Pinjaman', angka: true, render: (r) => (r.outstanding_pinjaman
           ? el('span.neg', rp(r.outstanding_pinjaman)) : el('span.samar', '-')) },
         { judul: 'Status', render: (r) => status(r.status) },
-      ], d.data, {
+      ], {
+        awal: d, ambil,
         saatKlik: (r) => { location.hash = `#/anggota/${r.id}`; },
         kosongTeks: 'Tidak ada anggota yang cocok dengan pencarian',
       }), [
@@ -72,7 +75,7 @@ export async function render(param) {
           { onchange: (e) => { filter = e.target.value; muat(); } }),
         izin('anggota.create') && el('button.btn.utama', { onclick: () => formAnggota(null, muat) },
           '+ Daftarkan Anggota'),
-        tombolCetak(() => ({
+        tombolCetak(async () => { const semua = await ambilSemua(ambil); return {
           judul: 'Daftar Anggota Koperasi', jenis_ttd: 'laporan', orientasi: 'landscape',
           keterangan: [filter && `Status: ${judul(filter)}`, q && `Pencarian: "${q}"`].filter(Boolean),
           bagian: [{
@@ -80,11 +83,11 @@ export async function render(param) {
               { kunci: 'nama', label: 'Nama' }, { kunci: 'nik', label: 'NIK' }, { kunci: 'telepon', label: 'Telepon' },
               { kunci: 'pekerjaan', label: 'Pekerjaan' }, { kunci: 'total_simpanan', label: 'Simpanan', tipe: 'uang' },
               { kunci: 'outstanding_pinjaman', label: 'Pinjaman', tipe: 'uang' }, { kunci: 'status', label: 'Status' }],
-            baris: d.data.map((r, i) => ({ ...r, no: i + 1, status: judul(r.status) })),
-            total: { total_simpanan: d.data.reduce((t, r) => t + (r.total_simpanan || 0), 0),
-              outstanding_pinjaman: d.data.reduce((t, r) => t + (r.outstanding_pinjaman || 0), 0) },
+            baris: semua.map((r, i) => ({ ...r, no: i + 1, status: judul(r.status) })),
+            total: { total_simpanan: semua.reduce((t, r) => t + (r.total_simpanan || 0), 0),
+              outstanding_pinjaman: semua.reduce((t, r) => t + (r.outstanding_pinjaman || 0), 0) },
           }],
-        }), { label: 'Cetak' }),
+        }; }, { label: 'Cetak' }),
       ]));
     } catch (err) { galat(err); }
   }

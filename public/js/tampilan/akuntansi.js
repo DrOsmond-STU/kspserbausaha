@@ -2,8 +2,9 @@
  * Modul 7 - Akuntansi (jurnal, periode, tutup buku).
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, rp, angka, tgl, status, judul, modal, kolom, input,
-  pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, kosong, konfirmasi,
+  api, el, kpi, panel, panelTabel, tabel, rp, angka, tgl, status, judul, modal, kolom, input, pilih,
+  bacaForm, toast, galat, memuat, kosongkan, hariIni, kosong, konfirmasi, tabelServer, ukuranHalaman,
+  ambilSemua,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 import { cetakDokumen, tombolCetak, tawaranCetak, tandaAir } from '../cetak.js';
@@ -47,8 +48,9 @@ async function jurnalTab() {
   async function muat() {
     kosongkan(wadah).append(memuat());
     try {
-      const d = await api.get('/api/akuntansi/jurnal', { dari, sampai, tipe, q, limit: 200 });
-      kosongkan(wadah).append(panelTabel(`Jurnal (${angka(d.total)})`, tabel([
+      const ambil = (h) => api.get('/api/akuntansi/jurnal', { dari, sampai, tipe, q, ...h });
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
+      kosongkan(wadah).append(panelTabel(`Jurnal (${angka(d.total)})`, tabelServer([
         { judul: 'Tanggal', render: (j) => el('span.nowrap', tgl(j.tanggal)) },
         { judul: 'Nomor', render: (j) => el('span.mono.kecil', j.nomor) },
         { judul: 'Tipe', render: (j) => judul(j.tipe) },
@@ -65,8 +67,8 @@ async function jurnalTab() {
           bolehKoreksi(j) && el('button.btn.kecil', { onclick: () => ubahJurnal(j.id, muat) }, 'Ubah'),
           bolehKoreksi(j) && el('button.btn.kecil.polos', { onclick: () => batalkan(j, muat) }, 'Batal'),
         ].filter(Boolean)) },
-      ], d.data, { saatKlik: (j) => { location.hash = `#/akuntansi/${j.id}`; } }), [
-        el('input', { type: 'search', placeholder: 'Cari nomor atau keterangan…',
+      ], { awal: d, ambil, saatKlik: (j) => { location.hash = `#/akuntansi/${j.id}`; } }), [
+        el('input', { type: 'search', placeholder: 'Cari nomor atau keterangan…', nilai: q,
           oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
         el('input', { type: 'date', nilai: dari, onchange: (e) => { dari = e.target.value; muat(); } }),
         el('input', { type: 'date', nilai: sampai, onchange: (e) => { sampai = e.target.value; muat(); } }),

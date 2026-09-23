@@ -518,7 +518,9 @@ function unduh(jenis, wadah) {
   const tabelNode = wadah.querySelectorAll('table.tabel');
   if (!tabelNode.length) { toast('Tidak ada tabel untuk diekspor', 'peringatan'); return; }
   const baris = [];
-  tabelNode.forEach((t) => {
+  tabelNode.forEach((tampil) => {
+    // Tabel berhalaman hanya menggambar satu halaman; ekspor memakai seluruh baris.
+    const t = tampil.closest('.tabel-berhalaman')?.tabelLengkap?.() || tampil;
     t.querySelectorAll('tr').forEach((tr) => {
       const sel = [...tr.children].map((td) => `"${td.textContent.trim().replace(/"/g, '""')}"`);
       if (sel.length) baris.push(sel.join(';'));

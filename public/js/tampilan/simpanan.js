@@ -2,8 +2,9 @@
  * Modul 4 - Simpanan.
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, rp, rpRingkas, angka, tgl, status, judul, modal,
-  kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, periodeLabel, hariIni, awalTahun,
+  api, el, kpi, panel, panelTabel, tabel, rp, rpRingkas, angka, tgl, status, judul, modal, kolom, input,
+  pilih, bacaForm, toast, galat, memuat, kosongkan, periodeLabel, hariIni, awalTahun, tabelServer,
+  ukuranHalaman, ambilSemua,
 } from '../inti.js';
 import { grafikGaris } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
@@ -49,8 +50,9 @@ export async function render(param) {
   async function muat() {
     kosongkan(daftar).append(memuat());
     try {
-      const d = await api.get('/api/simpanan/rekening', { q, limit: 100 });
-      const dokDaftar = () => ({
+      const ambil = (h) => api.get('/api/simpanan/rekening', { q, ...h });
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
+      const dokDaftar = async () => { const semua = await ambilSemua(ambil); return {
         judul: 'Daftar Rekening Simpanan', jenis_ttd: 'laporan', orientasi: 'landscape',
         keterangan: q ? [`Pencarian: "${q}"`] : [],
         bagian: [{
@@ -58,12 +60,12 @@ export async function render(param) {
             { kunci: 'nomor_anggota', label: 'No. Anggota' }, { kunci: 'anggota_nama', label: 'Nama Anggota' },
             { kunci: 'produk_nama', label: 'Produk' }, { kunci: 'saldo', label: 'Saldo', tipe: 'uang' },
             { kunci: 'saldo_blokir', label: 'Diblokir', tipe: 'uang' }, { kunci: 'status', label: 'Status' }],
-          baris: d.data.map((x, i) => ({ ...x, no: i + 1, status: judul(x.status) })),
-          total: { saldo: d.data.reduce((t, x) => t + x.saldo, 0),
-            saldo_blokir: d.data.reduce((t, x) => t + (x.saldo_blokir || 0), 0) },
+          baris: semua.map((x, i) => ({ ...x, no: i + 1, status: judul(x.status) })),
+          total: { saldo: semua.reduce((t, x) => t + x.saldo, 0),
+            saldo_blokir: semua.reduce((t, x) => t + (x.saldo_blokir || 0), 0) },
         }],
-      });
-      kosongkan(daftar).append(panelTabel(`Rekening Simpanan (${angka(d.total)})`, tabel([
+      }; };
+      kosongkan(daftar).append(panelTabel(`Rekening Simpanan (${angka(d.total)})`, tabelServer([
         { judul: 'No. Rekening', render: (x) => el('span.mono', x.nomor_rekening) },
         { judul: 'Anggota', render: (x) => el('div', [
           el('div.tebal', x.anggota_nama),
@@ -77,8 +79,8 @@ export async function render(param) {
         { judul: 'Diblokir', angka: true, render: (x) => (x.saldo_blokir
           ? el('span.neg', rp(x.saldo_blokir)) : el('span.samar', '-')) },
         { judul: 'Status', render: (x) => status(x.status) },
-      ], d.data, { saatKlik: (x) => { location.hash = `#/simpanan/${x.id}`; } }), [
-        el('input', { type: 'search', placeholder: 'Cari nomor rekening atau nama anggota…',
+      ], { awal: d, ambil, saatKlik: (x) => { location.hash = `#/simpanan/${x.id}`; } }), [
+        el('input', { type: 'search', placeholder: 'Cari nomor rekening atau nama anggota…', nilai: q,
           oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
         izin('simpanan.create') && el('button.btn', { onclick: () => formRekening(muat) }, '+ Buka Rekening'),
         izin('simpanan.create') && el('button.btn.utama', { onclick: () => formTransaksi('setoran', null, muat) }, '↓ Setoran'),

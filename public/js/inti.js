@@ -240,9 +240,12 @@ export function panel(judulTeks, isi, aksi = [], { sub } = {}) {
 }
 
 export function panelTabel(judulTeks, isi, aksi = [], { sub } = {}) {
+  // Tabel berhalaman sudah membawa pembungkus gulir sendiri; bilah halamannya
+  // harus di luar area gulir mendatar supaya tidak ikut tergeser.
+  const berhalaman = isi?.classList?.contains('tabel-berhalaman');
   return el('div.panel', [
     judulTeks && kepalaPanel(judulTeks, aksi, sub),
-    el('div.panel-isi.rapat', [el('div.tabel-bungkus', [isi])]),
+    el('div.panel-isi.rapat', [berhalaman ? isi : el('div.tabel-bungkus', [isi])]),
   ]);
 }
 
@@ -258,22 +261,195 @@ export function kpi(label, nilai, { catatan, jenis = '', ikon } = {}) {
   ]);
 }
 
+// ------------------------------ Pagination ------------------------------
+
+/** Pilihan jumlah baris per halaman; pilihan terakhir pengguna diingat. */
+export const UKURAN_HALAMAN = [10, 25, 50, 100];
+const KUNCI_UKURAN = 'ecms-per-halaman';
+
+function ukuranTersimpan() {
+  try {
+    const n = Number(localStorage.getItem(KUNCI_UKURAN));
+    return UKURAN_HALAMAN.includes(n) ? n : UKURAN_HALAMAN[0];
+  } catch { return UKURAN_HALAMAN[0]; }
+}
+
+/** Nomor halaman yang ditampilkan: pertama, terakhir, dan dua di kiri-kanan halaman aktif. */
+function nomorHalaman(aktif, jumlah) {
+  const set = new Set([1, jumlah]);
+  for (let i = aktif - 2; i <= aktif + 2; i += 1) if (i >= 1 && i <= jumlah) set.add(i);
+  const urut = [...set].sort((a, b) => a - b);
+  const hasil = [];
+  urut.forEach((n, i) => {
+    if (i && n - urut[i - 1] > 1) hasil.push(null);
+    hasil.push(n);
+  });
+  return hasil;
+}
+
+/** Jumlah baris per halaman pilihan pengguna (dipakai saat meminta halaman pertama ke server). */
+export const ukuranHalaman = () => ukuranTersimpan();
+
 /**
- * Tabel data.
+ * Bilah navigasi halaman. `st` = { jumlah, ukuran, aktif }; `ke(n)` pindah
+ * halaman, `ganti(ukuranBaru)` mengganti jumlah baris per halaman.
+ */
+function isiBilah(bilah, st, ke, ganti) {
+  const halaman = Math.max(1, Math.ceil(st.jumlah / st.ukuran));
+  const awal = st.jumlah ? (st.aktif - 1) * st.ukuran + 1 : 0;
+  const akhir = Math.min(st.jumlah, st.aktif * st.ukuran);
+  const tombol = (isi, n, { aktif = false, label } = {}) => el('button', {
+    type: 'button', class: aktif ? 'aktif' : '', disabled: n === null,
+    'aria-label': label || `Halaman ${n}`, 'aria-current': aktif ? 'page' : null,
+    onclick: () => { if (!aktif) ke(n); },
+  }, isi);
+  kosongkan(bilah).append(
+    el('div.pager-info', `Menampilkan ${angka(awal)}–${angka(akhir)} dari ${angka(st.jumlah)} baris`),
+    el('label.pager-ukuran', [
+      'Baris per halaman ',
+      el('select', { onchange: (e) => {
+        const n = Number(e.target.value);
+        try { localStorage.setItem(KUNCI_UKURAN, String(n)); } catch { /* abaikan */ }
+        ganti(n);
+      } }, UKURAN_HALAMAN.map((n) => el('option', { value: n, selected: n === st.ukuran }, String(n)))),
+    ]),
+    el('nav.pager-nav', { 'aria-label': 'Navigasi halaman' }, [
+      tombol('‹', st.aktif > 1 ? st.aktif - 1 : null, { label: 'Halaman sebelumnya' }),
+      ...nomorHalaman(st.aktif, halaman).map((n) => (n === null
+        ? el('span.pager-elipsis', '…') : tombol(String(n), n, { aktif: n === st.aktif }))),
+      tombol('›', st.aktif < halaman ? st.aktif + 1 : null, { label: 'Halaman berikutnya' }),
+    ]),
+  );
+}
+
+/** Pindah halaman: halaman aktif baru tetap memuat baris teratas yang sedang dilihat. */
+const halamanUntuk = (st, ukuranBaru) => Math.floor(((st.aktif - 1) * st.ukuran) / ukuranBaru) + 1;
+
+/**
+ * Memasang pagination pada tabel yang seluruh barisnya sudah ada di browser:
+ * hanya baris halaman aktif yang digambar. Tabel pendek (≤ ukuran terkecil)
+ * digambar utuh tanpa bilah.
+ *
+ * @param {HTMLTableElement} tabelEl  tabel lengkap dengan thead/tfoot
+ * @param {HTMLElement} tbody         tbody milik tabel (diisi ulang per halaman)
+ * @param {number} jumlah             jumlah seluruh baris
+ * @param {(i:number)=>HTMLElement} buatBaris  pembuat <tr> untuk baris ke-i
+ * @returns {HTMLElement} tabel itu sendiri, atau pembungkus .tabel-berhalaman
+ */
+export function halamankan(tabelEl, tbody, jumlah, buatBaris) {
+  if (jumlah <= UKURAN_HALAMAN[0]) {
+    for (let i = 0; i < jumlah; i += 1) tbody.append(buatBaris(i));
+    return tabelEl;
+  }
+  const st = { jumlah, ukuran: ukuranTersimpan(), aktif: 1 };
+  const bilah = el('div.pager');
+  const wadah = el('div.tabel-berhalaman', [el('div.tabel-bungkus', [tabelEl]), bilah]);
+
+  function gambar() {
+    st.aktif = Math.min(Math.max(1, st.aktif), Math.max(1, Math.ceil(jumlah / st.ukuran)));
+    const awal = (st.aktif - 1) * st.ukuran;
+    kosongkan(tbody);
+    for (let i = awal; i < Math.min(jumlah, awal + st.ukuran); i += 1) tbody.append(buatBaris(i));
+    isiBilah(bilah, st,
+      (n) => { st.aktif = n; gambar(); wadah.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); },
+      (u) => { st.aktif = halamanUntuk(st, u); st.ukuran = u; gambar(); });
+  }
+  gambar();
+  // Ekspor (CSV) memerlukan seluruh baris, bukan hanya halaman yang tampil.
+  wadah.tabelLengkap = () => {
+    const salinan = tabelEl.cloneNode(true);
+    const badan = salinan.querySelector('tbody');
+    kosongkan(badan);
+    for (let i = 0; i < jumlah; i += 1) badan.append(buatBaris(i));
+    return salinan;
+  };
+  return wadah;
+}
+
+/** Sel-sel satu baris data menurut definisi kolom. */
+const barisData = (kolom, r, i, saatKlik) => el('tr', {
+  class: saatKlik ? 'klik' : '',
+  onclick: saatKlik ? () => saatKlik(r) : null,
+}, kolom.map((k) => el('td', { class: k.angka ? 'angka' : '' },
+  [k.render ? k.render(r, i) : (r[k.kunci] ?? '-')])));
+
+const kepalaTabel = (kolom) => el('thead', [el('tr', kolom.map((k) => el('th', { class: k.angka ? 'angka' : '' }, k.judul)))]);
+const kakiTabel = (kolom, kaki) => (kaki ? el('tfoot', [el('tr', kolom.map((k) => el('td', { class: k.angka ? 'angka' : '' },
+  [kaki[k.kunci] !== undefined ? kaki[k.kunci] : ''])))]) : null);
+
+/**
+ * Tabel dengan pagination di server: hanya halaman yang sedang dilihat yang
+ * diminta, sehingga daftar ribuan baris (jurnal, penjualan) tetap ringan dan
+ * seluruh data dapat dijelajahi.
+ *
+ * @param {Array} kolom  sama dengan tabel()
+ * @param {object} o
+ * @param {{data:Array,total:number}} o.awal  jawaban halaman pertama; minta dengan
+ *   `limit: ukuranHalaman()` supaya tidak perlu dimuat dua kali
+ * @param {({limit, offset}) => Promise<{data:Array,total:number}>} o.ambil  peminta halaman
+ */
+export function tabelServer(kolom, { awal, ambil, kosongTeks = 'Belum ada data', saatKlik, kaki } = {}) {
+  if (!awal?.data?.length) return kosong(kosongTeks);
+  const st = { jumlah: Number(awal.total ?? awal.data.length), ukuran: ukuranTersimpan(), aktif: 1 };
+  const tbody = el('tbody');
+  const tabelEl = el('table.tabel', [kepalaTabel(kolom), tbody, kakiTabel(kolom, kaki)]);
+  const isiBaris = (data, offset) => {
+    kosongkan(tbody).append(...data.map((r, j) => barisData(kolom, r, offset + j, saatKlik)));
+  };
+  // Halaman pertama yang dikirim pemanggil bisa lebih panjang dari ukuran halaman.
+  isiBaris(awal.data.slice(0, st.ukuran), 0);
+  if (st.jumlah <= UKURAN_HALAMAN[0] && awal.data.length >= st.jumlah) return tabelEl;
+
+  const bilah = el('div.pager');
+  const wadah = el('div.tabel-berhalaman', [el('div.tabel-bungkus', [tabelEl]), bilah]);
+  let permintaan = 0;
+  async function muatHalaman(gulir) {
+    const nomor = ++permintaan;
+    wadah.classList.add('memuat-halaman');
+    try {
+      const d = await ambil({ limit: st.ukuran, offset: (st.aktif - 1) * st.ukuran });
+      if (nomor !== permintaan) return;                 // jawaban halaman lama yang terlambat
+      st.jumlah = Number(d.total ?? st.jumlah);
+      isiBaris(d.data, (st.aktif - 1) * st.ukuran);
+      gambarBilah();
+      if (gulir) wadah.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    } catch (err) { galat(err); } finally { if (nomor === permintaan) wadah.classList.remove('memuat-halaman'); }
+  }
+  function gambarBilah() {
+    isiBilah(bilah, st,
+      (n) => { st.aktif = n; gambarBilah(); muatHalaman(true); },
+      (u) => { st.aktif = halamanUntuk(st, u); st.ukuran = u; gambarBilah(); muatHalaman(false); });
+  }
+  gambarBilah();
+  return wadah;
+}
+
+/**
+ * Mengambil seluruh baris dari endpoint berhalaman (untuk cetak / ekspor
+ * daftar), bertahap per `per` baris sampai `maks`.
+ */
+export async function ambilSemua(ambil, { per = 500, maks = 10000 } = {}) {
+  const hasil = [];
+  let total = Infinity;
+  while (hasil.length < Math.min(total, maks)) {
+    const d = await ambil({ limit: per, offset: hasil.length });
+    total = Number(d.total ?? 0);
+    if (!d.data?.length) break;
+    hasil.push(...d.data);
+  }
+  return hasil;
+}
+
+/**
+ * Tabel data dengan pagination otomatis (10/25/50/100 baris per halaman).
+ * Baris kaki (`kaki`) selalu tampil dan berisi total seluruh data.
  * @param {Array} kolom [{judul, kunci?, render?, angka?, lebar?}]
  */
 export function tabel(kolom, baris, { kosongTeks = 'Belum ada data', saatKlik, kaki } = {}) {
   if (!baris?.length) return kosong(kosongTeks);
-  return el('table.tabel', [
-    el('thead', [el('tr', kolom.map((k) => el('th', { class: k.angka ? 'angka' : '' }, k.judul)))]),
-    el('tbody', baris.map((r, i) => el('tr', {
-      class: saatKlik ? 'klik' : '',
-      onclick: saatKlik ? () => saatKlik(r) : null,
-    }, kolom.map((k) => el('td', { class: k.angka ? 'angka' : '' },
-      [k.render ? k.render(r, i) : (r[k.kunci] ?? '-')]))))),
-    kaki ? el('tfoot', [el('tr', kolom.map((k) => el('td', { class: k.angka ? 'angka' : '' },
-      [kaki[k.kunci] !== undefined ? kaki[k.kunci] : ''])))]) : null,
-  ]);
+  const tbody = el('tbody');
+  const tabelEl = el('table.tabel', [kepalaTabel(kolom), tbody, kakiTabel(kolom, kaki)]);
+  return halamankan(tabelEl, tbody, baris.length, (i) => barisData(kolom, baris[i], i, saatKlik));
 }
 
 /** Lencana status dengan pemetaan warna otomatis. */

@@ -6,11 +6,9 @@
  * Formulir filter disusun otomatis dari spesifikasi filter yang dikirim
  * server; katalog juga sudah disaring server menurut izin pengguna.
  */
-import { api, el, kosongkan, memuat, kosong, galat, toast, angka } from '../inti.js';
+import { api, el, kosongkan, memuat, kosong, galat, toast, angka, halamankan } from '../inti.js';
 import { cetakDokumen, unduhUrl, teksSel } from '../cetak.js';
 
-/** Batas baris yang digambar di layar; cetak & unduhan tetap memuat seluruh baris. */
-const BATAS_LAYAR = 1000;
 const ANGKA = new Set(['angka', 'uang', 'persen']);
 const KUNCI_SIMPAN = 'ecms-pusat-laporan';
 
@@ -261,40 +259,40 @@ function halamanLaporan(l) {
 
 // ------------------------------ Pratinjau ------------------------------
 
-function tabelBagian(b, sisa) {
+/**
+ * Satu bagian laporan sebagai tabel berhalaman. Hanya halaman aktif yang
+ * digambar, sehingga laporan ribuan baris tetap ringan di layar; cetak dan
+ * unduhan tetap memuat seluruh baris.
+ */
+function tabelBagian(b) {
   const kolom = b.kolom || [];
   const semua = b.baris || [];
-  const tampil = semua.slice(0, Math.max(0, sisa));
   const kelas = (k) => (ANGKA.has(k.tipe) ? 'angka' : '');
   const total = b.total ? el('tfoot', [el('tr', kolom.map((k, i) => {
     const v = b.total[k.kunci];
     const t = v === undefined || v === null ? (i === 0 ? (b.total._label || 'TOTAL') : '') : teksSel(v, k.tipe);
     return el('td', { class: kelas(k) }, t);
   }))]) : null;
+  const tbody = el('tbody');
   const tabel = el('table.tabel', [
     el('thead', [el('tr', kolom.map((k) => el('th', { class: kelas(k) }, k.label)))]),
-    el('tbody', tampil.length ? tampil.map((r) => el('tr', kolom.map((k) => el('td', { class: kelas(k) },
-      teksSel(r[k.kunci], k.tipe)))))
-      : [el('tr', [el('td.tengah.samar', { colspan: kolom.length || 1 }, semua.length
-        ? 'Bagian ini tidak digambar di layar — lihat cetakan atau unduhan' : 'Tidak ada data')])]),
+    tbody,
     total,
   ]);
-  return { node: el('div.pl-bagian', [
+  const isi = semua.length
+    ? halamankan(tabel, tbody, semua.length, (i) => el('tr', kolom.map((k) => el('td', { class: kelas(k) },
+      teksSel(semua[i][k.kunci], k.tipe)))))
+    : (tbody.append(el('tr', [el('td.tengah.samar', { colspan: kolom.length || 1 }, 'Tidak ada data')])), tabel);
+  return el('div.pl-bagian', [
     b.judul && el('div.pl-bagian-judul', [el('span', b.judul), el('span.kecil.samar', `${angka(semua.length)} baris`)]),
-    el('div.tabel-bungkus', [tabel]),
-  ]), terpakai: tampil.length };
+    isi.classList.contains('tabel-berhalaman') ? isi : el('div.tabel-bungkus', [isi]),
+  ]);
 }
 
 function pratinjau(l, dok, query) {
   const bagian = dok.bagian || [];
   const jumlah = bagian.reduce((s, b) => s + (b.baris?.length || 0), 0);
-  let sisa = BATAS_LAYAR;
-  const tabel = bagian.map((b) => {
-    const t = tabelBagian(b, sisa);
-    sisa -= t.terpakai;
-    return t.node;
-  });
-  const terpotong = jumlah > BATAS_LAYAR;
+  const tabel = bagian.map((b) => tabelBagian(b));
   const jalur = `/api/pusat-laporan/${encodeURIComponent(l.kode)}/unduh?${query ? `${query}&` : ''}format=`;
 
   const unduh = (format) => async (e) => {
@@ -325,10 +323,6 @@ function pratinjau(l, dok, query) {
       dok.ringkasan?.length ? el('div.pl-ringkas', dok.ringkasan.map((x) => el('div', [
         el('span.samar', x.label), el('strong', teksSel(x.nilai, x.tipe) || '-'),
       ]))) : null,
-      terpotong ? el('div.notis.info', [el('div.isi', [
-        el('strong', `Layar menampilkan ${angka(BATAS_LAYAR)} dari ${angka(jumlah)} baris`),
-        el('div.kecil', 'Cetak / PDF, Excel, dan Word tetap memuat seluruh baris.'),
-      ])]) : null,
       ...tabel,
       dok.catatan && el('div.kecil.lembut', { gaya: { marginTop: '10px', whiteSpace: 'pre-line' } }, dok.catatan),
     ]),

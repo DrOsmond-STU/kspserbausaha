@@ -2,8 +2,8 @@
  * Modul 9 - Kas & Bank.
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, rp, angka, tgl, status, judul, modal, kolom, input,
-  pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni,
+  api, el, kpi, panel, panelTabel, tabel, rp, angka, tgl, status, judul, modal, kolom, input, pilih,
+  bacaForm, toast, galat, memuat, kosongkan, hariIni, tabelServer, ukuranHalaman, ambilSemua,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
@@ -59,10 +59,11 @@ async function transaksiTab() {
   async function muat() {
     kosongkan(daftar).append(memuat());
     try {
-      const d = await api.get('/api/kas', { dari, sampai, limit: 200 });
+      const ambil = (h) => api.get('/api/kas', { dari, sampai, ...h });
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
       const batal = (k) => k.status === 'batal';
-      // Total dari server sudah mengecualikan bukti yang dibatalkan.
-      kosongkan(daftar).append(panelTabel('Bukti Kas & Bank', tabel([
+      // Total dari server dihitung atas seluruh bukti periode (tanpa yang dibatalkan).
+      kosongkan(daftar).append(panelTabel(`Bukti Kas & Bank (${angka(d.total)})`, tabelServer([
         { judul: 'Tanggal', render: (k) => el('span.nowrap', tgl(k.tanggal)) },
         { judul: 'Nomor', render: (k) => el(batal(k) ? 'span.mono.kecil.samar' : 'span.mono.kecil', k.nomor) },
         { judul: 'Jenis', render: (k) => status(k.jenis === 'kas_masuk' ? 'aktif'
@@ -85,14 +86,16 @@ async function transaksiTab() {
           bolehKoreksi(k) && el('button.btn.kecil.polos', { title: 'Batalkan bukti ini (jurnal dibalik)',
             onclick: () => formBatal(k, muat) }, 'Batal'),
         ].filter(Boolean)) },
-      ], d.data, {
+      ], {
+        awal: d, ambil,
         kosongTeks: 'Belum ada transaksi kas pada periode ini',
         kaki: d.data.length ? { pihak: 'Masuk / keluar (tanpa batal)',
           nominal: el('span.nowrap', [el('span.pos', rp(d.total_masuk)), ' / ', el('span.neg', rp(d.total_keluar))]) } : undefined,
       }), [
         el('input', { type: 'date', nilai: dari, onchange: (e) => { dari = e.target.value; muat(); } }),
         el('input', { type: 'date', nilai: sampai, onchange: (e) => { sampai = e.target.value; muat(); } }),
-        tombolCetak(() => dokDaftarKas(posisi, d, dari, sampai), { label: 'Cetak' }),
+        tombolCetak(async () => dokDaftarKas(posisi, { ...d, data: await ambilSemua(ambil) }, dari, sampai),
+          { label: 'Cetak' }),
         izin('kas.create') && el('button.btn.utama', { onclick: () => formKas('kas_masuk', muat) }, '↓ Kas Masuk'),
         izin('kas.create') && el('button.btn', { onclick: () => formKas('kas_keluar', muat) }, '↑ Kas Keluar'),
         izin('kas.create') && el('button.btn', { onclick: () => formTransfer(muat) }, '⇄ Transfer'),

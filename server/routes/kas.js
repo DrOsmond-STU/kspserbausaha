@@ -22,14 +22,15 @@ router.get('/api/kas', 'kas.view', ({ query }) => {
   if (query.unit_usaha_id) { w.push('k.unit_usaha_id = ?'); p.push(Number(query.unit_usaha_id)); }
   const where = w.length ? `WHERE ${w.join(' AND ')}` : '';
   const limit = Math.min(Number(query.limit) || 100, 500);
+  const offset = Math.max(Number(query.offset) || 0, 0);
   const data = all(`SELECT k.*, u.nama AS unit_nama FROM kas_bank k LEFT JOIN unit_usaha u ON u.id = k.unit_usaha_id
-                     ${where} ORDER BY k.tanggal DESC, k.id DESC LIMIT ?`, [...p, limit]);
-  const berlaku = data.filter((r) => r.status !== 'batal');
-  return {
-    data,
-    total_masuk: berlaku.filter((r) => r.jenis === 'kas_masuk').reduce((s, r) => s + r.nominal, 0),
-    total_keluar: berlaku.filter((r) => r.jenis === 'kas_keluar').reduce((s, r) => s + r.nominal, 0),
-  };
+                     ${where} ORDER BY k.tanggal DESC, k.id DESC LIMIT ? OFFSET ?`, [...p, limit, offset]);
+  // Total dihitung atas seluruh bukti yang cocok dengan saringan, bukan hanya halaman ini.
+  const jumlah = get(`SELECT COUNT(*) AS total,
+       COALESCE(SUM(CASE WHEN k.status <> 'batal' AND k.jenis = 'kas_masuk' THEN k.nominal END), 0) AS masuk,
+       COALESCE(SUM(CASE WHEN k.status <> 'batal' AND k.jenis = 'kas_keluar' THEN k.nominal END), 0) AS keluar
+     FROM kas_bank k ${where}`, p);
+  return { data, total: jumlah.total, total_masuk: jumlah.masuk, total_keluar: jumlah.keluar, limit, offset };
 });
 
 /** Posisi seluruh akun kas & bank. */

@@ -85,12 +85,19 @@ export function daftarTransaksiUnit(f = {}) {
     p.push(`%${f.q}%`, `%${f.q}%`, `%${f.q}%`);
   }
   const limit = Math.min(Number(f.limit) || 200, 1000);
-  const data = all(`${SELECT_TRANSAKSI} WHERE ${w.join(' AND ')} ORDER BY k.tanggal DESC, k.id DESC LIMIT ?`,
-    [...p, limit]).map((r) => ({ ...r, jenis_unit: jenisDariBukti(r.jenis) }));
-  const berlaku = data.filter((r) => r.status !== 'batal');
-  const pendapatan = berlaku.filter((r) => r.jenis_unit === 'pendapatan').reduce((s, r) => s + r.nominal, 0);
-  const biaya = berlaku.filter((r) => r.jenis_unit === 'biaya').reduce((s, r) => s + r.nominal, 0);
-  return { data, ringkasan: { pendapatan, biaya, selisih: pendapatan - biaya, jumlah: berlaku.length } };
+  const offset = Math.max(Number(f.offset) || 0, 0);
+  const data = all(`${SELECT_TRANSAKSI} WHERE ${w.join(' AND ')} ORDER BY k.tanggal DESC, k.id DESC LIMIT ? OFFSET ?`,
+    [...p, limit, offset]).map((r) => ({ ...r, jenis_unit: jenisDariBukti(r.jenis) }));
+  // Ringkasan atas seluruh transaksi yang cocok dengan saringan, bukan hanya halaman ini.
+  const r = get(`SELECT COUNT(*) AS total,
+       COALESCE(SUM(CASE WHEN k.status <> 'batal' AND k.jenis = 'kas_masuk' THEN k.nominal END), 0) AS pendapatan,
+       COALESCE(SUM(CASE WHEN k.status <> 'batal' AND k.jenis <> 'kas_masuk' THEN k.nominal END), 0) AS biaya,
+       COALESCE(SUM(CASE WHEN k.status <> 'batal' THEN 1 END), 0) AS berlaku
+     FROM kas_bank k JOIN unit_usaha u ON u.id = k.unit_usaha_id WHERE ${w.join(' AND ')}`, p);
+  return {
+    data, total: r.total, limit, offset,
+    ringkasan: { pendapatan: r.pendapatan, biaya: r.biaya, selisih: r.pendapatan - r.biaya, jumlah: r.berlaku },
+  };
 }
 
 /** Satu transaksi unit (untuk dicetak / diubah). */

@@ -2,8 +2,8 @@
  * Modul 11 - Persediaan.
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, rp, angka, desimal, tgl, status, judul, modal,
-  kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, kosong,
+  api, el, kpi, panel, panelTabel, tabel, rp, angka, desimal, tgl, status, judul, modal, kolom, input, pilih,
+  bacaForm, toast, galat, memuat, kosongkan, hariIni, kosong, tabelServer, ukuranHalaman, ambilSemua,
 } from '../inti.js';
 import { grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
@@ -240,8 +240,9 @@ async function penyesuaianTab() {
   async function muat() {
     kosongkan(wadah).append(memuat());
     try {
-      const d = await api.get('/api/persediaan/penyesuaian', { limit: 200 });
-      kosongkan(wadah).append(panelTabel('Riwayat Penyesuaian Stok', tabel([
+      const ambil = (h) => api.get('/api/persediaan/penyesuaian', h);
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
+      kosongkan(wadah).append(panelTabel(`Riwayat Penyesuaian Stok (${angka(d.total)})`, tabelServer([
         { judul: 'Tanggal', render: (m) => tgl(m.tanggal) },
         { judul: 'Barang', render: (m) => el('div', [el('div', m.nama), el('div.kecil.samar', m.kode)]) },
         { judul: 'Gudang', kunci: 'gudang_nama' },
@@ -258,7 +259,7 @@ async function penyesuaianTab() {
           izin('persediaan.koreksi') && !m.dibatalkan && el('button.btn.kecil.bahaya', {
             onclick: () => batalPenyesuaian(m, muat) }, 'Batal'),
         ].filter(Boolean)) },
-      ], d.data, { kosongTeks: 'Belum ada penyesuaian stok' }), [
+      ], { awal: d, ambil, kosongTeks: 'Belum ada penyesuaian stok' }), [
         izin('persediaan.update') && el('button.btn', { onclick: () => formPenyesuaian() }, '± Penyesuaian Stok'),
       ].filter(Boolean)));
     } catch (err) { galat(err); }

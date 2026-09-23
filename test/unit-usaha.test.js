@@ -203,6 +203,20 @@ describe('Transaksi unit usaha', () => {
     assert.equal(kas.isi.data.find((k) => k.nomor === isi.nomor).unit_nama, 'Unit Jasa');
   });
 
+  test('daftar berhalaman: offset & total, ringkasan atas seluruh data', async () => {
+    const semua = await panggil('GET', `/api/unit-usaha/transaksi?unit_usaha_id=${unitJasa().id}&limit=1000`);
+    const hal2 = await panggil('GET', `/api/unit-usaha/transaksi?unit_usaha_id=${unitJasa().id}&limit=1&offset=1`);
+    assert.equal(hal2.isi.data.length, 1);
+    assert.equal(hal2.isi.total, semua.isi.data.length);
+    assert.equal(hal2.isi.data[0].id, semua.isi.data[1].id);
+    assert.deepEqual(hal2.isi.ringkasan, semua.isi.ringkasan, 'ringkasan tidak bergantung pada halaman');
+    const kasSemua = await panggil('GET', '/api/kas?limit=500');
+    const kasHal = await panggil('GET', '/api/kas?limit=2&offset=2');
+    assert.equal(kasHal.isi.total, kasSemua.isi.data.length);
+    assert.equal(kasHal.isi.data[0].id, kasSemua.isi.data[2].id);
+    assert.equal(kasHal.isi.total_masuk, kasSemua.isi.total_masuk);
+  });
+
   test('akun bawaan pada Master Data divalidasi tipenya', async () => {
     const id = unitJasa().id;
     const salah = await panggil('PUT', `/api/master/unit-usaha/${id}`, { coa_pendapatan: '5-2601' });

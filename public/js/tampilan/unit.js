@@ -2,8 +2,8 @@
  * Modul 15 - Unit Usaha: kinerja per segmen dan transaksi pendapatan/biaya unit.
  */
 import {
-  api, el, kpi, panel, panelTabel, tabel, rp, angka, persen, judul, memuat, kosongkan, galat, tgl,
-  status, modal, kolom, input, pilih, bacaForm, toast, hariIni,
+  api, el, kpi, panel, panelTabel, tabel, rp, angka, persen, judul, memuat, kosongkan, galat, tgl, status,
+  modal, kolom, input, pilih, bacaForm, toast, hariIni, tabelServer, ukuranHalaman, ambilSemua,
 } from '../inti.js';
 import { grafikPeringkat, SERI } from '../grafik.js';
 import { tombolCetak, cetakDokumen, tawaranCetak } from '../cetak.js';
@@ -190,7 +190,8 @@ async function transaksiTab() {
   async function muat() {
     kosongkan(daftar).append(memuat());
     try {
-      const d = await api.get('/api/unit-usaha/transaksi', { ...f, limit: 500 });
+      const ambil = (h) => api.get('/api/unit-usaha/transaksi', { ...f, ...h });
+      const d = await ambil({ limit: ukuranHalaman(), offset: 0 });
       const batal = (k) => k.status === 'batal';
       const namaUnit = opsi.unit.find((u) => String(u.id) === String(f.unit_usaha_id))?.nama;
       kosongkan(daftar).append(
@@ -200,7 +201,7 @@ async function transaksiTab() {
           kpi('Selisih', rp(d.ringkasan.selisih), { jenis: d.ringkasan.selisih >= 0 ? 'sukses' : 'bahaya',
             catatan: `${angka(d.ringkasan.jumlah)} transaksi berlaku` }),
         ]),
-        panelTabel('Transaksi Unit Usaha', tabel([
+        panelTabel(`Transaksi Unit Usaha (${angka(d.total)})`, tabelServer([
           { judul: 'Tanggal', render: (k) => el('span.nowrap', tgl(k.tanggal)) },
           { judul: 'Nomor', render: (k) => el(batal(k) ? 'span.mono.kecil.samar' : 'span.mono.kecil', k.nomor) },
           { judul: 'Unit', render: (k) => el('span.kecil', k.unit_nama) },
@@ -225,7 +226,7 @@ async function transaksiTab() {
             bolehKoreksi(k) && el('button.btn.kecil.polos', { title: 'Batalkan (jurnal dibalik)',
               onclick: () => formBatal(k, muat) }, 'Batal'),
           ].filter(Boolean)) },
-        ], d.data, { kosongTeks: 'Belum ada transaksi unit pada periode ini' }), [
+        ], { awal: d, ambil, kosongTeks: 'Belum ada transaksi unit pada periode ini' }), [
           pilih('unit_usaha_id', [{ nilai: '', teks: 'Semua unit' },
             ...opsi.unit.map((u) => ({ nilai: u.id, teks: u.nama }))], f.unit_usaha_id,
           { onchange: (e) => { f.unit_usaha_id = e.target.value; muat(); } }),
@@ -233,7 +234,8 @@ async function transaksiTab() {
             { nilai: 'biaya', teks: 'Biaya' }], f.jenis, { onchange: (e) => { f.jenis = e.target.value; muat(); } }),
           el('input', { type: 'date', nilai: f.dari, onchange: (e) => { f.dari = e.target.value; muat(); } }),
           el('input', { type: 'date', nilai: f.sampai, onchange: (e) => { f.sampai = e.target.value; muat(); } }),
-          tombolCetak(() => dokDaftarTransaksi(d, f, namaUnit), { label: 'Cetak' }),
+          tombolCetak(async () => dokDaftarTransaksi({ ...d, data: await ambilSemua(ambil) }, f, namaUnit),
+            { label: 'Cetak' }),
           bolehCatat() && el('button.btn.utama', { onclick: () => formTransaksi('pendapatan', opsi, muat, null, f.unit_usaha_id) },
             '+ Pendapatan'),
           bolehCatat() && el('button.btn', { onclick: () => formTransaksi('biaya', opsi, muat, null, f.unit_usaha_id) },
