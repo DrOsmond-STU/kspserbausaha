@@ -9,7 +9,7 @@ import { grafikCincin } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
 import {
-  daftarBank, kolomBank, suksesCetak, denganTombol, kapital, teksMetode,
+  daftarBank, kolomBank, suksesCetak, denganTombol, kapital, teksMetode, capBatal,
 } from './simpanan.js';
 import { cetakDokumen, tombolCetak } from '../cetak.js';
 
@@ -167,6 +167,14 @@ async function detail(id) {
   if (izin('pinjaman.update') && STATUS_BISA_BATAL.includes(p.status)) {
     aksi.push(el('button.btn.bahaya', { onclick: () => formBatal(p, segarkan) }, 'Batalkan Pengajuan'));
   }
+  // Koreksi: pembayaran berlaku (bukan batal) & pembayaran terakhir yang masih dapat dikoreksi
+  const bayarBerlaku = (p.angsuran || []).filter((a) => a.status !== 'batal');
+  const idTerakhir = bayarBerlaku.length ? Math.max(...bayarBerlaku.map((a) => a.id)) : null;
+  const koreksi = izin('pinjaman.koreksi');
+  const bisaKoreksiBayar = (a) => koreksi && a.id === idTerakhir && ['dicairkan', 'lunas'].includes(p.status);
+  if (koreksi && p.status === 'dicairkan' && !p.restruktur_dari && !bayarBerlaku.length) {
+    aksi.push(el('button.btn.bahaya', { onclick: () => formBatalPencairan(p, segarkan) }, 'Batalkan Pencairan'));
+  }
   // Cetakan dokumen pinjaman
   aksi.push(el('button.btn', { onclick: (e) => denganTombol(e, async () => cetakDokumen(await dokPengajuan(p))) },
     'Cetak Formulir Pengajuan'));
@@ -261,18 +269,34 @@ async function detail(id) {
     p.jadwal.length ? tombolCetak(() => dokJadwal(p), { label: 'Cetak Jadwal' }) : null,
   ].filter(Boolean)));
 
+  // Pembayaran yang dibatalkan tetap tampil (dicoret) beserta alasannya
+  const batal = (a) => a.status === 'batal';
+  const nilai = (a, v) => (batal(a) ? el('s.samar', rp(v)) : rp(v));
   wadah.append(panelTabel('Riwayat Pembayaran', tabel([
     { judul: 'Tanggal', render: (a) => tgl(a.tanggal) },
-    { judul: 'Nomor', render: (a) => el('span.mono.kecil', a.nomor) },
-    { judul: 'Jenis', render: (a) => judul(a.jenis) },
-    { judul: 'Pokok', angka: true, render: (a) => rp(a.bayar_pokok) },
-    { judul: 'Jasa', angka: true, render: (a) => rp(a.bayar_bunga) },
-    { judul: 'Denda', angka: true, render: (a) => (a.bayar_denda ? el('span.neg', rp(a.bayar_denda)) : '-') },
-    { judul: 'Total', angka: true, render: (a) => el('strong', rp(a.total_bayar)) },
+    { judul: 'Nomor', render: (a) => el(batal(a) ? 'span.mono.kecil.samar' : 'span.mono.kecil', a.nomor) },
+    { judul: 'Jenis', render: (a) => el('div', [
+      judul(a.jenis),
+      batal(a) && a.alasan_batal && el('div.kecil.neg', `Dibatalkan: ${a.alasan_batal}`),
+    ]) },
+    { judul: 'Pokok', angka: true, render: (a) => nilai(a, a.bayar_pokok) },
+    { judul: 'Jasa', angka: true, render: (a) => nilai(a, a.bayar_bunga) },
+    { judul: 'Denda', angka: true, render: (a) => (a.bayar_denda
+      ? (batal(a) ? nilai(a, a.bayar_denda) : el('span.neg', rp(a.bayar_denda))) : '-') },
+    { judul: 'Total', angka: true, render: (a) => (batal(a) ? nilai(a, a.total_bayar) : el('strong', rp(a.total_bayar))) },
     { judul: 'Petugas', render: (a) => el('span.kecil.samar', a.petugas || '-') },
-    { judul: '', render: (a) => el('button.btn.kecil', { title: 'Cetak bukti pembayaran',
-      onclick: (e) => denganTombol(e, async () => cetakDokumen(dokBuktiAngsuran(
-        await api.get(`/api/pinjaman/angsuran/${a.id}`)))) }, 'Bukti') },
+    { judul: 'Status', render: (a) => status(batal(a) ? 'batal' : 'posted', batal(a) ? 'Batal' : 'Posted') },
+    { judul: '', render: (a) => el('div.gap8.nowrap', [
+      el('button.btn.kecil', { title: 'Cetak bukti pembayaran',
+        onclick: (e) => denganTombol(e, async () => cetakDokumen(dokBuktiAngsuran(
+          await api.get(`/api/pinjaman/angsuran/${a.id}`)))) }, 'Bukti'),
+      bisaKoreksiBayar(a) && a.jenis === 'angsuran' && el('button.btn.kecil', {
+        title: 'Ubah pembayaran terakhir (dibatalkan lalu dicatat ulang dengan nomor baru)',
+        onclick: () => formUbahAngsuran(p, a, segarkan) }, 'Ubah'),
+      bisaKoreksiBayar(a) && el('button.btn.kecil.bahaya', {
+        title: 'Batalkan pembayaran terakhir (jurnal dibalik, jadwal disusun ulang)',
+        onclick: () => formBatalAngsuran(p, a, segarkan) }, 'Batal'),
+    ].filter(Boolean)) },
   ], p.angsuran, { kosongTeks: 'Belum ada pembayaran' })));
 
   return wadah;
@@ -633,6 +657,112 @@ function formBatal(p, saatSelesai) {
   });
 }
 
+// ------------------------------- Koreksi -------------------------------
+
+/**
+ * Dialog alasan koreksi (wajib diisi) dengan satu tombol aksi.
+ * `jalankan(alasan)` dipanggil saat tombol ditekan; galat server (mis. 409) ditampilkan.
+ */
+function dialogAlasan({ judul: jdl, pesan, catatan, tombolTeks, jalankan }) {
+  const form = el('div', [
+    el('div.notis.peringatan', [el('div.isi', [el('strong', pesan), el('div.kecil', catatan)])]),
+    kolom('Alasan Pembatalan', el('textarea', { name: 'alasan' }), { wajib: true }),
+  ]);
+  const tutup = modal({
+    judul: jdl, lebar: 'sempit', isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Tutup'),
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        const { alasan } = bacaForm(form);
+        if (!alasan.trim()) { toast('Alasan pembatalan wajib diisi', 'peringatan'); return; }
+        tombol.disabled = true;
+        try { await jalankan(alasan, tutup); } catch (err) { galat(err); tombol.disabled = false; }
+      } }, tombolTeks),
+    ],
+  });
+}
+
+/** Membatalkan pembayaran angsuran/pelunasan terakhir. */
+function formBatalAngsuran(p, a, saatSelesai) {
+  dialogAlasan({
+    judul: `Batalkan Pembayaran ${a.nomor}`,
+    pesan: `${judul(a.jenis)} ${a.nomor} sebesar ${rp(a.total_bayar)}`,
+    catatan: 'Pembayaran tidak dihapus: statusnya menjadi "batal", jurnalnya dibalik, dan jadwal serta sisa '
+      + 'pokok pinjaman disusun ulang dari pembayaran yang masih berlaku.',
+    tombolTeks: 'Batalkan Pembayaran',
+    jalankan: async (alasan, tutup) => {
+      const h = await api.post(`/api/koreksi/angsuran/${a.id}/batal`, { alasan });
+      toast(`Pembayaran ${a.nomor} dibatalkan`, 'sukses', `Sisa pokok ${rp(h.outstanding_pokok)}`
+        + `${h.jurnal_balik?.nomor ? ` · jurnal balik ${h.jurnal_balik.nomor}` : ''}`);
+      tutup(); saatSelesai?.();
+    },
+  });
+}
+
+/** Membatalkan pencairan pinjaman yang belum menerima angsuran. */
+function formBatalPencairan(p, saatSelesai) {
+  dialogAlasan({
+    judul: `Batalkan Pencairan — ${p.nomor}`,
+    pesan: `Pencairan ${p.nomor} sebesar ${rp(p.pokok)} akan dibatalkan`,
+    catatan: 'Jurnal pencairan dibalik, blokir agunan simpanan dilepas, dan pinjaman kembali berstatus '
+      + '"disetujui" sehingga dapat dicairkan ulang atau dibatalkan pengajuannya.',
+    tombolTeks: 'Batalkan Pencairan',
+    jalankan: async (alasan, tutup) => {
+      const h = await api.post(`/api/koreksi/pinjaman/${p.id}/batal-pencairan`, { alasan });
+      toast(`Pencairan ${p.nomor} dibatalkan`, 'sukses',
+        h.jurnal_balik?.length ? `Jurnal balik ${h.jurnal_balik.map((j) => j.nomor).join(', ')}` : null);
+      tutup(); saatSelesai?.();
+    },
+  });
+}
+
+/** Mengubah angsuran terakhir: dibatalkan lalu dicatat ulang dengan nilai baru & nomor baru. */
+async function formUbahAngsuran(p, a, saatSelesai) {
+  const bank = await daftarBank();
+  const metode = pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' },
+    { nilai: 'transfer', teks: 'Transfer Bank' }, { nilai: 'potong_gaji', teks: 'Potong Gaji' }], a.metode || 'tunai');
+  const form = el('div', [
+    el('div.notis.peringatan', [el('div.isi', [
+      el('strong', `Koreksi ${a.nomor} · ${rp(a.total_bayar)}`),
+      el('div.kecil', 'Pembayaran lama dibatalkan (jurnal dibalik, jadwal disusun ulang) lalu dicatat ulang '
+        + 'dengan nomor baru. Alokasi tetap: denda → jasa → pokok.'),
+    ])]),
+    el('div.baris-form', [
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: a.tanggal || hariIni() })),
+      kolom('Nominal', input('nominal', { tipe: 'number', min: 1, nilai: a.total_bayar }), { wajib: true }),
+    ]),
+    el('div.baris-form', [kolom('Metode', metode), kolomBank(metode, bank)]),
+    kolom('Keterangan', input('keterangan', { nilai: a.keterangan || '' })),
+    kolom('Alasan Perubahan', el('textarea', { name: 'alasan', placeholder: 'mis. salah nominal' }), { wajib: true }),
+  ]);
+  const tutup = modal({
+    judul: `Ubah Pembayaran ${a.nomor}`, isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Batal'),
+      el('button.btn.utama', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        const d = bacaForm(form);
+        if (!d.alasan.trim()) { toast('Alasan perubahan wajib diisi', 'peringatan'); return; }
+        tombol.disabled = true;
+        try {
+          const h = await api.put(`/api/koreksi/angsuran/${a.id}`, {
+            ...d, bank_account_id: d.metode === 'transfer' ? d.bank_account_id || null : null,
+          });
+          const baru = h.pengganti;
+          toast('Pembayaran berhasil diubah', 'sukses', `${h.dibatalkan} dibatalkan → ${baru.nomor}`);
+          tutup(); saatSelesai?.();
+          suksesCetak({
+            judul: 'Pembayaran Berhasil Diubah', pesan: `${h.dibatalkan} dibatalkan, diganti ${baru.nomor} sebesar ${rp(baru.total_bayar)}`,
+            detail: `Sisa pokok ${rp(baru.outstanding_pokok)}`, tombol: 'Cetak Bukti Pengganti',
+            cetak: async () => cetakDokumen(dokBuktiAngsuran(await api.get(`/api/pinjaman/angsuran/${baru.id}`))),
+          });
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Simpan Perubahan'),
+    ],
+  });
+}
+
 // ------------------------------- Cetakan -------------------------------
 
 const labelBunga = (p) => `${p.bunga_tahunan}% p.a. (${judul(p.metode_bunga)})`;
@@ -777,9 +907,11 @@ export function dokJadwal(p) {
 /** Bukti pembayaran angsuran / pelunasan dari GET /api/pinjaman/angsuran/:id. */
 export function dokBuktiAngsuran(a) {
   const pelunasan = a.jenis === 'pelunasan_dipercepat';
+  const batal = a.status === 'batal';
   return {
-    judul: pelunasan ? 'Bukti Pelunasan Pinjaman' : 'Bukti Pembayaran Angsuran', nomor: a.nomor,
-    ukuran: 'A5', orientasi: 'landscape', jenis_ttd: 'angsuran',
+    judul: `${pelunasan ? 'Bukti Pelunasan Pinjaman' : 'Bukti Pembayaran Angsuran'}${batal ? ' (BATAL)' : ''}`,
+    nomor: a.nomor, ukuran: 'A5', orientasi: 'landscape', jenis_ttd: 'angsuran',
+    isi: batal ? capBatal : undefined,
     ringkasan: [
       { label: 'Nomor', nilai: a.nomor },
       { label: 'Tanggal bayar', nilai: a.tanggal, tipe: 'tanggal' },
@@ -801,7 +933,8 @@ export function dokBuktiAngsuran(a) {
       total: { jumlah: a.total_bayar },
     }],
     terbilang: kapital(a.terbilang),
-    catatan: [a.keterangan, a.sisa_pokok <= 0 ? 'Dengan pembayaran ini pinjaman dinyatakan LUNAS.' : null]
+    catatan: [batal ? `Pembayaran ini DIBATALKAN: ${a.alasan_batal || '-'}` : null, a.keterangan,
+      !batal && a.sisa_pokok <= 0 ? 'Dengan pembayaran ini pinjaman dinyatakan LUNAS.' : null]
       .filter(Boolean).join(' · '),
     // Kolom petugas diisi petugas yang menerima pembayaran, bukan pengguna yang mencetak ulang
     penanda_tambahan: { Penyetor: a.anggota_nama, Anggota: a.anggota_nama, Petugas: a.petugas_nama || a.petugas },

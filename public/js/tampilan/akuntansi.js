@@ -210,11 +210,15 @@ async function detailJurnal(id) {
   return wadah;
 }
 
-/** Setelah koreksi: tetap di halaman detail (muat ulang) atau pindah ke jurnal pengganti. */
-function segarkan(saatSelesai, idBaru) {
+/**
+ * Setelah koreksi: muat ulang daftar, atau halaman detail (pindah ke jurnal
+ * pengganti bila ada). Ditunggu sampai selesai agar dialog tawaran cetak
+ * sesudahnya tidak ikut tertutup oleh perpindahan halaman.
+ */
+async function segarkan(saatSelesai, idBaru) {
   if (saatSelesai) { saatSelesai(); return; }
-  if (idBaru) location.hash = `#/akuntansi/${idBaru}`;
-  else navigasi(location.hash, true);
+  if (idBaru) history.pushState(null, '', `#/akuntansi/${idBaru}`);
+  await navigasi(location.hash, true);
 }
 
 function batalkan(j, saatSelesai) {
@@ -379,7 +383,7 @@ async function formJurnal(saatSelesai, lama = null) {
             });
             const baru = h.pengganti;
             toast('Jurnal berhasil diubah', 'sukses', `${h.dibatalkan} dibatalkan → ${baru.nomor}`);
-            tutup(); segarkan(saatSelesai, baru.id);
+            tutup(); await segarkan(saatSelesai, baru.id);
             tawaranCetak('Jurnal Berhasil Diubah', el('dl.deskripsi', [
               el('dt', 'Jurnal lama'), el('dd', [el('span.mono', h.dibatalkan), ' ', status('batal', 'Dibatalkan')]),
               h.jurnal_balik && el('dt', 'Jurnal balik'), h.jurnal_balik && el('dd', el('span.mono', h.jurnal_balik.nomor)),

@@ -78,10 +78,11 @@ async function transaksiTab() {
         { judul: 'Rekon', render: (k) => (k.rekonsiliasi ? status('lunas', '✓') : status('netral', '-')) },
         { judul: '', render: (k) => el('div.gap8', [
           el('button.btn.kecil.polos', { title: 'Cetak bukti kas', onclick: (e) => cetakBukti(e, k.id) }, 'Cetak'),
-          izin('kas.update') && !batal(k) && !k.rekonsiliasi
-            && ['kas_masuk', 'kas_keluar', 'transfer'].includes(k.jenis)
-            && el('button.btn.kecil.polos', { title: 'Batalkan bukti ini (jurnal dibalik)',
-              onclick: () => formBatal(k, muat) }, 'Batalkan'),
+          bolehKoreksi(k) && el('button.btn.kecil', { title: 'Ubah bukti ini (bukti lama dibatalkan, '
+            + 'diganti bukti bernomor baru)', onclick: () => (k.jenis === 'transfer'
+            ? formTransfer(muat, k) : formKas(k.jenis, muat, k)) }, 'Ubah'),
+          bolehKoreksi(k) && el('button.btn.kecil.polos', { title: 'Batalkan bukti ini (jurnal dibalik)',
+            onclick: () => formBatal(k, muat) }, 'Batal'),
         ].filter(Boolean)) },
       ], d.data, {
         kosongTeks: 'Belum ada transaksi kas pada periode ini',
@@ -100,6 +101,13 @@ async function transaksiTab() {
   await muat();
   return wadah;
 }
+
+/**
+ * Bukti yang boleh dikoreksi (ubah/batal): masih posted, belum direkonsiliasi,
+ * dan pengguna memegang izin koreksi kas.
+ */
+const bolehKoreksi = (k) => izin('kas.koreksi') && k.status !== 'batal' && !k.rekonsiliasi
+  && ['kas_masuk', 'kas_keluar', 'petty_cash', 'transfer'].includes(k.jenis);
 
 // ---------------------------- Cetak bukti ----------------------------
 
@@ -235,31 +243,79 @@ async function semuaAkun() {
   return opsiAkun((await akunPostable()).filter((c) => !c.is_kas && !c.is_bank));
 }
 
-async function formKas(jenis, saatSelesai) {
+/** Pastikan akun bukti lama tetap muncul di pilihan walau kini tersaring/nonaktif. */
+const denganAkunLama = (opsi, kode, nama) => (kode && !opsi.some((o) => o.nilai === kode)
+  ? [...opsi, { nilai: kode, teks: akunTeks(kode, nama) }] : opsi);
+
+/** Kolom alasan & catatan koreksi pada formulir ubah bukti. */
+const bagianKoreksi = (lama) => [
+  el('div.notis.peringatan', [el('div.isi', [
+    el('strong', `Koreksi ${lama.nomor}`),
+    el('div.kecil', 'Bukti lama tidak dihapus: bukti tersebut dibatalkan (jurnal dibalik) lalu dibuat bukti '
+      + 'pengganti bernomor baru. Buku besar dan neraca ikut terkoreksi.'),
+  ])]),
+];
+const kolomAlasan = () => kolom('Alasan Perubahan', el('textarea', { name: 'alasan',
+  placeholder: 'mis. salah nominal / salah akun' }), { wajib: true });
+
+/** Menyimpan koreksi bukti kas lalu menawarkan cetak bukti pengganti. */
+async function simpanUbah(lama, data, tutup, saatSelesai) {
+  const h = await api.put(`/api/koreksi/kas/${lama.id}`, data);
+  const baru = h.pengganti;
+  toast('Bukti kas berhasil diubah', 'sukses', `${h.dibatalkan} dibatalkan → ${baru.nomor}`);
+  tutup(); saatSelesai?.();
+  tawaranCetak('Bukti Kas Berhasil Diubah', el('dl.deskripsi', [
+    el('dt', 'Bukti lama'), el('dd', [el('span.mono', h.dibatalkan), ' ', status('batal', 'Dibatalkan')]),
+    el('dt', 'Bukti pengganti'), el('dd', el('span.mono', baru.nomor)),
+    baru.terbilang && el('dt', 'Terbilang'), baru.terbilang && el('dd', el('em', judul(baru.terbilang))),
+  ].filter(Boolean)), () => ambilDokKas(baru.id), { label: 'Cetak Bukti Pengganti' });
+}
+
+/**
+ * Formulir bukti kas masuk/keluar/petty cash. Dengan `lama` (baris bukti),
+ * formulir terisi dan disimpan sebagai koreksi (PUT /api/koreksi/kas/:id).
+ */
+async function formKas(jenis, saatSelesai, lama = null) {
   let kasBank;
   let lawan;
   try { [kasBank, lawan] = await Promise.all([akunKasBank(), semuaAkun()]); } catch (err) { galat(err); return; }
+  if (lama) {
+    kasBank = denganAkunLama(kasBank, lama.coa_kas, lama.akun_kas_nama);
+    lawan = denganAkunLama(lawan, lama.coa_lawan, lama.akun_lawan_nama);
+  }
   const masuk = jenis === 'kas_masuk';
   const form = el('div', [
+    lama && bagianKoreksi(lama),
     el('input', { type: 'hidden', name: 'jenis', nilai: jenis }),
     el('div.baris-form', [
-      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() })),
-      kolom('Nominal', input('nominal', { tipe: 'number', min: 1 }), { wajib: true }),
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: lama?.tanggal || hariIni() })),
+      kolom('Nominal', input('nominal', { tipe: 'number', min: 1, nilai: lama?.nominal ?? '' }), { wajib: true }),
     ]),
-    kolom(masuk ? 'Kas/Bank Penerima' : 'Kas/Bank Sumber', pilih('coa_kas', kasBank), { wajib: true }),
-    kolom(masuk ? 'Akun Pendapatan / Lawan' : 'Akun Beban / Lawan', pilih('coa_lawan', lawan), { wajib: true }),
-    kolom('Keterangan', input('keterangan'), { wajib: true }),
-    kolom('Pihak Terkait', input('pihak', { placeholder: 'Opsional' })),
-  ]);
+    kolom(masuk ? 'Kas/Bank Penerima' : 'Kas/Bank Sumber', pilih('coa_kas', kasBank, lama?.coa_kas), { wajib: true }),
+    kolom(masuk ? 'Akun Pendapatan / Lawan' : 'Akun Beban / Lawan', pilih('coa_lawan', lawan, lama?.coa_lawan),
+      { wajib: true }),
+    kolom('Keterangan', input('keterangan', { nilai: lama?.keterangan || '' }), { wajib: true }),
+    kolom('Pihak Terkait', input('pihak', { placeholder: 'Opsional', nilai: lama?.pihak || '' })),
+    lama && kolomAlasan(),
+  ].filter(Boolean));
+  const namaBukti = masuk ? 'Bukti Kas Masuk' : jenis === 'petty_cash' ? 'Bukti Petty Cash' : 'Bukti Kas Keluar';
   const tutup = modal({
-    judul: masuk ? 'Bukti Kas Masuk' : 'Bukti Kas Keluar', isi: form,
+    judul: lama ? `Ubah ${namaBukti} ${lama.nomor}` : namaBukti, isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
         const tombol = e.currentTarget;
+        const data = bacaForm(form);
+        if (lama && !data.alasan.trim()) { toast('Alasan perubahan wajib diisi', 'peringatan'); return; }
         tombol.disabled = true;
         try {
-          const h = await api.post('/api/kas', bacaForm(form));
+          if (lama) {
+            await simpanUbah(lama, { tanggal: data.tanggal, nominal: data.nominal, coa_kas: data.coa_kas,
+              coa_lawan: data.coa_lawan, keterangan: data.keterangan, pihak: data.pihak, alasan: data.alasan },
+            tutup, saatSelesai);
+            return;
+          }
+          const h = await api.post('/api/kas', data);
           toast('Transaksi kas tercatat', 'sukses', `${h.nomor} · ${judul(h.terbilang)}`);
           tutup(); saatSelesai?.();
           tawaranCetak(masuk ? 'Bukti Kas Masuk Tersimpan' : 'Bukti Kas Keluar Tersimpan', el('dl.deskripsi', [
@@ -267,41 +323,53 @@ async function formKas(jenis, saatSelesai) {
             el('dt', 'Terbilang'), el('dd', el('em', judul(h.terbilang))),
           ]), () => ambilDokKas(h.id));
         } catch (err) { galat(err); tombol.disabled = false; }
-      } }, 'Simpan'),
+      } }, lama ? 'Simpan Perubahan' : 'Simpan'),
     ],
   });
 }
 
-async function formTransfer(saatSelesai) {
+/** Formulir transfer; dengan `lama` menjadi formulir koreksi transfer. */
+async function formTransfer(saatSelesai, lama = null) {
   let kasBank;
   try { kasBank = await akunKasBank(); } catch (err) { galat(err); return; }
+  const dari = lama ? denganAkunLama(kasBank, lama.coa_kas, lama.akun_kas_nama) : kasBank;
+  const ke = lama ? denganAkunLama(kasBank, lama.coa_tujuan, lama.akun_tujuan_nama) : kasBank;
   const form = el('div', [
+    lama && bagianKoreksi(lama),
     el('div.baris-form', [
-      kolom('Dari Akun', pilih('coa_kas', kasBank), { wajib: true }),
-      kolom('Ke Akun', pilih('coa_tujuan', kasBank), { wajib: true }),
+      kolom('Dari Akun', pilih('coa_kas', dari, lama?.coa_kas), { wajib: true }),
+      kolom('Ke Akun', pilih('coa_tujuan', ke, lama?.coa_tujuan), { wajib: true }),
     ]),
     el('div.baris-form', [
-      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() })),
-      kolom('Nominal', input('nominal', { tipe: 'number', min: 1 }), { wajib: true }),
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: lama?.tanggal || hariIni() })),
+      kolom('Nominal', input('nominal', { tipe: 'number', min: 1, nilai: lama?.nominal ?? '' }), { wajib: true }),
     ]),
-    kolom('Keterangan', input('keterangan')),
-  ]);
+    kolom('Keterangan', input('keterangan', { nilai: lama?.keterangan || '' })),
+    lama && kolomAlasan(),
+  ].filter(Boolean));
   const tutup = modal({
-    judul: 'Transfer Kas / Bank', isi: form,
+    judul: lama ? `Ubah Transfer ${lama.nomor}` : 'Transfer Kas / Bank', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
         const tombol = e.currentTarget;
+        const data = bacaForm(form);
+        if (lama && !data.alasan.trim()) { toast('Alasan perubahan wajib diisi', 'peringatan'); return; }
         tombol.disabled = true;
         try {
-          const h = await api.post('/api/kas/transfer', bacaForm(form));
+          if (lama) {
+            await simpanUbah(lama, { tanggal: data.tanggal, nominal: data.nominal, coa_kas: data.coa_kas,
+              coa_tujuan: data.coa_tujuan, keterangan: data.keterangan, alasan: data.alasan }, tutup, saatSelesai);
+            return;
+          }
+          const h = await api.post('/api/kas/transfer', data);
           toast('Transfer berhasil', 'sukses', h.nomor);
           tutup(); saatSelesai?.();
           tawaranCetak('Transfer Berhasil', el('dl.deskripsi', [
             el('dt', 'Nomor'), el('dd', el('span.mono', h.nomor)),
           ]), () => ambilDokKas(h.id));
         } catch (err) { galat(err); tombol.disabled = false; }
-      } }, 'Transfer'),
+      } }, lama ? 'Simpan Perubahan' : 'Transfer'),
     ],
   });
 }
@@ -326,7 +394,7 @@ function formBatal(k, saatSelesai) {
         if (!alasan.trim()) { toast('Alasan pembatalan wajib diisi', 'peringatan'); return; }
         tombol.disabled = true;
         try {
-          const h = await api.post(`/api/kas/${k.id}/batal`, { alasan });
+          const h = await api.post(`/api/koreksi/kas/${k.id}/batal`, { alasan });
           toast(`${k.nomor} dibatalkan`, 'sukses', h.jurnal?.nomor ? `Jurnal balik ${h.jurnal.nomor}` : null);
           tutup(); saatSelesai?.();
         } catch (err) { galat(err); tombol.disabled = false; }

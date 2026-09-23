@@ -82,8 +82,9 @@ async function detail(id) {
       onclick: () => formMaintenance(a) }, 'Catat Pemeliharaan'),
     izin('aset.update') && !dilepas && el('button.btn.bahaya', {
       onclick: () => formDisposal(a) }, 'Pelepasan Aset'),
-    izin('aset.delete') && !dilepas && belumDisusutkan && el('button.btn.polos', {
-      title: 'Hanya untuk aset salah input yang belum pernah disusutkan',
+    // Penghapusan = koreksi transaksi perolehan, sehingga memerlukan izin koreksi aset
+    izin('aset.koreksi') && !dilepas && belumDisusutkan && el('button.btn.polos', {
+      title: 'Hanya untuk aset salah input yang belum pernah disusutkan; jurnal perolehannya dibalik',
       onclick: (e) => hapusAset(e, a) }, 'Hapus'),
     tombolCetak(() => dokKartuAset(a), { label: 'Cetak Kartu Aset' }),
     dilepas && el('button.btn', { onclick: (e) => cetakPelepasan(e, a.id) }, 'Cetak Bukti Pelepasan'),
@@ -431,9 +432,15 @@ async function formUbah(a) {
 
 async function hapusAset(e, a) {
   const tombol = e.currentTarget;
-  if (!await konfirmasi(`Hapus aset ${a.kode} — ${a.nama}? Jurnal perolehannya dibatalkan dengan jurnal balik `
-    + 'dan utang perolehan (bila ada) ikut dihapus. Gunakan hanya untuk aset yang salah input.',
-  { judul: 'Hapus Aset', ya: 'Hapus Aset', jenis: 'bahaya' })) return;
+  if (!await konfirmasi(el('div', [
+    el('p', `Hapus aset ${a.kode} — ${a.nama} (${rp(a.harga_perolehan)})?`),
+    el('div.notis.peringatan', [el('div.isi', [
+      el('strong', 'Jurnal perolehan dibalik'),
+      el('div.kecil', 'Jurnal perolehan aset tidak dihapus: sistem membuat jurnal balik (reversing entry) '
+        + 'sehingga buku besar dan neraca kembali seperti sebelum aset dicatat. Utang perolehan yang belum '
+        + 'dibayar ikut dihapus. Gunakan hanya untuk aset yang salah input dan belum pernah disusutkan.'),
+    ])]),
+  ]), { judul: 'Hapus Aset (Koreksi)', ya: 'Hapus Aset', jenis: 'bahaya' })) return;
   tombol.disabled = true;
   try {
     await api.del(`/api/aset/${a.id}`);

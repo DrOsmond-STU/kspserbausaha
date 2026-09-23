@@ -177,7 +177,9 @@ async function bukuRekening(r, saatBerubah) {
           { judul: '', render: (m) => el('div.gap8.nowrap', [
             bisaBukti(m) && el('button.btn.kecil', { title: 'Cetak bukti transaksi',
               onclick: (e) => cetakBuktiTransaksi(e, m.id) }, 'Bukti'),
-            bisaBatal(m) && el('button.btn.kecil.bahaya', { onclick: () => formBatalTransaksi(m, saatBerubah) }, 'Batalkan'),
+            bisaBatal(m) && el('button.btn.kecil', { title: 'Ubah transaksi (dibatalkan lalu diganti transaksi bernomor baru)',
+              onclick: () => formUbahTransaksi(m, r, saatBerubah) }, 'Ubah'),
+            bisaBatal(m) && el('button.btn.kecil.bahaya', { onclick: () => formBatalTransaksi(m, saatBerubah) }, 'Batal'),
           ].filter(Boolean)) },
         ], b.mutasi, { kosongTeks: 'Tidak ada mutasi pada periode ini' }),
       ]), [
@@ -419,12 +421,73 @@ function formBatalTransaksi(m, saatSelesai) {
     judul: 'Batalkan Transaksi', lebar: 'sempit', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Tutup'),
-      tombolProses('Batalkan Transaksi', 'bahaya', async () => {
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const tombol = e.currentTarget;
         const d = bacaForm(form);
-        await api.post(`/api/simpanan/transaksi/${m.id}/batal`, d);
-        toast(`Transaksi ${m.nomor} dibatalkan`, 'sukses');
-        tutup(); saatSelesai?.();
-      }),
+        if (!d.alasan.trim()) { toast('Alasan pembatalan wajib diisi', 'peringatan'); return; }
+        tombol.disabled = true;
+        try {
+          const h = await api.post(`/api/koreksi/simpanan/${m.id}/batal`, d);
+          toast(`Transaksi ${m.nomor} dibatalkan`, 'sukses', h.jurnal?.nomor ? `Jurnal balik ${h.jurnal.nomor}` : null);
+          tutup(); saatSelesai?.();
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Batalkan Transaksi'),
+    ],
+  });
+}
+
+/**
+ * Koreksi setoran/penarikan: transaksi lama dibatalkan (jurnal dibalik,
+ * saldo dikoreksi) lalu dicatat ulang dengan nomor baru - satu transaksi basis data.
+ */
+async function formUbahTransaksi(m, r, saatSelesai) {
+  const bank = await daftarBank();
+  const setor = m.jenis === 'setoran';
+  const metode = pilih('metode', setor
+    ? [{ nilai: 'tunai', teks: 'Tunai' }, { nilai: 'transfer', teks: 'Transfer Bank' },
+      { nilai: 'potong_gaji', teks: 'Potong Gaji' }]
+    : [{ nilai: 'tunai', teks: 'Tunai' }, { nilai: 'transfer', teks: 'Transfer Bank' }], m.metode || 'tunai');
+  const kBank = kolomBank(metode, bank);
+  if (m.metode === 'transfer' && m.bank_account_id) kBank.querySelector('select').value = String(m.bank_account_id);
+  const form = el('div', [
+    el('div.notis.peringatan', [el('div.isi', [
+      el('strong', `${judul(m.jenis)} ${m.nomor} · ${r.nomor_rekening} — ${r.anggota_nama}`),
+      el('div.kecil', 'Transaksi lama tidak dihapus: transaksi tersebut dibatalkan (jurnal dibalik, saldo '
+        + 'dikoreksi) lalu dicatat ulang dengan nomor baru. Buku besar dan neraca ikut terkoreksi.'),
+    ])]),
+    el('div.baris-form', [
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: m.tanggal || hariIni() })),
+      kolom('Nominal', input('nominal', { tipe: 'number', min: 1, nilai: m.kredit || m.debit }), { wajib: true }),
+    ]),
+    el('div.baris-form', [kolom('Metode', metode), kBank]),
+    kolom('Keterangan', input('keterangan', { nilai: m.keterangan || '', placeholder: 'Opsional' })),
+    kolom('Alasan Perubahan', el('textarea', { name: 'alasan', placeholder: 'mis. salah nominal' }), { wajib: true }),
+  ]);
+  const tutup = modal({
+    judul: `Ubah ${judul(m.jenis)} ${m.nomor}`, isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Batal'),
+      el('button.btn.utama', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        const d = bacaForm(form);
+        if (!d.alasan.trim()) { toast('Alasan perubahan wajib diisi', 'peringatan'); return; }
+        tombol.disabled = true;
+        try {
+          const h = await api.put(`/api/koreksi/simpanan/${m.id}`, {
+            ...d, bank_account_id: d.metode === 'transfer' ? d.bank_account_id || null : null,
+          });
+          const baru = h.pengganti;
+          toast(`${judul(m.jenis)} berhasil diubah`, 'sukses', `${h.dibatalkan} dibatalkan → ${baru.nomor}`);
+          tutup(); saatSelesai?.();
+          suksesCetak({
+            judul: `${judul(m.jenis)} Berhasil Diubah`,
+            pesan: `${h.dibatalkan} dibatalkan, diganti ${baru.nomor}`,
+            detail: `Saldo akhir ${rp(baru.saldo_akhir)}${baru.jurnal?.nomor ? ` · jurnal ${baru.jurnal.nomor}` : ''}`,
+            cetak: async () => cetakDokumen(dokBuktiSimpanan(await api.get(`/api/simpanan/transaksi/${baru.id}`))),
+            tombol: 'Cetak Bukti Pengganti',
+          });
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Simpan Perubahan'),
     ],
   });
 }
