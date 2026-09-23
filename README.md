@@ -186,7 +186,7 @@ tidak meninggalkan data separuh jadi.
 | 5 | Pinjaman | Pengajuan, skoring 5C, survey, persetujuan, pencairan, angsuran, denda, restrukturisasi, pelunasan dipercepat, kolektibilitas & NPL |
 | 6 | SHU | Simulasi, alokasi AD/ART, pengesahan RAT, distribusi tunai/simpanan |
 | 7 | Akuntansi | Jurnal umum & otomatis, jurnal berulang, tutup periode, tutup buku tahunan |
-| 8 | Laporan Keuangan | Neraca, Laba Rugi, Arus Kas, Perubahan Ekuitas, Neraca Saldo, Neraca Lajur, Buku Besar, CALK, Rasio, Rekap Pajak — semuanya dapat diekspor CSV |
+| 8 | Laporan | **Pusat Laporan**: 90 laporan seluruh modul dengan filter rentang tanggal & rentang data, cetak/PDF, Excel (.xlsx), Word (.docx). **Laporan Keuangan**: Neraca, Laba Rugi, Arus Kas, Perubahan Ekuitas, Neraca Saldo, Neraca Lajur, Buku Besar, CALK, Rasio, Rekap Pajak |
 | 9 | Kas & Bank | Bukti kas masuk/keluar, transfer, rekonsiliasi, cash opname |
 | 10 | Anggaran (RKAP) | Penyusunan, persetujuan, monitoring realisasi & varians |
 | 11 | Persediaan | Stok multi-gudang, kartu stok, transfer, stock opname, reorder point |
@@ -204,7 +204,8 @@ tidak meninggalkan data separuh jadi.
 | 23 | CRM Anggota | Tiket layanan, broadcast, survei kepuasan & NPS |
 | 24 | Portal Anggota | Saldo, pinjaman, SHU, simulasi & pengajuan mandiri, voting RAT, tiket |
 | 25 | Business Intelligence | Analitik keanggotaan, pinjaman, usaha, proyeksi kas, skor kesehatan |
-| 26 | Administrator | Pengguna, RBAC, parameter sistem, audit trail, sesi, MFA, pencadangan |
+| 26 | Administrator | Pengguna, hak akses per peran (dapat diatur), parameter sistem, audit trail, sesi, MFA, pencadangan |
+| 27 | Setup Koperasi | Profil & logo koperasi, nomor aktivasi aplikasi, tanda tangan setiap jenis cetakan |
 
 ---
 
@@ -230,6 +231,38 @@ antarmuka hanya menyembunyikan menu, bukan menjadi pengaman.
 
 Peran **Pengawas** sengaja dibuat hanya-baca sebagai penerapan pemisahan fungsi
 pengawasan dari fungsi pelaksanaan.
+
+Susunan di atas adalah bawaan. Administrator dapat mengubah izin setiap peran
+(kecuali Super Administrator dan Anggota) lewat **Administrator → Peran & Hak
+Akses**; perubahan berlaku pada permintaan berikutnya dan tercatat di audit trail.
+
+### Koreksi transaksi (ubah & batal)
+
+Transaksi yang sudah tersimpan hanya dapat diubah atau dibatalkan oleh peran yang
+memiliki izin **`<modul>.koreksi`** — bawaan: Pengurus (seluruh modul),
+Bendahara (akuntansi, kas, simpanan, pinjaman, aset), Manajer Unit (POS,
+penjualan, pembelian, persediaan). Izin ini sengaja **tidak** ikut wildcard modul:
+kasir dengan `pos.*` boleh berjualan tetapi tidak membatalkan penjualan.
+
+Koreksi tidak pernah menghapus data. **Batal** membentuk jurnal balik dan
+memulihkan buku pembantu (stok pada nilai semula, saldo simpanan, jadwal
+angsuran, utang/piutang, poin loyalti); **ubah** = batal + dokumen pengganti
+bernomor baru, dalam satu transaksi basis data — jurnal, buku besar, dan neraca
+selalu ikut terkoreksi. Koreksi atas periode yang sudah ditutup dibukukan pada
+tanggal koreksi. Setiap koreksi wajib beralasan dan tercatat di audit trail.
+
+| Dokumen | Batal | Ubah |
+|---|---|---|
+| Jurnal umum (manual/berulang) | ✓ | ✓ |
+| Bukti kas masuk/keluar & transfer | ✓ | ✓ |
+| Penjualan POS | ✓ | ✓ |
+| Penerimaan barang (per PO) | ✓ | – |
+| Pembayaran utang/piutang | ✓ | – |
+| Penyesuaian stok | ✓ | – |
+| Setoran/penarikan simpanan | ✓ | ✓ |
+| Angsuran & pelunasan pinjaman (pembayaran terakhir) | ✓ | ✓ |
+| Pencairan pinjaman (belum ada angsuran) | ✓ | – |
+| Aset tetap (belum pernah disusutkan) | hapus | – |
 
 ---
 
@@ -289,6 +322,24 @@ seluruh modul, serta uji asap yang memanggil setiap endpoint GET tanpa boleh
 ada galat server.
 
 ---
+
+## Cetakan & laporan
+
+Seluruh cetakan — bukti transaksi, formulir, laporan — memakai kop surat (logo &
+identitas koperasi), blok tanda tangan, dan catatan kaki (pencetak, waktu, nomor
+lisensi) yang seragam. Semuanya diatur pada **Setup Koperasi**:
+
+- **Profil Koperasi**: nama, logo, badan hukum, NIB, NPWP, alamat, kota, kontak,
+  dan nama pejabat (ketua, sekretaris, bendahara, ketua pengawas, manajer).
+- **Aktivasi Aplikasi**: nomor aktivasi, pemegang lisensi, masa berlaku.
+- **Tanda Tangan Cetakan**: untuk 29 jenis cetakan (bukti jurnal memorial, BKM,
+  BKK, PO, penerimaan barang, bukti angsuran, dst.) dapat diatur hingga 6 kolom
+  tanda tangan: keterangan, jabatan, dan nama — tetap, diambil dari profil
+  koperasi, atau otomatis pengguna yang mencetak.
+
+PDF dibuat lewat dialog cetak peramban (pilih "Simpan sebagai PDF"). Excel
+(.xlsx) dan Word (.docx) disusun server tanpa pustaka tambahan dan memuat kop
+serta tanda tangan yang sama.
 
 ## Konfigurasi
 
