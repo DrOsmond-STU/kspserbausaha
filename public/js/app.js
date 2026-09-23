@@ -4,6 +4,7 @@
 import { api, el, kosongkan, toast, galat, memuat, modal, kolom, input, bacaForm } from './inti.js';
 import { MENU, TAMPILAN } from './menu.js';
 import { ikon, lambang } from './ikon.js';
+import { dataCetak, segarkanDataCetak } from './cetak.js';
 
 export const negara = { user: null, notifikasi: 0 };
 
@@ -41,6 +42,7 @@ function layarMasuk(pesanAwal) {
         return;
       }
       negara.user = hasil.user;
+      segarkanDataCetak();                 // nama pencetak pada tanda tangan ikut berganti
       await gambarKerangka();
       navigasi(location.hash || '#/');
     } catch (err) {
@@ -93,17 +95,17 @@ function layarMasuk(pesanAwal) {
 // ------------------------------ Kerangka ------------------------------
 
 async function gambarKerangka() {
-  const menu = MENU.filter((g) => {
-    g.item = g.item.filter((i) => izin(i.izin));
-    return g.item.length > 0;
-  });
+  // Disalin, bukan diubah di tempat: MENU tetap utuh bila pengguna lain masuk
+  // tanpa memuat ulang halaman.
+  const menu = MENU.map((g) => ({ ...g, item: g.item.filter((i) => izin(i.izin)
+    && (!i.syarat || i.syarat(negara.user))) })).filter((g) => g.item.length > 0);
 
   const sidebar = el('aside.sidebar#sidebar', [
     el('div.sidebar-kepala', [
-      el('div.tanda', lambang(22)),
+      el('div.tanda#tanda-koperasi', lambang(22)),
       el('div', { gaya: { minWidth: 0 } }, [
         el('div.logo', 'ECMS'),
-        el('div.nama-koperasi', negara.koperasi || 'Koperasi Serba Usaha'),
+        el('div.nama-koperasi#nama-koperasi', negara.koperasi || 'Koperasi Serba Usaha'),
       ]),
     ]),
     el('nav.nav#nav', menu.map((g) => el('div.nav-grup', [
@@ -135,6 +137,7 @@ async function gambarKerangka() {
       el('div.sub#sub-halaman', ''),
     ]),
     el('div.kanan', [
+      el('a.lencana-aktivasi#lencana-aktivasi', { href: '#/setup', gaya: { display: 'none' } }),
       el('button.btn-ikon#tombol-notif', { title: 'Notifikasi', 'aria-label': 'Notifikasi',
         onclick: bukaNotifikasi }, [ikon('lonceng', { ukuran: 19 })]),
       el('button.btn-ikon#tombol-tema', { title: 'Ganti tema', 'aria-label': 'Ganti tema',
@@ -145,6 +148,37 @@ async function gambarKerangka() {
   kosongkan(app).className = '';
   app.append(el('div.kerangka', [sidebar, el('main.konten', [topbar, el('div.halaman#halaman')])]));
   segarkanNotifikasi();
+  segarkanIdentitas();
+}
+
+/**
+ * Nama & logo koperasi pada sidebar serta penanda aktivasi untuk administrator.
+ * Dipanggil ulang oleh halaman Setup Koperasi sesudah menyimpan.
+ */
+export async function segarkanIdentitas(paksa = false) {
+  try {
+    const d = await dataCetak(paksa);
+    negara.koperasi = d.profil?.nama || negara.koperasi;
+    negara.aktivasi = d.aktivasi || null;
+    const nama = document.getElementById('nama-koperasi');
+    if (nama) { nama.textContent = negara.koperasi || 'Koperasi Serba Usaha'; nama.title = nama.textContent; }
+    const tanda = document.getElementById('tanda-koperasi');
+    if (tanda) {
+      kosongkan(tanda).append(d.profil?.logo ? el('img', { src: d.profil.logo, alt: 'Logo koperasi' }) : lambang(22));
+      tanda.classList.toggle('berlogo', !!d.profil?.logo);
+    }
+    // Hanya pemegang akses administrator yang diingatkan; pengguna lain tidak
+    // dapat berbuat apa-apa atas status aktivasi.
+    const lencana = document.getElementById('lencana-aktivasi');
+    const st = d.aktivasi?.status;
+    if (lencana) {
+      const tampil = izin('admin.view') && (st === 'belum' || st === 'kedaluwarsa');
+      lencana.style.display = tampil ? '' : 'none';
+      lencana.className = `lencana-aktivasi ${st === 'kedaluwarsa' ? 'bahaya' : 'peringatan'}`;
+      lencana.textContent = st === 'kedaluwarsa' ? 'Aktivasi kedaluwarsa' : 'Belum diaktivasi';
+      lencana.title = 'Buka Setup Koperasi untuk memasukkan nomor aktivasi';
+    }
+  } catch { /* identitas tetap memakai nilai bawaan */ }
 }
 
 const bukaSidebar = () => {
@@ -183,6 +217,7 @@ function gantiTema() {
 async function keluar() {
   try { await api.post('/api/auth/logout'); } catch { /* abaikan */ }
   negara.user = null;
+  segarkanDataCetak();
   location.hash = '';
   layarMasuk('Anda telah keluar dari sistem.');
 }
@@ -339,10 +374,6 @@ window.addEventListener('hashchange', () => navigasi(location.hash));
 
   try {
     negara.user = await api.get('/api/auth/saya');
-    try {
-      const s = await api.get('/api/admin/settings', { prefix: 'koperasi.nama' });
-      negara.koperasi = s.map['koperasi.nama'];
-    } catch { /* pengguna tanpa akses pengaturan */ }
     await gambarKerangka();
     navigasi(location.hash || '#/');
   } catch {

@@ -13,6 +13,15 @@ export const MENU = [
     ],
   },
   {
+    // Pusat Laporan tampil untuk seluruh staf (bukan anggota); katalognya
+    // sudah disaring server menurut izin setiap laporan.
+    judul: 'Laporan',
+    item: [
+      { rute: '/pusat-laporan', nama: 'Pusat Laporan', ikon: 'laporan', syarat: (u) => u?.role !== 'anggota' },
+      { rute: '/laporan', nama: 'Laporan Keuangan', ikon: 'neraca', izin: 'laporan.view' },
+    ],
+  },
+  {
     judul: 'Keanggotaan & Simpan Pinjam',
     item: [
       { rute: '/anggota', nama: 'Keanggotaan', ikon: 'anggota', izin: 'anggota.view' },
@@ -35,7 +44,6 @@ export const MENU = [
     judul: 'Keuangan',
     item: [
       { rute: '/akuntansi', nama: 'Akuntansi', ikon: 'buku', izin: 'akuntansi.view' },
-      { rute: '/laporan', nama: 'Laporan Keuangan', ikon: 'laporan', izin: 'laporan.view' },
       { rute: '/kas', nama: 'Kas & Bank', ikon: 'uang', izin: 'kas.view' },
       { rute: '/anggaran', nama: 'Anggaran (RKAP)', ikon: 'sasaran', izin: 'anggaran.view' },
       { rute: '/aset', nama: 'Aset Tetap', ikon: 'lapis', izin: 'aset.view' },
@@ -58,6 +66,7 @@ export const MENU = [
     item: [
       { rute: '/master', nama: 'Master Data', ikon: 'basis', izin: 'master.view' },
       { rute: '/admin', nama: 'Administrator', ikon: 'roda', izin: 'admin.view' },
+      { rute: '/setup', nama: 'Setup Koperasi', ikon: 'gedung', izin: 'admin.view' },
     ],
   },
 ];
@@ -79,6 +88,7 @@ export const TAMPILAN = {
   '/unit-usaha': { judul: 'Unit Usaha', sub: 'Kinerja per segmen usaha', izin: 'unit.view', muat: () => import('./tampilan/unit.js') },
 
   '/akuntansi': { judul: 'Akuntansi', sub: 'Permenkop UKM No. 2 Tahun 2024', izin: 'akuntansi.view', muat: () => import('./tampilan/akuntansi.js') },
+  '/pusat-laporan': { judul: 'Pusat Laporan', sub: 'Saring, cetak PDF, unduh Excel & Word', muat: () => import('./tampilan/pusat-laporan.js') },
   '/laporan': { judul: 'Laporan Keuangan', sub: 'SAK Entitas Privat', izin: 'laporan.view', muat: () => import('./tampilan/laporan.js') },
   '/kas': { judul: 'Kas & Bank', sub: 'Penerimaan, pengeluaran & rekonsiliasi', izin: 'kas.view', muat: () => import('./tampilan/kas.js') },
   '/anggaran': { judul: 'Anggaran (RKAP)', sub: 'Rencana kerja & anggaran', izin: 'anggaran.view', muat: () => import('./tampilan/anggaran.js') },
@@ -94,4 +104,5 @@ export const TAMPILAN = {
 
   '/master': { judul: 'Master Data', sub: 'Data acuan sistem', izin: 'master.view', muat: () => import('./tampilan/master.js') },
   '/admin': { judul: 'Administrator', sub: 'Pengguna, RBAC & keamanan', izin: 'admin.view', muat: () => import('./tampilan/admin.js') },
+  '/setup': { judul: 'Setup Koperasi', sub: 'Profil, logo, aktivasi & tanda tangan cetakan', izin: 'admin.view', muat: () => import('./tampilan/setup.js') },
 };
