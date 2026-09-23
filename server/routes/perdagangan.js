@@ -3,7 +3,7 @@
  */
 import { createRouter, notFound, badRequest } from '../lib/http.js';
 import { all, get, scalar } from '../db.js';
-import { idParam, num, str, date, oneOf, today } from '../lib/util.js';
+import { idParam, num, str, date, oneOf, today, terbilang } from '../lib/util.js';
 import * as inv from '../services/inventory.js';
 import * as trade from '../services/trade.js';
 
@@ -39,6 +39,22 @@ router.post('/api/persediaan/penyesuaian', 'persediaan.update', ({ body, ctx }) 
   akun_lawan: str(body, 'akun_lawan', { required: false, max: 20 }),
   keterangan: str(body, 'keterangan', { required: false, max: 200 }),
 }, ctx));
+
+/** Bukti penyesuaian stok: satu mutasi penyesuaian beserta jurnalnya (untuk dicetak). */
+router.get('/api/persediaan/penyesuaian/:id', 'persediaan.view', ({ params }) => {
+  const m = get(
+    `SELECT m.*, b.kode, b.nama, b.satuan, g.nama AS gudang_nama FROM mutasi_stok m
+       JOIN barang b ON b.id = m.barang_id JOIN gudang g ON g.id = m.gudang_id
+      WHERE m.id = ? AND m.jenis IN ('penyesuaian_masuk', 'penyesuaian_keluar')`, [idParam(params)]);
+  if (!m) throw notFound('Mutasi penyesuaian tidak ditemukan');
+  const jurnal = get('SELECT id, nomor, tanggal, keterangan, total_debit, status FROM jurnal WHERE referensi = ? ORDER BY id LIMIT 1',
+    [`stok:${m.id}`]);
+  const detail = jurnal ? all(
+    `SELECT d.coa_kode, c.nama AS akun_nama, d.debit, d.kredit, d.keterangan FROM jurnal_detail d
+       JOIN coa c ON c.kode = d.coa_kode WHERE d.jurnal_id = ? ORDER BY d.urut`, [jurnal.id]) : [];
+  const nilai = jurnal ? jurnal.total_debit : 0;
+  return { ...m, jurnal: jurnal ? { ...jurnal, detail } : null, nilai, terbilang: terbilang(nilai) };
+});
 
 router.post('/api/persediaan/transfer', 'persediaan.update', ({ body, ctx }) => inv.transferGudang({
   barang_id: num(body, 'barang_id', { min: 1 }),
@@ -132,6 +148,22 @@ router.post('/api/pos/retur', 'pos.update', ({ body, ctx }) => trade.returPenjua
 
 // ---------------------------- Penjualan -----------------------------
 
+/**
+ * Mengelompokkan mutasi stok per proses (penerimaan/retur) untuk bukti cetak.
+ * Satu proses dicatat dalam satu transaksi: tanggal & waktu catatnya sama dan
+ * satu barang hanya muncul sekali. Kelompok baru dimulai bila salah satunya berubah.
+ */
+function kelompokMutasi(kelompok, m) {
+  const kunci = `${m.tanggal}|${m.created_at}`;
+  let k = kelompok.at(-1);
+  if (!k || k.kunci !== kunci || k.barang.has(m.barang_id)) {
+    k = { kunci, tanggal: m.tanggal, items: [], barang: new Set() };
+    kelompok.push(k);
+  }
+  k.barang.add(m.barang_id);
+  return k;
+}
+
 router.get('/api/penjualan', 'penjualan.view', ({ query }) => {
   const w = [];
   const p = [];
@@ -172,6 +204,43 @@ router.get('/api/penjualan/:id', 'penjualan.view', ({ params }) => {
                           AND m.jenis = 'retur_masuk' AND m.barang_id = d.barang_id), 0) AS qty_retur
          FROM penjualan_detail d
          JOIN barang b ON b.id = d.barang_id WHERE d.penjualan_id = ?`, [`retur:${id}`, id]),
+    terbilang: terbilang(j.total),
+  };
+});
+
+/**
+ * Riwayat retur sebuah penjualan untuk bukti retur: mutasi retur dikelompokkan
+ * per proses retur dan dipasangkan dengan jurnal retur sesuai urutan waktunya.
+ */
+router.get('/api/penjualan/:id/retur', 'penjualan.view', ({ params }) => {
+  const id = idParam(params);
+  const p = get('SELECT id, nomor, tanggal, total, subtotal, metode_bayar FROM penjualan WHERE id = ?', [id]);
+  if (!p) throw notFound('Transaksi penjualan tidak ditemukan');
+  const harga = new Map(all('SELECT barang_id, qty, subtotal FROM penjualan_detail WHERE penjualan_id = ?', [id])
+    .map((d) => [d.barang_id, d.qty ? d.subtotal / d.qty : 0]));
+  const mutasi = all(
+    `SELECT m.id, m.tanggal, m.created_at, m.barang_id, m.qty, b.kode, b.nama, b.satuan FROM mutasi_stok m
+       JOIN barang b ON b.id = m.barang_id WHERE m.referensi = ? AND m.jenis = 'retur_masuk' ORDER BY m.id`,
+    [`retur:${id}`]);
+  const jurnal = all(
+    'SELECT id, nomor, tanggal, keterangan, total_debit, status FROM jurnal WHERE referensi = ? ORDER BY id',
+    [`retur:${id}`]);
+  const kelompok = [];
+  for (const m of mutasi) {
+    const k = kelompokMutasi(kelompok, m);
+    k.items.push({ barang_id: m.barang_id, kode: m.kode, nama: m.nama, satuan: m.satuan, qty: m.qty,
+      harga: Math.round(harga.get(m.barang_id) || 0), nilai: Math.round((harga.get(m.barang_id) || 0) * m.qty) });
+  }
+  return {
+    penjualan: p,
+    retur: kelompok.map(({ kunci, barang, ...k }, i) => {
+      const j = jurnal[i] || null;
+      const nilai = k.items.reduce((s, x) => s + x.nilai, 0);
+      // Diskon nota & PPN dikoreksi proporsional, sama dengan perhitungan retur.
+      const nilaiRetur = p.subtotal > 0 ? Math.min(Math.round(nilai * p.total / p.subtotal), p.total) : nilai;
+      return { ...k, urut: i + 1, jurnal: j, nilai_item: nilai, nilai_retur: nilaiRetur,
+        terbilang: terbilang(nilaiRetur) };
+    }),
   };
 });
 
@@ -206,6 +275,42 @@ router.get('/api/pembelian/:id', 'pembelian.view', ({ params }) => {
     detail: all(
       `SELECT d.*, br.kode, br.nama, br.satuan FROM pembelian_detail d
          JOIN barang br ON br.id = d.barang_id WHERE d.pembelian_id = ?`, [id]),
+    terbilang: terbilang(b.total),
+  };
+});
+
+/**
+ * Riwayat penerimaan barang sebuah dokumen pembelian (bukti penerimaan):
+ * mutasi stok "masuk" berreferensi pembelian:<id> dikelompokkan per proses
+ * penerimaan dan dipasangkan dengan jurnal penerimaannya sesuai urutan waktu.
+ */
+router.get('/api/pembelian/:id/penerimaan', 'pembelian.view', ({ params }) => {
+  const id = idParam(params);
+  const pb = get(`SELECT b.id, b.nomor, b.tanggal, b.supplier_id, s.nama AS supplier_nama, g.nama AS gudang_nama
+                    FROM pembelian b LEFT JOIN supplier s ON s.id = b.supplier_id
+                    LEFT JOIN gudang g ON g.id = b.gudang_id WHERE b.id = ?`, [id]);
+  if (!pb) throw notFound('Dokumen pembelian tidak ditemukan');
+  const pesan = new Map(all('SELECT barang_id, qty FROM pembelian_detail WHERE pembelian_id = ?', [id])
+    .map((d) => [d.barang_id, d.qty]));
+  const mutasi = all(
+    `SELECT m.id, m.tanggal, m.created_at, m.barang_id, m.qty, m.harga, m.batch, m.expired, b.kode, b.nama, b.satuan
+       FROM mutasi_stok m JOIN barang b ON b.id = m.barang_id
+      WHERE m.referensi = ? AND m.jenis = 'masuk' ORDER BY m.id`, [`pembelian:${id}`]);
+  const jurnal = all(
+    `SELECT id, nomor, tanggal, total_debit, status FROM jurnal WHERE referensi = ? AND tipe = 'pembelian'
+      ORDER BY id`, [`pembelian:${id}`]);
+  const kelompok = [];
+  for (const m of mutasi) {
+    const k = kelompokMutasi(kelompok, m);
+    k.items.push({ barang_id: m.barang_id, kode: m.kode, nama: m.nama, satuan: m.satuan,
+      qty_pesan: pesan.get(m.barang_id) ?? null, qty: m.qty, harga: m.harga, nilai: Math.round(m.qty * m.harga),
+      batch: m.batch, expired: m.expired });
+  }
+  return {
+    pembelian: pb,
+    penerimaan: kelompok.map(({ kunci, barang, ...k }, i) => ({
+      ...k, urut: i + 1, jurnal: jurnal[i] || null, nilai: k.items.reduce((s, x) => s + x.nilai, 0),
+    })),
   };
 });
 
@@ -277,6 +382,31 @@ router.get('/api/hutang-piutang', 'akuntansi.view', ({ query }) => {
     jenis, data, aging: bucket,
     total_terbuka: data.filter((x) => x.status === 'terbuka').reduce((s, r) => s + r.sisa, 0),
   };
+});
+
+/** Satu tagihan utang/piutang beserta riwayat pembayarannya (untuk bukti pembayaran). */
+router.get('/api/hutang-piutang/:id', 'akuntansi.view', ({ params }) => {
+  const h = get(
+    `SELECT h.*, s.nama AS supplier_nama, c.nama AS customer_nama, a.nama AS anggota_nama,
+            a.nomor_anggota, (h.nominal - h.terbayar) AS sisa
+       FROM hutang_piutang h LEFT JOIN supplier s ON s.id = h.supplier_id
+       LEFT JOIN customer c ON c.id = h.customer_id LEFT JOIN anggota a ON a.id = h.anggota_id
+      WHERE h.id = ?`, [idParam(params)]);
+  if (!h) throw notFound('Data hutang/piutang tidak ditemukan');
+  // Nomor dokumen sumber (pembelian/penjualan) agar bukti mudah ditelusuri.
+  const [jenisSumber, idSumber] = String(h.referensi).split(':');
+  const tabelSumber = { pembelian: 'pembelian', penjualan: 'penjualan' }[jenisSumber];
+  const sumber = tabelSumber ? get(`SELECT id, nomor, tanggal, total FROM ${tabelSumber} WHERE id = ?`, [Number(idSumber)]) : null;
+  const pembayaran = all(
+    `SELECT id, nomor, tanggal, keterangan, total_debit AS nominal, status, dibuat_oleh FROM jurnal
+      WHERE referensi = ? ORDER BY tanggal, id`, [`hp:${h.id}`]).map((j) => ({
+    ...j,
+    akun: all(`SELECT d.coa_kode, c.nama AS akun_nama, d.debit, d.kredit FROM jurnal_detail d
+                 JOIN coa c ON c.kode = d.coa_kode WHERE d.jurnal_id = ? ORDER BY d.urut`, [j.id]),
+    terbilang: terbilang(j.nominal),
+  }));
+  return { ...h, pihak_nama: h.supplier_nama || h.customer_nama || h.anggota_nama || h.pihak || null,
+    sumber: sumber ? { jenis: jenisSumber, ...sumber } : null, pembayaran };
 });
 
 router.post('/api/hutang-piutang/bayar', 'kas.create', ({ body, ctx }) => trade.bayarHutangPiutang({

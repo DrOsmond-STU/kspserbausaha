@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { grafikCincin } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 export async function render(param) {
   if (param[0]) return detail(Number(param[0]));
@@ -73,6 +74,12 @@ async function simulasi() {
 
 function tampilSimulasi(h) {
   return el('div.mt16', [
+    el('div.mb8', [tombolCetak(() => dokRincian({
+      judul: `Simulasi Pembagian SHU Tahun Buku ${h.tahun ?? ''}`.trim(), status: 'simulasi',
+      shu_bersih: h.shu_bersih, total_simpanan: h.dasar.total_simpanan, total_transaksi: h.dasar.total_transaksi,
+      alokasi: h.alokasi.map((a) => ({ komponen: a.nama, persentase: a.persentase, nominal: a.nominal })),
+      per_anggota: h.per_anggota,
+    }), { label: 'Cetak Simulasi' })]),
     el('div.grid.k3.mb16', [
       kpi('SHU Bersih', rp(h.shu_bersih), { jenis: h.shu_bersih >= 0 ? 'sukses' : 'bahaya' }),
       kpi('Dasar Simpanan', rp(h.dasar.total_simpanan)),
@@ -149,7 +156,8 @@ async function detail(id) {
       onclick: () => sahkan(p, segarkan) }, '✓ Sahkan (RAT)'),
     izin('shu.approve') && p.status === 'disetujui' && el('button.btn.utama', {
       onclick: () => bagikan(p, segarkan) }, 'Bagikan ke Anggota'),
-    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
+    tombolCetak(() => dokRincian({ ...p, judul: `Rincian Pembagian SHU Tahun Buku ${p.tahun}` }),
+      { label: 'Cetak Rincian' }),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [
@@ -188,6 +196,8 @@ async function detail(id) {
     { judul: 'Total', kunci: 'shu_total', angka: true, render: (a) => el('strong.pos', rp(a.shu_total)) },
     { judul: 'Dibayar', render: (a) => (a.dibayar ? status('lunas', judul(a.metode_bayar || 'ya'))
       : status('netral', 'Belum')) },
+    { judul: '', render: (a) => el('button.btn.kecil', { title: 'Cetak slip SHU anggota',
+      onclick: (e) => { e.stopPropagation(); cetakDokumen(dokSlip(p, a)); } }, 'Slip') },
   ], p.per_anggota, {
     kaki: { nama: 'TOTAL', shu_total: rp(p.per_anggota.reduce((s, a) => s + a.shu_total, 0)) },
   })));
@@ -287,4 +297,68 @@ async function bagikan(p, saatSelesai) {
       } }, 'Bagikan'),
     ],
   });
+}
+
+// ------------------------------- Cetakan -------------------------------
+
+const kapital = (s) => (s ? `${String(s)[0].toUpperCase()}${String(s).slice(1)}` : '');
+
+/** Rincian pembagian SHU: alokasi sesuai AD/ART dan pembagian per anggota. */
+function dokRincian(p) {
+  const total = p.per_anggota.reduce((t, a) => t + (a.shu_total || 0), 0);
+  return {
+    judul: p.judul, jenis_ttd: 'shu', orientasi: 'landscape',
+    subjudul: p.status ? `Status: ${judul(p.status)}` : null,
+    ringkasan: [
+      { label: 'SHU bersih', nilai: p.shu_bersih, tipe: 'uang' },
+      { label: 'Dasar simpanan', nilai: p.total_simpanan, tipe: 'uang' },
+      { label: 'Dasar transaksi', nilai: p.total_transaksi, tipe: 'uang' },
+      { label: 'Anggota penerima', nilai: p.per_anggota.length, tipe: 'angka' },
+      { label: 'Total dibagikan ke anggota', nilai: total, tipe: 'uang' },
+    ],
+    bagian: [
+      { judul: 'Alokasi SHU', kolom: [{ kunci: 'komponen', label: 'Komponen' },
+        { kunci: 'persentase', label: '%', tipe: 'persen' }, { kunci: 'nominal', label: 'Nominal', tipe: 'uang' }],
+      baris: p.alokasi.map((a) => ({ ...a, komponen: judul(a.komponen) })),
+      total: { persentase: p.alokasi.reduce((t, a) => t + (a.persentase || 0), 0),
+        nominal: p.alokasi.reduce((t, a) => t + (a.nominal || 0), 0) } },
+      { judul: 'Pembagian SHU per Anggota', kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' },
+        { kunci: 'nomor_anggota', label: 'No. Anggota' }, { kunci: 'nama', label: 'Nama' },
+        { kunci: 'simpanan_rata', label: 'Simpanan Rata-rata', tipe: 'uang' },
+        { kunci: 'nilai_transaksi', label: 'Nilai Transaksi', tipe: 'uang' },
+        { kunci: 'shu_jasa_modal', label: 'Jasa Modal', tipe: 'uang' },
+        { kunci: 'shu_jasa_usaha', label: 'Jasa Usaha', tipe: 'uang' },
+        { kunci: 'shu_total', label: 'Total SHU', tipe: 'uang' }, { kunci: 'dibayar_teks', label: 'Dibayar' }],
+      baris: p.per_anggota.map((a, i) => ({ ...a, no: i + 1,
+        dibayar_teks: a.dibayar ? judul(a.metode_bayar || 'ya') : 'Belum' })),
+      total: { shu_jasa_modal: p.per_anggota.reduce((t, a) => t + (a.shu_jasa_modal || 0), 0),
+        shu_jasa_usaha: p.per_anggota.reduce((t, a) => t + (a.shu_jasa_usaha || 0), 0), shu_total: total } },
+    ],
+    terbilang: p.terbilang ? `SHU bersih: ${kapital(p.terbilang)}` : null,
+    catatan: 'Pembagian SHU sesuai UU No. 25 Tahun 1992 Pasal 45 dan AD/ART koperasi.',
+  };
+}
+
+/** Slip SHU untuk satu anggota. */
+function dokSlip(p, a) {
+  return {
+    judul: 'Slip Pembagian SHU', subjudul: `Tahun Buku ${p.tahun}`, nomor: `SHU-${p.tahun}-${a.nomor_anggota}`,
+    ukuran: 'A5', orientasi: 'landscape', jenis_ttd: 'shu',
+    ringkasan: [
+      { label: 'No. anggota', nilai: a.nomor_anggota },
+      { label: 'Nama anggota', nilai: a.nama },
+      { label: 'Simpanan rata-rata', nilai: a.simpanan_rata, tipe: 'uang' },
+      { label: 'Nilai transaksi', nilai: a.nilai_transaksi, tipe: 'uang' },
+      { label: 'Status pembayaran', nilai: a.dibayar ? `Dibayar (${judul(a.metode_bayar || '')})` : 'Belum dibayar' },
+      { label: 'Status periode', nilai: judul(p.status) },
+    ],
+    bagian: [{
+      kolom: [{ kunci: 'uraian', label: 'Komponen' }, { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' }],
+      baris: [{ uraian: 'SHU jasa modal (atas simpanan)', jumlah: a.shu_jasa_modal },
+        { uraian: 'SHU jasa usaha (atas transaksi)', jumlah: a.shu_jasa_usaha }],
+      total: { jumlah: a.shu_total, _label: 'TOTAL SHU' },
+    }],
+    terbilang: kapital(a.terbilang),
+    penanda_tambahan: { Anggota: a.nama, Penerima: a.nama },
+  };
 }

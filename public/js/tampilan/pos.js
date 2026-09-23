@@ -8,6 +8,7 @@ import {
 import { negara } from '../app.js';
 import { daftarRekeningBank, kolomRekeningBank, aturKolomBank } from './pembelian.js';
 import { ikon } from '../ikon.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 export async function render() {
   const [gudang, rekap, bank] = await Promise.all([
@@ -264,7 +265,9 @@ export async function render() {
       { judul: 'Metode', render: (m) => judul(m.metode_bayar) },
       { judul: 'Transaksi', angka: true, render: (m) => angka(m.jumlah) },
       { judul: 'Nilai', angka: true, render: (m) => rp(m.total) },
-    ], rekap.per_metode, { kosongTeks: 'Belum ada transaksi hari ini' })),
+    ], rekap.per_metode, { kosongTeks: 'Belum ada transaksi hari ini' }), [
+      tombolCetak(() => dokRekap(rekap), { label: 'Cetak Rekap' }),
+    ]),
     panelTabel('Barang Terlaris (hari ini)', tabel([
       { judul: 'Kode', render: (b) => el('span.mono.kecil', b.kode) },
       { judul: 'Barang', kunci: 'nama' },
@@ -277,6 +280,54 @@ export async function render() {
   gambarKeranjang();
   setTimeout(() => kotakCari.focus(), 100);
   return wadah;
+}
+
+/** Struk kasir (kertas 80 mm) dari hasil POST /api/pos/jual. */
+export function dokStruk(h) {
+  const kasir = negara.user ? (negara.user.nama || negara.user.username) : '';
+  return {
+    judul: 'Struk Belanja', nomor: h.nomor, ukuran: 'struk', jenis_ttd: 'struk_pos',
+    keterangan: [`${tgl(h.tanggal)}${kasir ? ` · Kasir ${kasir}` : ''}`,
+      h.anggota ? `Anggota: ${h.anggota.nama} (${h.anggota.nomor_anggota})` : null].filter(Boolean),
+    bagian: [
+      { kolom: [{ kunci: 'barang', label: 'Barang' }, { kunci: 'qty', label: 'Qty', tipe: 'angka' },
+        { kunci: 'harga', label: 'Harga', tipe: 'uang' }, { kunci: 'subtotal', label: 'Jumlah', tipe: 'uang' }],
+      baris: h.items.map((i) => ({ ...i, barang: i.diskon ? `${i.nama} (disk. ${angka(i.diskon)})` : i.nama })) },
+      { kolom: [{ kunci: 'uraian', label: '' }, { kunci: 'jumlah', label: '', tipe: 'uang' }], baris: [
+        { uraian: 'Subtotal', jumlah: h.subtotal },
+        h.diskon > 0 && { uraian: 'Diskon', jumlah: -h.diskon },
+        h.pajak > 0 && { uraian: 'Pajak', jumlah: h.pajak },
+        { uraian: 'TOTAL', jumlah: h.total },
+        { uraian: `Bayar (${judul(h.metode_bayar)})`, jumlah: h.bayar },
+        { uraian: 'Kembali', jumlah: h.kembali },
+        h.poin_didapat > 0 && { uraian: 'Poin diperoleh', jumlah: h.poin_didapat },
+      ].filter(Boolean) },
+    ],
+    catatan: 'Terima kasih telah berbelanja di koperasi kita — dari anggota, oleh anggota, untuk anggota.',
+  };
+}
+
+/** Rekap penutupan kasir hari ini dari GET /api/pos/rekap. */
+function dokRekap(r) {
+  return {
+    judul: 'Rekap Penutupan Kasir', subjudul: `Tanggal ${tgl(r.tanggal, true)}`, jenis_ttd: 'laporan',
+    ringkasan: [
+      { label: 'Jumlah transaksi', nilai: angka(r.jumlah_transaksi) },
+      { label: 'Omzet', nilai: rp(r.total) },
+      { label: 'Diskon diberikan', nilai: rp(r.diskon) },
+      { label: 'Laba kotor', nilai: rp(r.laba_kotor) },
+    ],
+    bagian: [
+      { judul: 'Per Metode Bayar', kolom: [{ kunci: 'metode', label: 'Metode' },
+        { kunci: 'jumlah', label: 'Transaksi', tipe: 'angka' }, { kunci: 'total', label: 'Nilai', tipe: 'uang' }],
+      baris: (r.per_metode || []).map((m) => ({ ...m, metode: judul(m.metode_bayar) })),
+      total: { jumlah: (r.per_metode || []).reduce((s, m) => s + m.jumlah, 0),
+        total: (r.per_metode || []).reduce((s, m) => s + m.total, 0) } },
+      { judul: 'Barang Terlaris', kolom: [{ kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' },
+        { kunci: 'qty', label: 'Qty', tipe: 'angka' }, { kunci: 'nilai', label: 'Nilai', tipe: 'uang' }],
+      baris: r.terlaris || [] },
+    ],
+  };
 }
 
 function tampilkanStruk(h) {
@@ -313,7 +364,11 @@ function tampilkanStruk(h) {
   const tutup = modal({
     judul: 'Transaksi Berhasil', lebar: 'sempit', isi: struk,
     kaki: [
-      el('button.btn', { onclick: () => window.print() }, 'Cetak Struk'),
+      el('button.btn', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try { await cetakDokumen(dokStruk(h)); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+      } }, 'Cetak Struk'),
       el('button.btn.utama', { onclick: () => tutup() }, 'Selesai'),
     ],
   });

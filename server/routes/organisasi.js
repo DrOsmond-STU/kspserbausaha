@@ -30,7 +30,8 @@ router.get('/api/shu/:id', 'shu.view', ({ params }) => {
     alokasi: all('SELECT * FROM shu_alokasi WHERE periode_id = ? ORDER BY id', [id]),
     per_anggota: all(
       `SELECT s.*, a.nomor_anggota, a.nama FROM shu_anggota s JOIN anggota a ON a.id = s.anggota_id
-        WHERE s.periode_id = ? ORDER BY s.shu_total DESC`, [id]),
+        WHERE s.periode_id = ? ORDER BY s.shu_total DESC`, [id])
+      .map((x) => ({ ...x, terbilang: terbilang(x.shu_total) })),   // untuk slip SHU per anggota
     terbilang: terbilang(p.shu_bersih),
   };
 });
@@ -141,6 +142,25 @@ router.post('/api/aset', 'aset.create', ({ body, ctx }) => aset.tambah({
   pemasok: str(body, 'pemasok', { required: false, max: 150 }),
   jatuh_tempo: date(body, 'jatuh_tempo', { required: false, dflt: null }),
 }, ctx));
+
+/** Data bukti pelepasan aset: nilai buku saat dilepas, hasil, laba/rugi, dan jurnalnya. */
+router.get('/api/aset/:id/pelepasan', 'aset.view', ({ params }) => {
+  const id = idParam(params);
+  const a = get('SELECT * FROM aset_tetap WHERE id = ?', [id]);
+  if (!a) throw notFound('Aset tidak ditemukan');
+  if (a.status !== 'dilepas') throw conflict('Aset ini belum dilepas');
+  const jurnal = get(`SELECT id, nomor, tanggal, keterangan, status FROM jurnal WHERE referensi = ?
+                       ORDER BY id DESC LIMIT 1`, [`disposal:${id}`]);
+  const detail = jurnal ? all(
+    `SELECT d.coa_kode, c.nama AS akun_nama, d.debit, d.kredit, d.keterangan FROM jurnal_detail d
+       JOIN coa c ON c.kode = d.coa_kode WHERE d.jurnal_id = ? ORDER BY d.urut`, [jurnal.id]) : [];
+  const nilaiBuku = a.harga_perolehan - a.akumulasi_penyusutan;
+  const hasil = a.nilai_disposal || 0;
+  return {
+    aset: a, nilai_buku: nilaiBuku, hasil, laba_rugi: hasil - nilaiBuku,
+    terbilang: terbilang(hasil), jurnal: jurnal ? { ...jurnal, detail } : null,
+  };
+});
 
 router.put('/api/aset/:id', 'aset.update', ({ params, body, ctx }) => aset.ubah(idParam(params), body, ctx));
 
@@ -416,7 +436,10 @@ router.get('/api/rat/:id/berita-acara', 'rat.view', ({ params }) => {
       WHERE k.status = 'aktif' AND j.kelompok IN ('pengurus','pengawas')`);
   return {
     nomor: r.nomor, judul: r.judul, tanggal: r.tanggal, tempat: r.tempat,
+    // Untuk cetakan berita acara
+    waktu: r.waktu, jenis: r.jenis, status: r.status, catatan: r.berita_acara || '',
     kehadiran: { hadir: r.hadir, total: r.total_anggota, kuorum_tercapai: !!r.kuorum_tercapai,
+      kuorum_persen: r.kuorum_persen,
       persen: r.total_anggota ? Number((r.hadir / r.total_anggota * 100).toFixed(1)) : 0 },
     agenda: all('SELECT urut, judul, jenis FROM rat_agenda WHERE rat_id = ? ORDER BY urut', [id]),
     keputusan: voting,

@@ -6,6 +6,7 @@ import {
   kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah, kosong, konfirmasi,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 export async function render(param) {
   if (param[0]) return detail(Number(param[0]));
@@ -67,7 +68,7 @@ async function detail(id) {
     izin('rat.update') && ['undangan', 'berlangsung'].includes(r.status) && el('button.btn', {
       onclick: () => formHadir(r, segarkan) }, '✋ Catat Kehadiran'),
     izin('rat.create') && !selesai && el('button.btn', { onclick: () => formVoting(r, segarkan) }, 'Buat Voting'),
-    el('button.btn', { onclick: () => beritaAcara(id) }, 'Berita Acara'),
+    el('button.btn', { onclick: () => beritaAcara(r).catch(galat) }, 'Berita Acara'),
     izin('rat.update') && !selesai && el('button.btn', { onclick: () => formRat(r, segarkan) }, 'Ubah'),
     izin('rat.update') && ['undangan', 'berlangsung'].includes(r.status) && el('button.btn.utama', {
       onclick: () => formSelesai(r, segarkan) }, 'Selesaikan RAT'),
@@ -134,7 +135,9 @@ async function detail(id) {
     { judul: 'Waktu', render: (p) => (p.waktu_hadir ? tgl(p.waktu_hadir) : '-') },
     { judul: 'Tanda Tangan Elektronik', render: (p) => (p.ttd_elektronik
       ? el('span.mono.kecil.samar', `${p.ttd_elektronik.slice(0, 16)}…`) : '-') },
-  ], r.peserta, { kosongTeks: 'Belum ada peserta. Kirim undangan terlebih dahulu.' })));
+  ], r.peserta, { kosongTeks: 'Belum ada peserta. Kirim undangan terlebih dahulu.' }), [
+    r.peserta.length ? tombolCetak(() => dokDaftarHadir(r), { label: 'Cetak Daftar Hadir' }) : null,
+  ].filter(Boolean)));
 
   return wadah;
 }
@@ -286,8 +289,8 @@ function formVoting(r, saatSelesai) {
   });
 }
 
-async function beritaAcara(id) {
-  const b = await api.get(`/api/rat/${id}/berita-acara`);
+async function beritaAcara(r) {
+  const b = await api.get(`/api/rat/${r.id}/berita-acara`);
   modal({
     judul: 'Berita Acara Rapat Anggota', lebar: 'lebar',
     isi: el('div', [
@@ -326,6 +329,101 @@ async function beritaAcara(id) {
       ], b.perangkat_organisasi, { kosongTeks: 'Belum ada data pengurus/pengawas' })]),
       el('div.kecil.samar.mt16', b.dasar_hukum),
     ]),
-    kaki: [el('button.btn.utama', { onclick: () => window.print() }, 'Cetak Berita Acara')],
+    kaki: [
+      el('div', { gaya: { marginRight: 'auto' } }, [tombolCetak(() => dokBeritaAcara(r, b),
+        { label: 'Cetak Berita Acara' })]),
+    ],
   });
+}
+
+// ------------------------------- Cetakan -------------------------------
+
+const kapital = (s) => (s ? `${String(s)[0].toUpperCase()}${String(s).slice(1)}` : '');
+const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+const hariDari = (iso) => {
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? '' : HARI[d.getDay()];
+};
+const bacaHasil = (v) => {
+  if (!v.hasil) return null;
+  try { return typeof v.hasil === 'string' ? JSON.parse(v.hasil) : v.hasil; } catch { return null; }
+};
+
+/** Berita acara RAT: kehadiran, kuorum, agenda, hasil voting, ikhtisar keuangan, catatan penutup. */
+function dokBeritaAcara(r, b) {
+  const k = b.kehadiran;
+  const pembuka = el('p', { gaya: { textAlign: 'justify', lineHeight: '1.5', margin: '8px 0' } },
+    `Pada hari ${hariDari(b.tanggal)}, tanggal ${tgl(b.tanggal, true)}${b.waktu ? ` pukul ${b.waktu}` : ''}, `
+    + `bertempat di ${b.tempat || '-'}, telah diselenggarakan ${b.judul}. Rapat dihadiri ${k.hadir} dari ${k.total} `
+    + `anggota (${persen(k.persen)}) sehingga kuorum ${k.kuorum_tercapai ? 'TERCAPAI' : 'BELUM TERCAPAI'} `
+    + `(syarat ${persen(k.kuorum_persen ?? r.kuorum_persen)}). Adapun jalannya rapat dan keputusan yang diambil adalah sebagai berikut.`);
+  return {
+    judul: 'Berita Acara Rapat Anggota', subjudul: b.judul, nomor: b.nomor, jenis_ttd: 'rat',
+    ringkasan: [
+      { label: 'Hari, tanggal', nilai: `${hariDari(b.tanggal)}, ${tgl(b.tanggal, true)}` },
+      { label: 'Waktu', nilai: b.waktu || '-' },
+      { label: 'Tempat', nilai: b.tempat || '-' },
+      { label: 'Jenis rapat', nilai: judul(b.jenis || r.jenis) },
+      { label: 'Tahun buku', nilai: b.ikhtisar_keuangan.tahun_buku },
+      { label: 'Anggota terdaftar', nilai: k.total, tipe: 'angka' },
+      { label: 'Anggota hadir', nilai: `${k.hadir} (${persen(k.persen)})` },
+      { label: 'Syarat kuorum', nilai: k.kuorum_persen ?? r.kuorum_persen, tipe: 'persen' },
+      { label: 'Kuorum', nilai: k.kuorum_tercapai ? 'TERCAPAI' : 'BELUM TERCAPAI' },
+      { label: 'Status rapat', nilai: judul(b.status || r.status) },
+    ],
+    isi: pembuka,
+    bagian: [
+      { judul: 'Agenda Rapat', kolom: [{ kunci: 'urut', label: 'No', tipe: 'angka' }, { kunci: 'judul', label: 'Agenda' },
+        { kunci: 'jenis', label: 'Jenis' }], baris: b.agenda.map((a) => ({ ...a, jenis: judul(a.jenis) })) },
+      { judul: 'Hasil Voting / Keputusan Rapat', kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' },
+        { kunci: 'judul', label: 'Materi' }, { kunci: 'rekap', label: 'Perolehan Suara' },
+        { kunci: 'total_suara', label: 'Total Suara', tipe: 'angka' }, { kunci: 'status', label: 'Status' },
+        { kunci: 'keputusan', label: 'Keputusan' }],
+      baris: r.voting.map((v, i) => ({
+        no: i + 1, judul: v.judul, total_suara: v.total_suara, status: judul(v.status),
+        rekap: v.rekap.map((x) => `${x.pilihan}: ${x.jumlah} (${persen(x.persen)})`).join('; ') || '-',
+        keputusan: bacaHasil(v)?.keputusan || (v.status === 'ditutup' ? '-' : 'Belum diputuskan'),
+      })) },
+      { judul: 'Ikhtisar Keuangan', kolom: [{ kunci: 'uraian', label: 'Uraian' },
+        { kunci: 'nilai', label: 'Jumlah (Rp)', tipe: 'uang' }],
+      baris: [{ uraian: 'Total pendapatan', nilai: b.ikhtisar_keuangan.pendapatan },
+        { uraian: 'Total beban', nilai: b.ikhtisar_keuangan.beban },
+        { uraian: 'Sisa Hasil Usaha (SHU)', nilai: b.ikhtisar_keuangan.shu }] },
+      b.perangkat_organisasi.length ? { judul: 'Perangkat Organisasi', kolom: [{ kunci: 'nama', label: 'Nama' },
+        { kunci: 'jabatan', label: 'Jabatan' }, { kunci: 'kelompok', label: 'Kelompok' }],
+      baris: b.perangkat_organisasi.map((p) => ({ ...p, kelompok: judul(p.kelompok) })) } : null,
+    ].filter(Boolean),
+    terbilang: `SHU tahun buku ${b.ikhtisar_keuangan.tahun_buku}: ${kapital(b.ikhtisar_keuangan.shu_terbilang)}`,
+    catatan: [b.catatan && `Catatan penutup: ${b.catatan}`, b.dasar_hukum].filter(Boolean).join(' — '),
+  };
+}
+
+/** Daftar hadir RAT dengan kolom tanda tangan. */
+function dokDaftarHadir(r) {
+  const hadir = r.peserta.filter((p) => p.hadir).length;
+  return {
+    judul: 'Daftar Hadir Rapat Anggota', subjudul: r.judul, nomor: r.nomor, jenis_ttd: 'rat',
+    ringkasan: [
+      { label: 'Tanggal', nilai: `${tgl(r.tanggal, true)} ${r.waktu || ''}`.trim() },
+      { label: 'Tempat', nilai: r.tempat || '-' },
+      { label: 'Anggota diundang', nilai: r.peserta.length, tipe: 'angka' },
+      { label: 'Anggota hadir', nilai: hadir, tipe: 'angka' },
+      { label: 'Syarat kuorum', nilai: r.kuorum_persen, tipe: 'persen' },
+      { label: 'Kuorum', nilai: r.kuorum_tercapai ? 'TERCAPAI' : 'BELUM TERCAPAI' },
+    ],
+    // Baris lebih tinggi agar kolom tanda tangan dapat diisi basah
+    isi: '<style>tbody td{height:26px;vertical-align:middle}</style>',
+    bagian: [{
+      kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor_anggota', label: 'No. Anggota' },
+        { kunci: 'nama', label: 'Nama Anggota' }, { kunci: 'kehadiran', label: 'Kehadiran' },
+        { kunci: 'waktu', label: 'Waktu Hadir' }, { kunci: 'ttd', label: 'Tanda Tangan' }],
+      baris: r.peserta.map((p, i) => ({
+        no: i + 1, nomor_anggota: p.nomor_anggota, nama: p.nama,
+        kehadiran: p.hadir ? 'Hadir' : 'Tidak hadir',
+        waktu: p.waktu_hadir ? String(p.waktu_hadir).slice(0, 16).replace('T', ' ') : '',
+        // Hadir lewat presensi elektronik: cantumkan sidik tanda tangan elektroniknya
+        ttd: p.ttd_elektronik ? `TTE ${p.ttd_elektronik.slice(0, 10)}` : '',
+      })),
+    }],
+  };
 }

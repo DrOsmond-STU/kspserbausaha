@@ -6,7 +6,7 @@
 import { createRouter, badRequest, notFound, conflict } from '../lib/http.js';
 import { all, get, run, scalar, tx, nextNumber } from '../db.js';
 import { logAudit } from '../lib/audit.js';
-import { str, num, oneOf, date, idParam, today } from '../lib/util.js';
+import { str, num, oneOf, date, idParam, today, terbilang } from '../lib/util.js';
 import { ringkasanAnggota, tutupRekening } from '../services/savings.js';
 import { riwayatAnggota as riwayatShu } from '../services/shu.js';
 
@@ -317,6 +317,37 @@ router.delete('/api/anggota/ahli-waris/:id', 'anggota.update', ({ params, ctx })
   logAudit(ctx, { aksi: 'delete', modul: 'anggota', entitas_id: w.anggota_id,
     keterangan: `Ahli waris "${w.nama}" dihapus`, before: w });
   return { dihapus: true };
+});
+
+/**
+ * Data bukti keluar anggota: rincian pengembalian simpanan (mutasi penarikan
+ * penutup rekening sejak tanggal keluar) untuk dicetak.
+ */
+router.get('/api/anggota/:id/bukti-keluar', 'anggota.view', ({ params }) => {
+  const id = idParam(params);
+  const a = get('SELECT * FROM anggota WHERE id = ?', [id]);
+  if (!a) throw notFound('Anggota tidak ditemukan');
+  if (!['keluar', 'meninggal'].includes(a.status)) throw conflict('Anggota ini belum diproses keluar');
+  const pengembalian = all(
+    `SELECT t.id, t.nomor, t.tanggal, t.debit AS nominal, t.metode, t.keterangan,
+            r.nomor_rekening, p.nama AS produk_nama, p.jenis
+       FROM transaksi_simpanan t
+       JOIN rekening_simpanan r ON r.id = t.rekening_id
+       JOIN produk_simpanan p ON p.id = r.produk_id
+      WHERE r.anggota_id = ? AND r.status = 'tutup' AND t.jenis = 'penarikan' AND t.status <> 'batal'
+        AND t.tanggal >= ?
+        AND t.id = (SELECT MAX(id) FROM transaksi_simpanan x WHERE x.rekening_id = r.id AND x.jenis = 'penarikan')
+      ORDER BY p.jenis, r.nomor_rekening`, [id, a.tanggal_keluar || '0000-00-00']);
+  const total = pengembalian.reduce((s, x) => s + x.nominal, 0);
+  return {
+    anggota: a,
+    pengembalian,
+    total,
+    terbilang: terbilang(total),
+    sisa_saldo: scalar(
+      "SELECT COALESCE(SUM(saldo),0) FROM rekening_simpanan WHERE anggota_id = ? AND status <> 'tutup'", [id]),
+    ahli_waris: all('SELECT * FROM anggota_ahli_waris WHERE anggota_id = ?', [id]),
+  };
 });
 
 /** Kartu anggota digital (data untuk cetak / QR). */

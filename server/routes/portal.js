@@ -13,6 +13,9 @@ import { ringkasanAnggota } from '../services/savings.js';
 import { riwayatAnggota as shuAnggota } from '../services/shu.js';
 import { hitungJadwal, simulasiPelunasan, LABEL_KOLEKTIBILITAS } from '../services/loans.js';
 import * as loans from '../services/loans.js';
+import { dataCetak } from '../lib/profil.js';
+import { detailTransaksi, bukuRekening } from './simpanan.js';
+import { detailAngsuran } from './pinjaman.js';
 
 const router = createRouter();
 
@@ -71,6 +74,40 @@ router.get('/api/portal/simpanan', 'portal.view', ({ ctx, query }) => {
         ORDER BY t.tanggal DESC, t.id DESC LIMIT 100`,
       rekeningId ? [a.id, rekeningId] : [a.id]),
   };
+});
+
+// ------------------------------ Cetakan ------------------------------
+// Peran anggota hanya dapat mengakses /api/portal/*, sehingga kop & tanda
+// tangan cetakan serta data bukti disediakan dari sini dengan pemeriksaan
+// kepemilikan.
+
+// Tanpa pengguna: kolom tanda tangan "petugas" tidak boleh terisi nama anggota yang mencetak
+router.get('/api/portal/cetak-profil', 'portal.view', () => dataCetak(null));
+
+router.get('/api/portal/simpanan/:id/buku', 'portal.view', ({ ctx, params, query }) => {
+  const a = anggotaSaya(ctx);
+  const id = Number(params.id);
+  if (!get('SELECT id FROM rekening_simpanan WHERE id = ? AND anggota_id = ?', [id, a.id])) {
+    throw forbidden('Rekening tersebut bukan milik Anda');
+  }
+  return bukuRekening(id, {
+    dari: date(query, 'dari', { required: false, dflt: null }),
+    sampai: date(query, 'sampai', { required: false, dflt: null }),
+  });
+});
+
+router.get('/api/portal/transaksi-simpanan/:id', 'portal.view', ({ ctx, params }) => {
+  const a = anggotaSaya(ctx);
+  const t = detailTransaksi(Number(params.id));
+  if (t.anggota_id !== a.id) throw forbidden('Transaksi tersebut bukan milik Anda');
+  return t;
+});
+
+router.get('/api/portal/angsuran/:id', 'portal.view', ({ ctx, params }) => {
+  const a = anggotaSaya(ctx);
+  const d = detailAngsuran(Number(params.id));
+  if (d.anggota_id !== a.id) throw forbidden('Pembayaran tersebut bukan milik Anda');
+  return d;
 });
 
 router.get('/api/portal/pinjaman', 'portal.view', ({ ctx }) => {

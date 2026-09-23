@@ -6,6 +6,7 @@ import {
   kosongkan, hariIni, awalTahun, kosong, toast,
 } from '../inti.js';
 import { negara } from '../app.js';
+import { tombolCetak } from '../cetak.js';
 
 const LAPORAN = [
   { kode: 'neraca', nama: 'Neraca (Posisi Keuangan)' },
@@ -33,6 +34,8 @@ export async function render() {
     api.get('/api/master/coa', { limit: 1000 }).catch(() => ({ data: [] })),
   ]);
   let unitId = '';
+  // Data laporan yang sedang tampil; dipakai menyusun dokumen cetak/Excel/Word.
+  let tampil = null;
 
   const pilihAkun = el('select', {
     gaya: { display: 'none' },
@@ -54,14 +57,19 @@ export async function render() {
     unit.data.length ? el('select', { onchange: (e) => { unitId = e.target.value; muat(); } },
       [el('option', { value: '' }, 'Seluruh unit usaha'),
         ...unit.data.map((u) => el('option', { value: u.id }, u.nama))]) : null,
-    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
-    el('button.btn', { onclick: () => unduh(jenis, isi) }, '⬇ Unduh CSV'),
+    tombolCetak(() => {
+      if (!tampil) throw new Error('Laporan belum dimuat');
+      const unitNama = unit.data.find((u) => String(u.id) === String(tampil.unitId))?.nama;
+      return dokLaporan(tampil.jenis, tampil.d, { ...tampil, unitNama });
+    }),
+    el('button.btn', { onclick: () => unduh(jenis, isi) }, '⬇ CSV'),
   ].filter(Boolean));
 
   wadah.append(alat, isi);
 
   async function muat() {
     kosongkan(isi).append(memuat());
+    tampil = null;
     try {
       const q = { dari, sampai, unit_usaha_id: unitId || undefined };
       if (jenis === 'buku-besar') {
@@ -70,6 +78,7 @@ export async function render() {
       }
       const d = await api.get(`/api/laporan/${jenis}`, q);
       kosongkan(isi).append(kepala(jenis, dari, sampai), GAMBAR[jenis](d));
+      tampil = { jenis, d, dari, sampai, unitId };
     } catch (err) {
       kosongkan(isi).append(el('div.notis.bahaya', [el('div.isi', [
         el('strong', err.message), err.detail && el('div.kecil', err.detail)])]));
@@ -340,6 +349,168 @@ function ringkasanPpn(d) {
         el('td.angka', rp(Math.abs(bersih)))])]),
     ])])])]),
   ]);
+}
+
+// ------------------------- Dokumen cetak / ekspor -------------------------
+
+const K_AKUN = [{ kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Uraian' },
+  { kunci: 'saldo', label: 'Jumlah (Rp)', tipe: 'uang' }];
+const uang = (label, nilai) => ({ label, nilai: rp(nilai) });
+
+/** Rincian per laporan: ringkasan, bagian tabel, terbilang, dan catatan. */
+const DOKUMEN = {
+  neraca: (d) => ({
+    ringkasan: [uang('Total aset', d.total_aset), uang('Total liabilitas + ekuitas', d.total_pasiva),
+      { label: 'Keseimbangan', nilai: d.seimbang ? 'Seimbang' : `Tidak seimbang (selisih ${rp(d.selisih)})` }],
+    bagian: [
+      { judul: 'ASET', kolom: K_AKUN, baris: d.aset, total: { _label: 'Total Aset', saldo: d.total_aset } },
+      { judul: 'LIABILITAS', kolom: K_AKUN, baris: d.kewajiban,
+        total: { _label: 'Total Liabilitas', saldo: d.total_kewajiban } },
+      { judul: 'EKUITAS', kolom: K_AKUN,
+        baris: [...d.ekuitas, { kode: '', nama: 'SHU Tahun Berjalan', saldo: d.shu_berjalan }],
+        total: { _label: 'Total Ekuitas', saldo: d.total_ekuitas } },
+    ],
+  }),
+  'laba-rugi': (d) => ({
+    ringkasan: [uang('Pendapatan', d.total_pendapatan), uang('Harga pokok penjualan', d.hpp),
+      uang('Laba kotor', d.laba_kotor), uang('Total beban', d.total_beban), uang('SHU bersih', d.shu_bersih)],
+    bagian: [
+      { judul: 'PENDAPATAN', kolom: K_AKUN, baris: d.pendapatan,
+        total: { _label: 'Total Pendapatan', saldo: d.total_pendapatan } },
+      { judul: 'BEBAN', kolom: K_AKUN, baris: d.beban, total: { _label: 'Total Beban', saldo: d.total_beban } },
+      { judul: 'SISA HASIL USAHA', kolom: K_AKUN, baris: [
+        { kode: '', nama: 'Total pendapatan', saldo: d.total_pendapatan },
+        { kode: '', nama: 'Dikurangi: total beban', saldo: d.total_beban },
+      ], total: { _label: 'SISA HASIL USAHA (SHU)', saldo: d.shu_bersih } },
+    ],
+  }),
+  'arus-kas': (d) => ({
+    ringkasan: [uang('Kas & setara kas awal periode', d.saldo_awal), uang('Kenaikan (penurunan) kas bersih', d.kenaikan_kas),
+      uang('Kas & setara kas akhir periode', d.saldo_akhir)],
+    bagian: ['operasi', 'investasi', 'pendanaan'].map((k) => ({
+      judul: `Arus Kas dari Aktivitas ${judul(k)}`,
+      kolom: [{ kunci: 'coa_kode', label: 'Akun' }, { kunci: 'nama', label: 'Uraian' },
+        { kunci: 'arus', label: 'Arus Kas (Rp)', tipe: 'uang' }],
+      baris: d[k] || [], total: { _label: `Arus kas bersih ${k}`, arus: d[`arus_${k}`] },
+    })),
+  }),
+  'perubahan-ekuitas': (d) => ({
+    bagian: [{
+      kolom: [{ kunci: 'kode', label: 'Akun' }, { kunci: 'nama', label: 'Uraian' },
+        { kunci: 'saldo_awal', label: 'Saldo Awal', tipe: 'uang' }, { kunci: 'penambahan', label: 'Penambahan', tipe: 'uang' },
+        { kunci: 'pengurangan', label: 'Pengurangan', tipe: 'uang' }, { kunci: 'saldo_akhir', label: 'Saldo Akhir', tipe: 'uang' }],
+      baris: [...d.baris, { kode: '', nama: 'SHU Periode Berjalan', saldo_awal: 0,
+        penambahan: d.shu_periode_berjalan, pengurangan: 0, saldo_akhir: d.shu_periode_berjalan }],
+      total: { _label: 'TOTAL EKUITAS', saldo_awal: d.total_awal, saldo_akhir: d.total_akhir },
+    }],
+  }),
+  'neraca-saldo': (d) => ({
+    bagian: [{
+      kolom: [{ kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Nama Akun' }, { kunci: 'tipe', label: 'Tipe' },
+        { kunci: 'debit', label: 'Mutasi Debit', tipe: 'uang' }, { kunci: 'kredit', label: 'Mutasi Kredit', tipe: 'uang' },
+        { kunci: 'saldo', label: 'Saldo', tipe: 'uang' }],
+      baris: d.baris.map((r) => ({ ...r, tipe: judul(r.tipe) })),
+      total: { debit: d.total_debit, kredit: d.total_kredit },
+    }],
+  }),
+  'neraca-lajur': (d) => {
+    const kol = ['ns_debit', 'ns_kredit', 'lr_debit', 'lr_kredit', 'neraca_debit', 'neraca_kredit'];
+    const label = ['NS Debit', 'NS Kredit', 'L/R Debit', 'L/R Kredit', 'Neraca Debit', 'Neraca Kredit'];
+    return {
+      orientasi: 'landscape',
+      bagian: [{
+        kolom: [{ kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Nama Akun' },
+          ...kol.map((k, i) => ({ kunci: k, label: label[i], tipe: 'uang' }))],
+        baris: d.baris.map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, kol.includes(k) && !v ? null : v]))),
+        total: Object.fromEntries(kol.map((k) => [k, d.baris.reduce((s, r) => s + (Number(r[k]) || 0), 0)])),
+      }],
+    };
+  },
+  'buku-besar': (d) => ({
+    ringkasan: [{ label: 'Akun', nilai: `${d.akun.kode} — ${d.akun.nama}` }, uang('Saldo awal', d.saldo_awal),
+      uang('Saldo akhir', d.saldo_akhir)],
+    bagian: [{
+      kolom: [{ kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'nomor', label: 'Nomor Jurnal' },
+        { kunci: 'ket', label: 'Keterangan' }, { kunci: 'debit', label: 'Debit', tipe: 'uang' },
+        { kunci: 'kredit', label: 'Kredit', tipe: 'uang' }, { kunci: 'saldo', label: 'Saldo', tipe: 'uang' }],
+      baris: d.baris.map((r) => ({ ...r, ket: r.keterangan || r.jurnal_ket || '', debit: r.debit || null,
+        kredit: r.kredit || null })),
+      total: { debit: d.baris.reduce((s, r) => s + (r.debit || 0), 0),
+        kredit: d.baris.reduce((s, r) => s + (r.kredit || 0), 0), saldo: d.saldo_akhir },
+    }],
+  }),
+  rasio: (d) => {
+    const kolom = [{ kunci: 'uraian', label: 'Indikator' }, { kunci: 'nilai', label: 'Nilai' }];
+    const b = (jdl, baris, ket) => ({ judul: jdl, kolom, baris: [...baris.map(([u, n]) => ({ uraian: u, nilai: n })),
+      ...(ket ? [{ uraian: `Keterangan: ${ket}`, nilai: '' }] : [])] });
+    return {
+      bagian: [
+        b('Likuiditas', [['Rasio lancar', persen(d.likuiditas.rasio_lancar)], ['Rasio kas', persen(d.likuiditas.rasio_kas)]],
+          d.likuiditas.keterangan),
+        b('Solvabilitas', [['Rasio utang terhadap aset', persen(d.solvabilitas.rasio_hutang_aset)],
+          ['Rasio modal sendiri', persen(d.solvabilitas.rasio_modal_sendiri)]]),
+        b('Rentabilitas', [['Return on Assets (ROA)', persen(d.rentabilitas.roa)],
+          ['Return on Equity (ROE)', persen(d.rentabilitas.roe)], ['Margin SHU', persen(d.rentabilitas.margin_shu)]]),
+        b('Kualitas Pinjaman', [['Pinjaman beredar', rp(d.kualitas_pinjaman.outstanding)],
+          ['Kredit bermasalah', rp(d.kualitas_pinjaman.npl_nominal)], ['Rasio NPL', persen(d.kualitas_pinjaman.npl_ratio)]],
+        d.kualitas_pinjaman.keterangan),
+      ],
+    };
+  },
+  calk: (d) => ({
+    ringkasan: [{ label: 'Entitas', nilai: d.umum.entitas }, { label: 'Badan hukum', nilai: d.umum.badan_hukum },
+      { label: 'Alamat', nilai: d.umum.alamat },
+      { label: 'Bidang usaha', nilai: d.umum.bidang_usaha.map((u) => u.nama).join(', ') || '-' },
+      { label: 'Tahun buku', nilai: String(d.tahun) }],
+    bagian: [
+      { judul: 'Ikhtisar Kebijakan Akuntansi', kolom: [{ kunci: 'no', label: 'No' }, { kunci: 'isi', label: 'Kebijakan' }],
+        baris: d.kebijakan_akuntansi.map((k, i) => ({ no: i + 1, isi: k })) },
+      { judul: 'Ringkasan Posisi Keuangan', kolom: [{ kunci: 'uraian', label: 'Uraian' },
+        { kunci: 'nilai', label: 'Jumlah (Rp)', tipe: 'uang' }], baris: [
+        { uraian: 'Total aset', nilai: d.ringkasan.total_aset },
+        { uraian: 'Total liabilitas', nilai: d.ringkasan.total_liabilitas },
+        { uraian: 'Total ekuitas', nilai: d.ringkasan.total_ekuitas },
+        { uraian: 'SHU tahun berjalan', nilai: d.ringkasan.shu_tahun_berjalan },
+      ] },
+      ...Object.entries(d.penjelasan_pos).filter(([, baris]) => baris?.length).map(([nama, baris]) => ({
+        judul: judul(nama), kolom: K_AKUN, baris,
+        total: { _label: 'Jumlah', saldo: baris.reduce((s, r) => s + (Number(r.saldo) || 0), 0) },
+      })),
+    ],
+    terbilang: `SHU tahun berjalan ${judul(d.ringkasan.shu_terbilang)}`,
+  }),
+  pajak: (d) => {
+    const nilaiK = d.ppn_keluaran?.saldo || 0;
+    const nilaiM = d.ppn_masukan?.saldo || 0;
+    const bersih = nilaiK - nilaiM;
+    return {
+      bagian: [
+        { judul: 'Ringkasan PPN', kolom: [{ kunci: 'uraian', label: 'Uraian' }, { kunci: 'akun', label: 'Akun' },
+          { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' }], baris: [
+          { uraian: 'PPN Keluaran', akun: d.ppn_keluaran?.kode || 'belum dipetakan', jumlah: nilaiK },
+          { uraian: 'PPN Masukan', akun: d.ppn_masukan?.kode || 'belum dipetakan', jumlah: nilaiM },
+        ], total: { _label: bersih >= 0 ? 'PPN kurang bayar' : 'PPN lebih bayar', jumlah: Math.abs(bersih) } },
+        { judul: 'Rekapitulasi Akun Pajak', kolom: [{ kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Nama Akun' },
+          { kunci: 'debit', label: 'Debit', tipe: 'uang' }, { kunci: 'kredit', label: 'Kredit', tipe: 'uang' },
+          { kunci: 'saldo', label: 'Saldo', tipe: 'uang' }], baris: d.akun },
+      ],
+      catatan: d.catatan,
+    };
+  },
+};
+
+/** Model dokumen cetak/Excel/Word dari data laporan yang sedang tampil. */
+function dokLaporan(jenis, d, { dari, sampai, unitNama }) {
+  const nama = LAPORAN.find((l) => l.kode === jenis)?.nama || 'Laporan Keuangan';
+  const rinci = DOKUMEN[jenis](d);
+  return {
+    judul: nama,
+    subjudul: jenis === 'neraca' ? `Per ${tgl(sampai, true)}` : `Periode ${tgl(dari, true)} s.d. ${tgl(sampai, true)}`,
+    keterangan: [unitNama ? `Unit usaha: ${unitNama}` : null,
+      'Disusun berdasarkan SAK Entitas Privat dan Permenkop UKM No. 2 Tahun 2024'].filter(Boolean),
+    jenis_ttd: 'laporan_keuangan',
+    ...rinci,
+  };
 }
 
 /** Ekspor tabel yang sedang tampil ke berkas CSV. */

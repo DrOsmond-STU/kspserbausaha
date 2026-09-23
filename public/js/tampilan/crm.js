@@ -6,6 +6,7 @@ import {
   kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, kosong,
 } from '../inti.js';
 import { izin } from '../app.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 import { ikon } from '../ikon.js';
 
 export async function render() {
@@ -63,6 +64,21 @@ async function tiketTab() {
             .map((s) => ({ nilai: s, teks: s ? judul(s) : 'Semua status' })), filter,
           { onchange: (e) => { filter = e.target.value; muat(); } }),
           izin('crm.update') && el('button.btn.utama', { onclick: () => formTiket(muat) }, '+ Buat Tiket'),
+          tombolCetak(() => ({
+            judul: 'Daftar Tiket Layanan Anggota', jenis_ttd: 'laporan', orientasi: 'landscape',
+            keterangan: filter ? [`Status: ${judul(filter)}`] : [],
+            bagian: [{
+              kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor', label: 'Nomor' },
+                { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'anggota', label: 'Anggota' },
+                { kunci: 'kategori', label: 'Kategori' }, { kunci: 'judul', label: 'Judul' },
+                { kunci: 'prioritas', label: 'Prioritas' }, { kunci: 'kanal', label: 'Kanal' },
+                { kunci: 'jumlah_balasan', label: 'Balasan', tipe: 'angka' }, { kunci: 'status', label: 'Status' }],
+              baris: d.data.map((t, i) => ({ ...t, no: i + 1, tanggal: t.created_at,
+                anggota: t.anggota_nama ? `${t.anggota_nama} (${t.nomor_anggota})` : 'Umum',
+                kategori: judul(t.kategori), prioritas: judul(t.prioritas), kanal: judul(t.kanal || '-'),
+                status: judul(t.status) })),
+            }],
+          }), { label: 'Cetak' }),
         ].filter(Boolean)),
       );
     } catch (err) { galat(err); }
@@ -106,6 +122,7 @@ async function buka(id, saatSelesai) {
       izin('crm.update') ? kolom('Balasan', isiBalas) : null,
     ]),
     kaki: [
+      el('button.btn', { onclick: () => cetakDokumen(dokTiket(t)) }, 'Cetak'),
       izin('crm.update') && !['selesai', 'ditutup'].includes(t.status) && el('button.btn.sukses', {
         onclick: async () => {
           try {
@@ -236,4 +253,30 @@ async function surveiTab() {
       { judul: 'Saran', kunci: 'saran' },
     ], d.saran_terbaru, { kosongTeks: 'Belum ada saran dari anggota' })),
   ]);
+}
+
+/** Lembar tiket layanan beserta riwayat percakapan. */
+function dokTiket(t) {
+  return {
+    judul: 'Lembar Tiket Layanan Anggota', subjudul: t.judul, nomor: t.nomor, jenis_ttd: 'default',
+    ringkasan: [
+      { label: 'Anggota', nilai: t.anggota_nama ? `${t.anggota_nama} (${t.nomor_anggota})` : 'Umum' },
+      { label: 'Telepon', nilai: t.telepon || '-' },
+      { label: 'Kategori', nilai: judul(t.kategori) },
+      { label: 'Prioritas', nilai: judul(t.prioritas) },
+      { label: 'Kanal', nilai: judul(t.kanal || '-') },
+      { label: 'Dibuat', nilai: waktu(t.created_at) },
+      { label: 'Petugas', nilai: t.petugas || '-' },
+      { label: 'Status', nilai: judul(t.status) },
+    ],
+    bagian: [{
+      judul: 'Percakapan',
+      kolom: [{ kunci: 'waktu', label: 'Waktu' }, { kunci: 'oleh', label: 'Oleh' }, { kunci: 'isi', label: 'Isi' }],
+      baris: [
+        { waktu: waktu(t.created_at), oleh: t.anggota_nama || 'Pelapor', isi: t.isi || '-' },
+        ...t.balasan.map((b) => ({ waktu: waktu(b.created_at),
+          oleh: `${b.oleh || 'Anggota'}${b.is_petugas ? ' (petugas)' : ''}`, isi: b.isi })),
+      ],
+    }],
+  };
 }

@@ -6,6 +6,7 @@ import {
   kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, kosong, konfirmasi,
 } from '../inti.js';
 import { izin, navigasi, segarkanNotifikasi, negara } from '../app.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 export async function render(param) {
   if (param[0]) return detail(Number(param[0]));
@@ -60,6 +61,17 @@ async function daftar(q) {
               'sukses');
           } catch (err) { galat(err); }
         } }, 'Jalankan Eskalasi SLA'),
+        tombolCetak(() => ({
+          judul: q.saya ? 'Permintaan Persetujuan Menunggu Keputusan' : 'Daftar Permintaan Persetujuan',
+          jenis_ttd: 'laporan', orientasi: 'landscape',
+          bagian: [{
+            kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor', label: 'Nomor' },
+              { kunci: 'modul', label: 'Modul' }, { kunci: 'judul', label: 'Judul' }, { kunci: 'ringkasan', label: 'Ringkasan' },
+              { kunci: 'nominal', label: 'Nominal', tipe: 'uang' }, { kunci: 'pemohon', label: 'Pemohon' },
+              { kunci: 'tahap_aktif', label: 'Tahap', tipe: 'angka' }, { kunci: 'status', label: 'Status' }],
+            baris: d.data.map((r, i) => ({ ...r, no: i + 1, modul: judul(r.modul), status: judul(r.status) })),
+          }],
+        }), { label: 'Cetak' }),
       ]));
     } catch (err) { galat(err); }
   }
@@ -85,6 +97,7 @@ async function detail(id) {
     r.status === 'menunggu' && tahapSaya && el('button.btn', {
       onclick: () => delegasi(r, segarkan) }, '↪ Delegasikan'),
     r.modul === 'pinjaman' && el('a.btn', { href: `#/pinjaman/${r.entitas_id}` }, 'Lihat Dokumen →'),
+    tombolCetak(() => dokPersetujuan(r), { label: 'Cetak Lembar Persetujuan' }),
   ].filter(Boolean)));
 
   wadah.append(panel(r.judul, el('dl.deskripsi', [
@@ -326,4 +339,31 @@ async function hapusAlur(f, saatSelesai) {
     toast('Alur persetujuan dihapus', 'sukses');
     saatSelesai?.();
   } catch (err) { galat(err); }
+}
+
+/** Lembar persetujuan berjenjang (riwayat keputusan tiap tahap). */
+function dokPersetujuan(r) {
+  return {
+    judul: 'Lembar Persetujuan', subjudul: r.judul, nomor: r.nomor, jenis_ttd: 'default',
+    ringkasan: [
+      { label: 'Modul', nilai: judul(r.modul) },
+      { label: 'Status', nilai: judul(r.status) },
+      { label: 'Nominal', nilai: r.nominal, tipe: 'uang' },
+      { label: 'Pemohon', nilai: r.pemohon || '-' },
+      { label: 'Diajukan', nilai: waktu(r.created_at) },
+      { label: 'Selesai', nilai: r.selesai_at ? waktu(r.selesai_at) : '-' },
+      { label: 'Ringkasan', nilai: r.ringkasan || '-' },
+    ],
+    bagian: [{
+      judul: 'Tahapan Persetujuan',
+      kolom: [{ kunci: 'urut', label: 'Tahap', tipe: 'angka' }, { kunci: 'role_nama', label: 'Peran Penyetuju' },
+        { kunci: 'tipe', label: 'Tipe' }, { kunci: 'batas_waktu', label: 'Batas Waktu', tipe: 'tanggal' },
+        { kunci: 'oleh', label: 'Diputus Oleh' }, { kunci: 'waktu_teks', label: 'Waktu' },
+        { kunci: 'catatan', label: 'Catatan' }, { kunci: 'tte', label: 'Tanda Tangan Elektronik' },
+        { kunci: 'status', label: 'Status' }],
+      baris: r.tahapan.map((t) => ({ ...t, tipe: judul(t.tipe), status: judul(t.status),
+        oleh: t.oleh || (t.delegasi_ke ? `didelegasikan ke ${t.delegasi_ke}` : ''),
+        waktu_teks: t.waktu ? waktu(t.waktu) : '', tte: t.ttd_elektronik ? t.ttd_elektronik.slice(0, 16) : '' })),
+    }],
+  };
 }

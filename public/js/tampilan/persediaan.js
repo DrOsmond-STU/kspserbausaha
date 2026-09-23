@@ -8,6 +8,80 @@ import {
 import { grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
+import { cetakDokumen, tombolCetak, tawaranCetak, tandaAir } from '../cetak.js';
+
+// ---------------------------- Cetak bukti ----------------------------
+
+/** Berita acara stock opname dari GET /api/persediaan/opname/:id. */
+export function dokOpname(o) {
+  const batal = o.status === 'batal';
+  const selesai = o.status === 'selesai';
+  const kurang = o.detail.filter((d) => d.nilai_selisih < 0).reduce((s, d) => s + d.nilai_selisih, 0);
+  const lebih = o.detail.filter((d) => d.nilai_selisih > 0).reduce((s, d) => s + d.nilai_selisih, 0);
+  return {
+    judul: 'Berita Acara Stock Opname', nomor: o.nomor, jenis_ttd: 'stock_opname', orientasi: 'landscape',
+    ringkasan: [
+      { label: 'Tanggal', nilai: o.tanggal, tipe: 'tanggal' },
+      { label: 'Gudang', nilai: o.gudang_nama },
+      { label: 'Petugas', nilai: o.petugas || '-' },
+      { label: 'Status', nilai: batal ? 'BATAL' : selesai ? 'Selesai' : 'Draft (belum diselesaikan)' },
+      { label: 'Jumlah item', nilai: String(o.detail.length) },
+      { label: 'Keterangan', nilai: o.keterangan || '-' },
+    ],
+    isi: batal ? tandaAir('BATAL') : el('p', { gaya: { lineHeight: '1.5', margin: '8px 0' } },
+      `Pada tanggal ${tgl(o.tanggal, true)} telah dilakukan perhitungan fisik persediaan di gudang ${o.gudang_nama}. `
+      + (selesai ? 'Hasil perhitungan dibandingkan dengan catatan sistem sebagaimana rincian berikut; '
+        + 'selisih telah disesuaikan pada stok dan dibukukan.' : 'Dokumen belum diselesaikan; kolom stok fisik '
+        + 'dapat dipakai sebagai lembar hitung.')),
+    bagian: [{ kolom: [
+      { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' }, { kunci: 'satuan', label: 'Satuan' },
+      { kunci: 'qty_sistem', label: 'Stok Sistem', tipe: 'angka' },
+      { kunci: 'qty_fisik', label: 'Stok Fisik', tipe: 'angka' }, { kunci: 'selisih', label: 'Selisih', tipe: 'angka' },
+      { kunci: 'harga_beli', label: 'HPP', tipe: 'uang' }, { kunci: 'nilai_selisih', label: 'Nilai Selisih', tipe: 'uang' },
+      { kunci: 'keterangan', label: 'Keterangan' },
+    ], baris: o.detail.map((d) => (selesai ? d : { ...d, qty_fisik: null, selisih: null, nilai_selisih: null })),
+    total: selesai ? { nilai_selisih: kurang + lebih } : undefined }],
+    catatan: batal ? `Dibatalkan: ${o.alasan_batal || '-'}`
+      : selesai ? `Selisih kurang ${rp(Math.abs(kurang))}; selisih lebih ${rp(lebih)}.` : undefined,
+  };
+}
+
+const ambilDokOpname = async (id) => dokOpname(await api.get(`/api/persediaan/opname/${id}`));
+
+/** Bukti penyesuaian stok dari GET /api/persediaan/penyesuaian/:id. */
+export function dokPenyesuaian(m) {
+  const masuk = m.jenis === 'penyesuaian_masuk';
+  return {
+    judul: 'Bukti Penyesuaian Stok', nomor: m.jurnal?.nomor || `ADJ-${m.id}`, jenis_ttd: 'penyesuaian_stok',
+    ringkasan: [
+      { label: 'Tanggal', nilai: m.tanggal, tipe: 'tanggal' },
+      { label: 'Jenis', nilai: masuk ? 'Barang masuk (penambahan)' : 'Barang keluar (pengurangan)' },
+      { label: 'Gudang', nilai: m.gudang_nama },
+      { label: 'Keterangan', nilai: m.keterangan || '-' },
+    ],
+    bagian: [
+      { judul: 'Barang', kolom: [
+        { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' },
+        { kunci: 'qty', label: 'Kuantitas', tipe: 'angka' }, { kunci: 'satuan', label: 'Satuan' },
+        { kunci: 'saldo_qty', label: 'Saldo Setelah', tipe: 'angka' }, { kunci: 'nilai', label: 'Nilai', tipe: 'uang' },
+      ], baris: [{ ...m, qty: Math.abs(m.qty) }] },
+      m.jurnal && { judul: `Jurnal ${m.jurnal.nomor}`, kolom: [
+        { kunci: 'coa_kode', label: 'Kode Akun' }, { kunci: 'akun_nama', label: 'Nama Akun' },
+        { kunci: 'debit', label: 'Debit', tipe: 'uang' }, { kunci: 'kredit', label: 'Kredit', tipe: 'uang' },
+      ], baris: m.jurnal.detail.map((d) => ({ ...d, debit: d.debit || null, kredit: d.kredit || null })),
+      total: { debit: m.nilai, kredit: m.nilai } },
+    ].filter(Boolean),
+    terbilang: m.nilai ? judul(m.terbilang) : undefined,
+  };
+}
+
+const ambilDokPenyesuaian = async (id) => dokPenyesuaian(await api.get(`/api/persediaan/penyesuaian/${id}`));
+
+async function cetakDenganTombol(e, ambil) {
+  const tombol = e.currentTarget;
+  tombol.disabled = true;
+  try { await cetakDokumen(await ambil()); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+}
 
 const WARNA_STOK = { habis: 'st-bahaya', kritis: 'st-bahaya', perlu_order: 'st-peringatan', aman: 'st-sukses' };
 
@@ -68,6 +142,14 @@ async function stokTab() {
     { judul: 'Nilai', kunci: 'nilai', angka: true, render: (b) => el('strong', rp(b.nilai)) },
     { judul: 'Status', render: (b) => el(`span.lencana-status.${WARNA_STOK[b.status_stok]}`, judul(b.status_stok)) },
   ], d.baris, { kaki: { nama: 'TOTAL NILAI PERSEDIAAN', nilai: rp(d.total_nilai) } }), [
+    tombolCetak(() => ({
+      judul: 'Laporan Nilai Persediaan', subjudul: `Per ${tgl(hariIni(), true)}`, jenis_ttd: 'laporan',
+      bagian: [{ kolom: [
+        { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' }, { kunci: 'qty', label: 'Stok', tipe: 'angka' },
+        { kunci: 'satuan', label: 'Satuan' }, { kunci: 'harga_beli', label: 'HPP Rata-rata', tipe: 'uang' },
+        { kunci: 'nilai', label: 'Nilai', tipe: 'uang' }, { kunci: 'status', label: 'Status' },
+      ], baris: d.baris.map((b) => ({ ...b, status: judul(b.status_stok) })), total: { nilai: d.total_nilai } }],
+    }), { label: 'Cetak' }),
     izin('persediaan.update') && el('button.btn', { onclick: () => formPenyesuaian() }, '± Penyesuaian Stok'),
     izin('persediaan.update') && el('button.btn', { onclick: () => formTransfer() }, '⇄ Transfer Gudang'),
   ].filter(Boolean)));
@@ -108,7 +190,26 @@ async function kartuTab() {
             { judul: 'Keluar', angka: true, render: (m) => (m.qty < 0 ? el('span.neg', desimal(-m.qty)) : '-') },
             { judul: 'Harga', angka: true, render: (m) => rp(m.harga) },
             { judul: 'Saldo', angka: true, render: (m) => el('strong', desimal(m.saldo_qty)) },
-          ], d.mutasi, { kosongTeks: 'Belum ada mutasi untuk barang ini' })),
+            { judul: '', render: (m) => (String(m.jenis).startsWith('penyesuaian_')
+              ? el('button.btn.kecil.polos', { title: 'Cetak bukti penyesuaian',
+                onclick: (ev) => cetakDenganTombol(ev, () => ambilDokPenyesuaian(m.id)) }, 'Bukti') : '') },
+          ], d.mutasi, { kosongTeks: 'Belum ada mutasi untuk barang ini' }), [
+            tombolCetak(() => ({
+              judul: 'Kartu Stok', subjudul: `${d.barang.kode} — ${d.barang.nama}`, jenis_ttd: 'laporan',
+              ringkasan: [{ label: 'Satuan', nilai: d.barang.satuan }, { label: 'HPP rata-rata', nilai: rp(d.barang.harga_beli) },
+                { label: 'Harga jual', nilai: rp(d.barang.harga_jual) },
+                { label: 'Saldo akhir', nilai: desimal(d.mutasi.at(-1)?.saldo_qty ?? 0) }],
+              bagian: [{ kolom: [
+                { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'jenis', label: 'Jenis' },
+                { kunci: 'gudang_nama', label: 'Gudang' }, { kunci: 'referensi', label: 'Referensi' },
+                { kunci: 'masuk', label: 'Masuk', tipe: 'angka' }, { kunci: 'keluar', label: 'Keluar', tipe: 'angka' },
+                { kunci: 'harga', label: 'Harga', tipe: 'uang' }, { kunci: 'saldo_qty', label: 'Saldo', tipe: 'angka' },
+              ], baris: d.mutasi.map((m) => ({ ...m, jenis: judul(m.jenis), masuk: m.qty > 0 ? m.qty : null,
+                keluar: m.qty < 0 ? -m.qty : null })),
+              total: { masuk: d.mutasi.reduce((s, m) => s + (m.qty > 0 ? m.qty : 0), 0),
+                keluar: d.mutasi.reduce((s, m) => s + (m.qty < 0 ? -m.qty : 0), 0) } }],
+            }), { label: 'Cetak Kartu Stok' }),
+          ]),
         );
       } catch (err) { galat(err); }
     },
@@ -138,6 +239,8 @@ async function opnameTab() {
             draft && izin('persediaan.post')
               ? el('button.btn.kecil.utama', { onclick: () => isiOpname(o.id, muat) }, 'Isi & Selesaikan')
               : el('button.btn.kecil', { onclick: () => lihatOpname(o.id) }, 'Lihat'),
+            el('button.btn.kecil.polos', { title: draft ? 'Cetak lembar hitung' : 'Cetak berita acara',
+              onclick: (e) => cetakDenganTombol(e, () => ambilDokOpname(o.id)) }, draft ? 'Lembar Hitung' : 'Berita Acara'),
             draft && izin('persediaan.update')
               && el('button.btn.kecil.bahaya', { onclick: () => batalOpname(o, muat) }, 'Batalkan'),
           ].filter(Boolean));
@@ -212,7 +315,13 @@ async function isiOpname(id, saatSelesai) {
           });
           toast('Stock opname selesai', 'sukses',
             `Selisih kurang ${rp(h.nilai_kurang)} · lebih ${rp(h.nilai_lebih)}`);
-          tutup(); saatSelesai?.();
+          tutup(); await saatSelesai?.();
+          tawaranCetak('Stock Opname Selesai', el('dl.deskripsi', [
+            el('dt', 'Nomor'), el('dd', el('span.mono', o.nomor)),
+            el('dt', 'Selisih kurang'), el('dd', rp(h.nilai_kurang)),
+            el('dt', 'Selisih lebih'), el('dd', rp(h.nilai_lebih)),
+            el('dt', 'Jurnal'), el('dd', el('span.mono', h.jurnal?.nomor || '-')),
+          ]), () => ambilDokOpname(id), { label: 'Cetak Berita Acara' });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Selesaikan & Sesuaikan Stok'),
     ],
@@ -221,8 +330,10 @@ async function isiOpname(id, saatSelesai) {
 
 async function lihatOpname(id) {
   const o = await api.get(`/api/persediaan/opname/${id}`);
-  modal({
+  const tutup = modal({
     judul: `Stock Opname ${o.nomor}`, lebar: 'lebar',
+    kaki: [tombolCetak(() => dokOpname(o), { label: 'Cetak Berita Acara' }),
+      el('button.btn.utama', { onclick: () => tutup() }, 'Tutup')],
     isi: el('div', [
       o.status === 'batal' && el('div.notis.bahaya', [el('div.isi', [
         el('strong', 'Dokumen dibatalkan'),
@@ -352,7 +463,11 @@ async function formPenyesuaian() {
             ...d, qty, harga: d.jenis === 'masuk' ? d.harga : '', akun_lawan: d.akun_lawan || null });
           toast('Stok berhasil disesuaikan', 'sukses', h.jurnal
             ? `Nilai ${rp(h.nilai)} · jurnal ${h.jurnal.nomor}` : 'Tanpa jurnal (nilai nol)');
-          tutup(); navigasi(location.hash, true);
+          tutup(); await navigasi(location.hash, true);
+          tawaranCetak('Stok Berhasil Disesuaikan', el('dl.deskripsi', [
+            el('dt', 'Nilai'), el('dd', el('strong', rp(h.nilai))),
+            el('dt', 'Jurnal'), el('dd', el('span.mono', h.jurnal?.nomor || '-')),
+          ]), () => ambilDokPenyesuaian(h.id));
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],

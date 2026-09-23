@@ -6,6 +6,7 @@ import {
   kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, bilah, konfirmasi,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 export async function render(param) {
   if (param[0]) return realisasi(Number(param[0]));
@@ -31,10 +32,13 @@ export async function render(param) {
             status(a.status),
             a.status === 'ditolak' && a.catatan_revisi && el('div.kecil.neg', a.catatan_revisi),
           ]) },
-          { judul: '', render: (a) => (dapatDiubah(a) ? el('div.gap8', { onclick: (e) => e.stopPropagation() }, [
-            izin('anggaran.update') && el('button.btn.kecil', { onclick: () => formAnggaran(muat, a.id) }, 'Ubah'),
-            izin('anggaran.delete') && el('button.btn.kecil.polos', { onclick: () => hapusAnggaran(a, muat) }, 'Hapus'),
-          ].filter(Boolean)) : '') },
+          { judul: '', render: (a) => el('div.gap8', { onclick: (e) => e.stopPropagation() }, [
+            el('button.btn.kecil.polos', { title: 'Cetak dokumen RKAP', onclick: (e) => cetakRkap(e, a.id) }, 'Cetak'),
+            dapatDiubah(a) && izin('anggaran.update')
+              && el('button.btn.kecil', { onclick: () => formAnggaran(muat, a.id) }, 'Ubah'),
+            dapatDiubah(a) && izin('anggaran.delete')
+              && el('button.btn.kecil.polos', { onclick: () => hapusAnggaran(a, muat) }, 'Hapus'),
+          ].filter(Boolean)) },
         ], d.data, { saatKlik: (a) => { location.hash = `#/anggaran/${a.id}`; },
           kosongTeks: 'Belum ada anggaran tersusun' }), [
           izin('anggaran.create') && el('button.btn.utama', { onclick: () => formAnggaran(muat) },
@@ -45,6 +49,72 @@ export async function render(param) {
   }
   await muat();
   return wadah;
+}
+
+// ------------------------------ Cetak ------------------------------
+
+const NAMA_BULAN_PANJANG = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus',
+  'September', 'Oktober', 'November', 'Desember'];
+
+const ringkasAnggaran = (a) => [
+  { label: 'Tahun anggaran', nilai: String(a.tahun) },
+  { label: 'Unit usaha', nilai: a.unit_nama || 'Seluruh unit' },
+  { label: 'Status', nilai: judul(a.status) },
+  { label: 'Disetujui oleh', nilai: a.disetujui_oleh ? `${a.disetujui_oleh}${a.disetujui_pada
+    ? ` (${tgl(a.disetujui_pada)})` : ''}` : '-' },
+  a.keterangan && { label: 'Keterangan', nilai: a.keterangan },
+].filter(Boolean);
+
+/** Dokumen RKAP dari GET /api/anggaran/:id: rincian dikelompokkan per tipe akun. */
+export function dokRkap(a) {
+  const kolom = [
+    { kunci: 'coa_kode', label: 'Kode' }, { kunci: 'akun_nama', label: 'Akun' },
+    { kunci: 'bulan', label: 'Bulan' }, { kunci: 'keterangan', label: 'Keterangan' },
+    { kunci: 'nominal', label: 'Anggaran (Rp)', tipe: 'uang' },
+  ];
+  const baris = (tipe) => a.detail.filter((d) => (tipe ? d.akun_tipe === tipe : !['pendapatan', 'beban'].includes(d.akun_tipe)))
+    .map((d) => ({ ...d, bulan: d.bulan ? NAMA_BULAN_PANJANG[d.bulan - 1] : 'Setahun', keterangan: d.keterangan || '' }));
+  const jumlah = (rows) => rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  const pendapatan = baris('pendapatan');
+  const beban = baris('beban');
+  const lain = baris(null);
+  return {
+    judul: 'Rencana Kerja dan Anggaran (RKAP)', subjudul: a.nama, jenis_ttd: 'anggaran',
+    ringkasan: [...ringkasAnggaran(a), { label: 'Total anggaran', nilai: rp(a.total) }],
+    bagian: [
+      { judul: 'Anggaran Pendapatan', kolom, baris: pendapatan, total: { _label: 'Jumlah Pendapatan', nominal: jumlah(pendapatan) } },
+      { judul: 'Anggaran Beban', kolom, baris: beban, total: { _label: 'Jumlah Beban', nominal: jumlah(beban) } },
+      lain.length && { judul: 'Anggaran Lainnya', kolom, baris: lain, total: { _label: 'Jumlah', nominal: jumlah(lain) } },
+    ].filter(Boolean),
+    catatan: `Rencana SHU (pendapatan − beban): ${rp(jumlah(pendapatan) - jumlah(beban))}`,
+  };
+}
+
+/** Dokumen realisasi anggaran dari GET /api/anggaran/:id/realisasi. */
+function dokRealisasi(d) {
+  return {
+    judul: 'Laporan Realisasi Anggaran', subjudul: `${d.anggaran.nama} — s.d. ${tgl(d.per_tanggal, true)}`,
+    jenis_ttd: 'anggaran', orientasi: 'landscape',
+    ringkasan: [...ringkasAnggaran(d.anggaran), { label: 'Total anggaran', nilai: rp(d.total_anggaran) },
+      { label: 'Total realisasi', nilai: rp(d.total_realisasi) }],
+    bagian: [{
+      kolom: [
+        { kunci: 'coa_kode', label: 'Kode' }, { kunci: 'akun_nama', label: 'Akun' }, { kunci: 'tipe', label: 'Tipe' },
+        { kunci: 'anggaran', label: 'Anggaran', tipe: 'uang' }, { kunci: 'realisasi', label: 'Realisasi', tipe: 'uang' },
+        { kunci: 'selisih', label: 'Selisih', tipe: 'uang' }, { kunci: 'persen_realisasi', label: 'Capaian', tipe: 'persen' },
+        { kunci: 'status', label: 'Keterangan' },
+      ],
+      baris: d.baris.map((r) => ({ ...r, tipe: judul(r.tipe) })),
+      total: { anggaran: d.total_anggaran, realisasi: d.total_realisasi,
+        selisih: d.total_realisasi - d.total_anggaran },
+    }],
+  };
+}
+
+async function cetakRkap(e, id) {
+  const tombol = e.currentTarget;
+  tombol.disabled = true;
+  try { await cetakDokumen(dokRkap(await api.get(`/api/anggaran/${id}`))); } catch (err) { galat(err); } finally { tombol.disabled = false; }
 }
 
 /** Hanya anggaran draft / ditolak yang boleh direvisi atau dihapus. */
@@ -112,7 +182,8 @@ async function realisasi(id) {
     izin('anggaran.delete') && dapatDiubah(a) && el('button.btn', {
       onclick: () => hapusAnggaran(a, () => { location.hash = '#/anggaran'; }),
     }, 'Hapus'),
-    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
+    tombolCetak(async () => dokRkap(await api.get(`/api/anggaran/${id}`)), { label: 'Cetak RKAP' }),
+    tombolCetak(() => dokRealisasi(d), { label: 'Cetak Realisasi' }),
   ].filter(Boolean)));
 
   if (a.status === 'ditolak') {

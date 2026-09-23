@@ -193,6 +193,29 @@ router.post('/api/kas/opname', 'kas.create', ({ body, ctx }) => {
 router.get('/api/kas/opname', 'kas.view', () =>
   ({ data: all('SELECT * FROM cash_opname ORDER BY tanggal DESC, id DESC LIMIT 100') }));
 
+/** Berita acara cash opname (untuk dicetak). */
+router.get('/api/kas/opname/:id', 'kas.view', ({ params }) => {
+  const o = get(
+    `SELECT o.*, c.nama AS akun_kas_nama, j.nomor AS jurnal_nomor FROM cash_opname o
+       LEFT JOIN coa c ON c.kode = o.coa_kas LEFT JOIN jurnal j ON j.id = o.jurnal_id
+      WHERE o.id = ?`, [idParam(params)]);
+  if (!o) throw notFound('Data cash opname tidak ditemukan');
+  return { ...o, terbilang_fisik: terbilang(o.saldo_fisik), terbilang_selisih: terbilang(Math.abs(o.selisih)) };
+});
+
+/** Satu bukti kas / transfer lengkap dengan nama akun dan jurnalnya (untuk dicetak). */
+router.get('/api/kas/:id', 'kas.view', ({ params }) => {
+  const k = get(
+    `SELECT k.*, ck.nama AS akun_kas_nama, cl.nama AS akun_lawan_nama, ct.nama AS akun_tujuan_nama,
+            j.nomor AS jurnal_nomor, u.nama AS unit_nama
+       FROM kas_bank k LEFT JOIN coa ck ON ck.kode = k.coa_kas LEFT JOIN coa cl ON cl.kode = k.coa_lawan
+       LEFT JOIN coa ct ON ct.kode = k.coa_tujuan LEFT JOIN jurnal j ON j.id = k.jurnal_id
+       LEFT JOIN unit_usaha u ON u.id = k.unit_usaha_id
+      WHERE k.id = ?`, [idParam(params)]);
+  if (!k) throw notFound('Bukti kas tidak ditemukan');
+  return { ...k, terbilang: terbilang(k.nominal) };
+});
+
 // ---------------------------- Anggaran (RKAP) ----------------------------
 
 router.get('/api/anggaran', 'anggaran.view', ({ query }) => ({
@@ -207,7 +230,9 @@ router.get('/api/anggaran', 'anggaran.view', ({ query }) => ({
 
 router.get('/api/anggaran/:id', 'anggaran.view', ({ params }) => {
   const id = idParam(params);
-  const a = get('SELECT * FROM anggaran WHERE id = ?', [id]);
+  const a = get(`SELECT a.*, u.nama AS unit_nama, c.nama AS cabang_nama FROM anggaran a
+                   LEFT JOIN unit_usaha u ON u.id = a.unit_usaha_id LEFT JOIN cabang c ON c.id = a.cabang_id
+                  WHERE a.id = ?`, [id]);
   if (!a) throw notFound('Anggaran tidak ditemukan');
   const detail = all(
     `SELECT d.*, c.nama AS akun_nama, c.tipe AS akun_tipe FROM anggaran_detail d

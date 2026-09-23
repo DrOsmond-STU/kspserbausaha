@@ -7,6 +7,16 @@ import {
 } from '../inti.js';
 import { negara } from '../app.js';
 import { ikon } from '../ikon.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
+import { dokBuktiSimpanan, dokBukuTabungan, denganTombol, teksMetode } from './simpanan.js';
+import { dokBuktiAngsuran, dokJadwal } from './pinjaman.js';
+
+/** Identitas anggota yang sedang masuk (untuk cetakan), diambil sekali dari beranda portal. */
+let identitas = null;
+async function identitasSaya() {
+  if (!identitas) identitas = (await api.get('/api/portal/beranda')).anggota;
+  return identitas;
+}
 
 export async function render() {
   const wadah = el('div');
@@ -43,6 +53,7 @@ export async function render() {
 async function berandaTab() {
   const d = await api.get('/api/portal/beranda');
   const a = d.anggota;
+  identitas = a;
   return el('div', [
     el('div.panel', [el('div.panel-isi', [
       el('div.antara', { gaya: { flexWrap: 'wrap' } }, [
@@ -107,8 +118,39 @@ async function berandaTab() {
 }
 
 async function simpananTab() {
-  const d = await api.get('/api/portal/simpanan');
+  const [d, saya] = await Promise.all([api.get('/api/portal/simpanan'), identitasSaya()]);
+  const bisaBukti = (m) => ['setoran', 'penarikan'].includes(m.jenis);
+  const nomorRek = new Map(d.rekening.map((r) => [r.id, r.nomor_rekening]));
+  const dokRingkasan = () => ({
+    judul: 'Ringkasan Simpanan Anggota', jenis_ttd: 'buku_tabungan',
+    subjudul: `Per ${tgl(hariIni(), true)}`,
+    ringkasan: [
+      { label: 'No. anggota', nilai: saya.nomor_anggota },
+      { label: 'Nama anggota', nilai: saya.nama },
+      { label: 'Simpanan pokok', nilai: d.total_pokok, tipe: 'uang' },
+      { label: 'Simpanan wajib', nilai: d.total_wajib, tipe: 'uang' },
+      { label: 'Sukarela & berjangka', nilai: d.total_sukarela, tipe: 'uang' },
+      { label: 'Total simpanan', nilai: d.total_simpanan, tipe: 'uang' },
+    ],
+    bagian: [
+      { judul: 'Rekening Simpanan', kolom: [{ kunci: 'nomor_rekening', label: 'No. Rekening' },
+        { kunci: 'produk_nama', label: 'Produk' }, { kunci: 'jenis', label: 'Jenis' },
+        { kunci: 'bunga_tahunan', label: 'Jasa % p.a.', tipe: 'persen' }, { kunci: 'saldo', label: 'Saldo', tipe: 'uang' },
+        { kunci: 'status', label: 'Status' }],
+      baris: d.rekening.map((r) => ({ ...r, jenis: judul(r.jenis), status: judul(r.status) })),
+      total: { saldo: d.total_simpanan } },
+      { judul: 'Mutasi Terakhir', kolom: [{ kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' },
+        { kunci: 'nomor', label: 'Nomor' }, { kunci: 'rekening', label: 'Rekening' }, { kunci: 'jenis', label: 'Jenis' },
+        { kunci: 'keterangan', label: 'Keterangan' }, { kunci: 'kredit', label: 'Setoran', tipe: 'uang' },
+        { kunci: 'debit', label: 'Penarikan', tipe: 'uang' }, { kunci: 'saldo_akhir', label: 'Saldo', tipe: 'uang' }],
+      baris: d.mutasi.map((m) => ({ ...m, rekening: nomorRek.get(m.rekening_id) || '', jenis: judul(m.jenis),
+        kredit: m.kredit || null, debit: m.debit || null,
+        keterangan: `${m.keterangan || ''}${m.status === 'batal' ? ' [BATAL]' : ''}` })) },
+    ],
+    penanda_tambahan: { Anggota: saya.nama, 'Pemilik Rekening': saya.nama },
+  });
   return el('div', [
+    el('div.alat', [tombolCetak(dokRingkasan, { label: 'Cetak Ringkasan Simpanan', excel: false, word: false })]),
     el('div.grid.k4.mb16', [
       kpi('Total Simpanan', rp(d.total_simpanan), { jenis: 'sukses' }),
       kpi('Pokok', rp(d.total_pokok)),
@@ -122,6 +164,7 @@ async function simpananTab() {
       { judul: 'Jasa', angka: true, render: (r) => `${r.bunga_tahunan}% p.a.` },
       { judul: 'Saldo', angka: true, render: (r) => el('strong', rp(r.saldo)) },
       { judul: 'Status', render: (r) => status(r.status) },
+      { judul: '', render: (r) => el('button.btn.kecil', { onclick: () => formRekeningKoran(r) }, 'Rekening Koran') },
     ], d.rekening, { kosongTeks: 'Belum memiliki rekening simpanan' })),
     panelTabel('Mutasi Simpanan', tabel([
       { judul: 'Tanggal', render: (m) => tgl(m.tanggal) },
@@ -130,13 +173,34 @@ async function simpananTab() {
       { judul: 'Setoran', angka: true, render: (m) => (m.kredit ? el('span.pos', rp(m.kredit)) : '-') },
       { judul: 'Penarikan', angka: true, render: (m) => (m.debit ? el('span.neg', rp(m.debit)) : '-') },
       { judul: 'Saldo', angka: true, render: (m) => rp(m.saldo_akhir) },
+      { judul: '', render: (m) => (bisaBukti(m) ? el('button.btn.kecil', {
+        onclick: (e) => denganTombol(e, async () => cetakDokumen(dokBuktiSimpanan(
+          await api.get(`/api/portal/transaksi-simpanan/${m.id}`)))) }, 'Bukti') : '') },
     ], d.mutasi, { kosongTeks: 'Belum ada mutasi' })),
   ]);
 }
 
+/** Rekening koran / buku tabungan milik sendiri untuk rentang tanggal. */
+function formRekeningKoran(r) {
+  const f = el('div', [
+    el('div.notis.info', [el('div.isi', [el('strong', `${r.nomor_rekening} — ${r.produk_nama}`),
+      el('div.kecil', `Saldo ${rp(r.saldo)}`)])]),
+    el('div.baris-form', [
+      kolom('Dari Tanggal', input('dari', { tipe: 'date', nilai: `${new Date().getFullYear()}-01-01` })),
+      kolom('Sampai Tanggal', input('sampai', { tipe: 'date', nilai: hariIni() })),
+    ]),
+  ]);
+  const ambil = async () => dokBukuTabungan(await api.get(`/api/portal/simpanan/${r.id}/buku`, bacaForm(f)));
+  const tutup = modal({
+    judul: 'Cetak Rekening Koran', isi: f,
+    kaki: [el('button.btn', { onclick: () => tutup() }, 'Tutup'), tombolCetak(ambil, { label: 'Cetak / PDF', excel: false, word: false })],
+  });
+}
+
 async function pinjamanTab() {
   const wadah = el('div');
-  const d = await api.get('/api/portal/pinjaman');
+  const [d, saya] = await Promise.all([api.get('/api/portal/pinjaman'), identitasSaya()]);
+  const lengkap = (p) => ({ ...p, nomor_anggota: saya.nomor_anggota, anggota_nama: saya.nama });
   wadah.append(el('div.alat', [
     el('button.btn', { onclick: simulasi }, 'Simulasi Angsuran'),
     el('button.btn.utama', { onclick: ajukan }, '+ Ajukan Pinjaman'),
@@ -171,6 +235,7 @@ async function pinjamanTab() {
             ]) });
         } catch (err) { galat(err); }
       } }, '⚡ Simulasi Pelunasan Dipercepat') : null,
+      p.jadwal.length ? el('div.mb8', [tombolCetak(() => dokJadwal(lengkap(p)), { label: 'Cetak Jadwal Angsuran', excel: false, word: false })]) : null,
       el('div.tabel-bungkus', [tabel([
         { judul: 'Ke-', angka: true, kunci: 'angsuran_ke' },
         { judul: 'Jatuh Tempo', render: (j) => tgl(j.jatuh_tempo) },
@@ -180,6 +245,19 @@ async function pinjamanTab() {
         { judul: 'Status', render: (j) => status(j.status === 'lunas' ? 'lunas'
           : j.status === 'sebagian' ? 'peringatan' : 'netral', judul(j.status)) },
       ], p.jadwal, { kosongTeks: 'Jadwal terbentuk setelah pencairan' })]),
+      p.angsuran?.length ? el('div.mt16', [
+        el('div.tebal.mb8', 'Riwayat Pembayaran'),
+        el('div.tabel-bungkus', [tabel([
+          { judul: 'Tanggal', render: (a) => tgl(a.tanggal) },
+          { judul: 'Nomor', render: (a) => el('span.mono.kecil', a.nomor) },
+          { judul: 'Jenis', render: (a) => judul(a.jenis) },
+          { judul: 'Metode', render: (a) => teksMetode(a.metode) },
+          { judul: 'Total', angka: true, render: (a) => el('strong', rp(a.total_bayar)) },
+          { judul: '', render: (a) => el('button.btn.kecil', {
+            onclick: (e) => denganTombol(e, async () => cetakDokumen(dokBuktiAngsuran(
+              await api.get(`/api/portal/angsuran/${a.id}`)))) }, 'Bukti') },
+        ], p.angsuran)]),
+      ]) : null,
     ].filter(Boolean))));
   }
   return wadah;
@@ -254,8 +332,25 @@ async function ajukan() {
 }
 
 async function shuTab() {
-  const d = await api.get('/api/portal/shu');
+  const [d, saya] = await Promise.all([api.get('/api/portal/shu'), identitasSaya()]);
   return el('div', [
+    d.data.length ? el('div.alat', [tombolCetak(() => ({
+      judul: 'Riwayat Pembagian SHU Anggota', jenis_ttd: 'shu',
+      ringkasan: [
+        { label: 'No. anggota', nilai: saya.nomor_anggota },
+        { label: 'Nama anggota', nilai: saya.nama },
+        { label: 'Total SHU diterima', nilai: d.total_diterima, tipe: 'uang' },
+      ],
+      bagian: [{
+        kolom: [{ kunci: 'tahun', label: 'Tahun Buku' }, { kunci: 'simpanan_rata', label: 'Simpanan Rata-rata', tipe: 'uang' },
+          { kunci: 'nilai_transaksi', label: 'Nilai Transaksi', tipe: 'uang' },
+          { kunci: 'shu_jasa_modal', label: 'Jasa Modal', tipe: 'uang' }, { kunci: 'shu_jasa_usaha', label: 'Jasa Usaha', tipe: 'uang' },
+          { kunci: 'shu_total', label: 'Total', tipe: 'uang' }, { kunci: 'status', label: 'Status' }],
+        baris: d.data.map((x) => ({ ...x, status: x.dibayar ? `Diterima (${judul(x.metode_bayar || '')})` : judul(x.status_periode) })),
+        total: { shu_total: d.data.reduce((t, x) => t + (x.shu_total || 0), 0) },
+      }],
+      penanda_tambahan: { Anggota: saya.nama, Penerima: saya.nama },
+    }), { label: 'Cetak Riwayat SHU', excel: false, word: false })]) : null,
     el('div.grid.k2.mb16', [
       kpi('Total SHU Diterima', rp(d.total_diterima), { jenis: 'sukses' }),
       kpi('Periode Diterima', angka(d.data.length)),

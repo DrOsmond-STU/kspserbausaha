@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
+import { cetakDokumen, tombolCetak, tawaranCetak, tandaAir } from '../cetak.js';
 
 export async function render() {
   const wadah = el('div');
@@ -75,10 +76,13 @@ async function transaksiTab() {
           ? el('s.samar', rp(k.nominal)) : el('strong', rp(k.nominal))) },
         { judul: 'Status', render: (k) => status(k.status || 'posted', batal(k) ? 'Batal' : 'Posted') },
         { judul: 'Rekon', render: (k) => (k.rekonsiliasi ? status('lunas', '✓') : status('netral', '-')) },
-        { judul: '', render: (k) => (izin('kas.update') && !batal(k) && !k.rekonsiliasi
-          && ['kas_masuk', 'kas_keluar', 'transfer'].includes(k.jenis)
-          ? el('button.btn.kecil.polos', { title: 'Batalkan bukti ini (jurnal dibalik)',
-            onclick: () => formBatal(k, muat) }, 'Batalkan') : '') },
+        { judul: '', render: (k) => el('div.gap8', [
+          el('button.btn.kecil.polos', { title: 'Cetak bukti kas', onclick: (e) => cetakBukti(e, k.id) }, 'Cetak'),
+          izin('kas.update') && !batal(k) && !k.rekonsiliasi
+            && ['kas_masuk', 'kas_keluar', 'transfer'].includes(k.jenis)
+            && el('button.btn.kecil.polos', { title: 'Batalkan bukti ini (jurnal dibalik)',
+              onclick: () => formBatal(k, muat) }, 'Batalkan'),
+        ].filter(Boolean)) },
       ], d.data, {
         kosongTeks: 'Belum ada transaksi kas pada periode ini',
         kaki: d.data.length ? { pihak: 'Masuk / keluar (tanpa batal)',
@@ -86,6 +90,7 @@ async function transaksiTab() {
       }), [
         el('input', { type: 'date', nilai: dari, onchange: (e) => { dari = e.target.value; muat(); } }),
         el('input', { type: 'date', nilai: sampai, onchange: (e) => { sampai = e.target.value; muat(); } }),
+        tombolCetak(() => dokDaftarKas(posisi, d, dari, sampai), { label: 'Cetak' }),
         izin('kas.create') && el('button.btn.utama', { onclick: () => formKas('kas_masuk', muat) }, '↓ Kas Masuk'),
         izin('kas.create') && el('button.btn', { onclick: () => formKas('kas_keluar', muat) }, '↑ Kas Keluar'),
         izin('kas.create') && el('button.btn', { onclick: () => formTransfer(muat) }, '⇄ Transfer'),
@@ -94,6 +99,121 @@ async function transaksiTab() {
   }
   await muat();
   return wadah;
+}
+
+// ---------------------------- Cetak bukti ----------------------------
+
+const akunTeks = (kode, nama) => (kode ? `${kode} — ${nama || ''}` : '-');
+
+/**
+ * Model dokumen bukti kas masuk / keluar / transfer dari GET /api/kas/:id.
+ * Nama pihak mengisi kolom tanda tangan penyetor/penerima.
+ */
+export function dokKas(k) {
+  const batal = k.status === 'batal';
+  const transfer = k.jenis === 'transfer';
+  const masuk = k.jenis === 'kas_masuk';
+  const kolom = [
+    { kunci: 'kode', label: 'Kode Akun' }, { kunci: 'nama', label: 'Nama Akun' },
+    { kunci: 'uraian', label: 'Uraian' }, { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' },
+  ];
+  const baris = transfer
+    ? [{ kode: k.coa_kas, nama: k.akun_kas_nama, uraian: 'Dari akun (dikredit)', jumlah: k.nominal },
+      { kode: k.coa_tujuan, nama: k.akun_tujuan_nama, uraian: 'Ke akun (didebit)', jumlah: k.nominal }]
+    : [{ kode: k.coa_lawan, nama: k.akun_lawan_nama, uraian: k.keterangan || '', jumlah: k.nominal }];
+  const pihak = k.pihak || '';
+  return {
+    judul: transfer ? 'Bukti Transfer Kas / Bank' : masuk ? 'Bukti Kas Masuk' : 'Bukti Kas Keluar',
+    nomor: k.nomor,
+    jenis_ttd: transfer ? 'transfer_kas' : masuk ? 'bukti_kas_masuk' : 'bukti_kas_keluar',
+    ringkasan: [
+      { label: 'Tanggal', nilai: k.tanggal, tipe: 'tanggal' },
+      { label: 'Status', nilai: batal ? 'BATAL' : 'Posted' },
+      transfer
+        ? { label: 'Dari akun', nilai: akunTeks(k.coa_kas, k.akun_kas_nama) }
+        : { label: masuk ? 'Diterima di' : 'Dibayar dari', nilai: akunTeks(k.coa_kas, k.akun_kas_nama) },
+      transfer
+        ? { label: 'Ke akun', nilai: akunTeks(k.coa_tujuan, k.akun_tujuan_nama) }
+        : { label: masuk ? 'Diterima dari' : 'Dibayarkan kepada', nilai: pihak || '-' },
+      { label: 'Nominal', nilai: `Rp ${new Intl.NumberFormat('id-ID').format(k.nominal)}` },
+      { label: 'Nomor jurnal', nilai: k.jurnal_nomor || '-' },
+      { label: 'Keterangan', nilai: k.keterangan || '-' },
+      k.unit_nama && { label: 'Unit usaha', nilai: k.unit_nama },
+    ].filter(Boolean),
+    isi: batal ? tandaAir('BATAL') : undefined,
+    bagian: [{ kolom, baris, total: transfer ? undefined : { jumlah: k.nominal } }],
+    terbilang: judul(k.terbilang),
+    catatan: batal ? `Dibatalkan: ${k.alasan_batal || '-'}` : undefined,
+    penanda_tambahan: pihak ? (masuk ? { 'Disetor oleh': pihak, Penyetor: pihak }
+      : { 'Diterima oleh': pihak, Penerima: pihak }) : {},
+  };
+}
+
+const ambilDokKas = async (id) => dokKas(await api.get(`/api/kas/${id}`));
+
+async function cetakBukti(e, id) {
+  const tombol = e.currentTarget;
+  tombol.disabled = true;
+  try { await cetakDokumen(await ambilDokKas(id)); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+}
+
+/** Berita acara cash opname dari GET /api/kas/opname/:id. */
+export function dokOpname(o) {
+  const hasil = o.selisih === 0 ? 'sesuai (tidak terdapat selisih)'
+    : `terdapat selisih ${o.selisih > 0 ? 'lebih' : 'kurang'} sebesar Rp ${new Intl.NumberFormat('id-ID').format(Math.abs(o.selisih))}`;
+  return {
+    judul: 'Berita Acara Cash Opname', jenis_ttd: 'cash_opname',
+    ringkasan: [
+      { label: 'Tanggal pemeriksaan', nilai: o.tanggal, tipe: 'tanggal' },
+      { label: 'Akun kas', nilai: akunTeks(o.coa_kas, o.akun_kas_nama) },
+      { label: 'Petugas', nilai: o.petugas || '-' },
+      { label: 'Jurnal penyesuaian', nilai: o.jurnal_nomor || '-' },
+    ],
+    isi: el('p', { gaya: { lineHeight: '1.5', margin: '8px 0' } },
+      `Pada tanggal ${tgl(o.tanggal, true)} telah dilakukan pemeriksaan fisik kas (cash opname) atas akun `
+      + `${akunTeks(o.coa_kas, o.akun_kas_nama)}. Hasil perhitungan fisik dibandingkan dengan saldo menurut `
+      + `pembukuan ${hasil}.${o.keterangan ? ` Keterangan: ${o.keterangan}.` : ''}`),
+    bagian: [{
+      kolom: [{ kunci: 'uraian', label: 'Uraian' }, { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' }],
+      baris: [
+        { uraian: 'Saldo kas menurut pembukuan (sistem)', jumlah: o.saldo_sistem },
+        { uraian: 'Saldo kas menurut perhitungan fisik', jumlah: o.saldo_fisik },
+      ],
+      total: { _label: o.selisih >= 0 ? 'Selisih lebih (fisik − sistem)' : 'Selisih kurang (fisik − sistem)',
+        jumlah: o.selisih },
+    }],
+    terbilang: `Saldo fisik ${judul(o.terbilang_fisik)}`,
+    catatan: o.selisih ? `Selisih dibukukan ${o.selisih > 0 ? 'sebagai pendapatan lain-lain' : 'sebagai beban selisih kas'}`
+      + `${o.jurnal_nomor ? ` melalui jurnal ${o.jurnal_nomor}` : ''}.` : undefined,
+  };
+}
+
+const ambilDokOpname = async (id) => dokOpname(await api.get(`/api/kas/opname/${id}`));
+
+/** Daftar posisi kas & bukti kas periode berjalan sebagai laporan. */
+function dokDaftarKas(posisi, d, dari, sampai) {
+  return {
+    judul: 'Laporan Kas & Bank', subjudul: `Periode ${tgl(dari, true)} s.d. ${tgl(sampai, true)}`,
+    jenis_ttd: 'laporan', orientasi: 'landscape',
+    bagian: [
+      { judul: `Posisi Kas & Bank per ${tgl(posisi.per_tanggal, true)}`, kolom: [
+        { kunci: 'kode', label: 'Kode Akun' }, { kunci: 'nama', label: 'Nama Akun' },
+        { kunci: 'jenis', label: 'Jenis' }, { kunci: 'debit', label: 'Penerimaan', tipe: 'uang' },
+        { kunci: 'kredit', label: 'Pengeluaran', tipe: 'uang' }, { kunci: 'saldo', label: 'Saldo', tipe: 'uang' },
+      ], baris: posisi.baris.map((b) => ({ ...b, jenis: b.is_kas ? 'Kas' : 'Bank' })), total: { saldo: posisi.total } },
+      { judul: 'Bukti Kas & Bank', kolom: [
+        { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'nomor', label: 'Nomor' },
+        { kunci: 'jenis', label: 'Jenis' }, { kunci: 'keterangan', label: 'Keterangan' },
+        { kunci: 'pihak', label: 'Pihak' }, { kunci: 'masuk', label: 'Masuk', tipe: 'uang' },
+        { kunci: 'keluar', label: 'Keluar', tipe: 'uang' }, { kunci: 'status', label: 'Status' },
+      ], baris: d.data.map((k) => ({ ...k, jenis: judul(k.jenis),
+        masuk: k.jenis === 'kas_masuk' ? k.nominal : null,
+        keluar: ['kas_keluar', 'petty_cash'].includes(k.jenis) ? k.nominal : null,
+        status: k.status === 'batal' ? 'Batal' : 'Posted' })),
+      total: { masuk: d.total_masuk, keluar: d.total_keluar } },
+    ],
+    catatan: 'Total masuk/keluar tidak termasuk bukti yang dibatalkan; transfer antarakun tidak dijumlahkan.',
+  };
 }
 
 /** Akun postable & aktif dari bagan akun (tanpa kode yang ditanam). */
@@ -142,6 +262,10 @@ async function formKas(jenis, saatSelesai) {
           const h = await api.post('/api/kas', bacaForm(form));
           toast('Transaksi kas tercatat', 'sukses', `${h.nomor} · ${judul(h.terbilang)}`);
           tutup(); saatSelesai?.();
+          tawaranCetak(masuk ? 'Bukti Kas Masuk Tersimpan' : 'Bukti Kas Keluar Tersimpan', el('dl.deskripsi', [
+            el('dt', 'Nomor'), el('dd', el('span.mono', h.nomor)),
+            el('dt', 'Terbilang'), el('dd', el('em', judul(h.terbilang))),
+          ]), () => ambilDokKas(h.id));
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
@@ -173,6 +297,9 @@ async function formTransfer(saatSelesai) {
           const h = await api.post('/api/kas/transfer', bacaForm(form));
           toast('Transfer berhasil', 'sukses', h.nomor);
           tutup(); saatSelesai?.();
+          tawaranCetak('Transfer Berhasil', el('dl.deskripsi', [
+            el('dt', 'Nomor'), el('dd', el('span.mono', h.nomor)),
+          ]), () => ambilDokKas(h.id));
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Transfer'),
     ],
@@ -261,6 +388,14 @@ async function opnameTab() {
         { judul: 'Selisih', angka: true, render: (o) => el(o.selisih === 0 ? 'span.samar'
           : o.selisih > 0 ? 'span.pos' : 'span.neg', rp(o.selisih)) },
         { judul: 'Petugas', render: (o) => el('span.kecil', o.petugas || '-') },
+        { judul: '', render: (o) => el('button.btn.kecil.polos', {
+          title: 'Cetak berita acara cash opname',
+          onclick: async (e) => {
+            const tombol = e.currentTarget;
+            tombol.disabled = true;
+            try { await cetakDokumen(await ambilDokOpname(o.id)); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+          },
+        }, 'Berita Acara') },
       ], d.data, { kosongTeks: 'Belum pernah dilakukan cash opname' }), [
         izin('kas.create') && el('button.btn.utama', { onclick: () => formOpname(muat) }, '+ Cash Opname'),
       ].filter(Boolean)));
@@ -298,6 +433,11 @@ async function formOpname(saatSelesai) {
           toast('Cash opname tercatat', 'sukses',
             `Sistem ${rp(h.saldo_sistem)} · fisik ${rp(h.saldo_fisik)} · selisih ${rp(h.selisih)}`);
           tutup(); saatSelesai?.();
+          tawaranCetak('Cash Opname Tercatat', el('dl.deskripsi', [
+            el('dt', 'Saldo sistem'), el('dd', rp(h.saldo_sistem)),
+            el('dt', 'Saldo fisik'), el('dd', rp(h.saldo_fisik)),
+            el('dt', 'Selisih'), el('dd', el('strong', rp(h.selisih))),
+          ]), () => ambilDokOpname(h.id), { label: 'Cetak Berita Acara' });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],

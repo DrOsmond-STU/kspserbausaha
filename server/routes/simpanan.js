@@ -3,7 +3,7 @@
  */
 import { createRouter, notFound } from '../lib/http.js';
 import { all, get, scalar } from '../db.js';
-import { idParam, num, str, date, oneOf, today } from '../lib/util.js';
+import { idParam, num, str, date, oneOf, today, terbilang } from '../lib/util.js';
 import * as svc from '../services/savings.js';
 
 const router = createRouter();
@@ -32,6 +32,33 @@ router.get('/api/simpanan/rekening', 'simpanan.view', ({ query }) => {
     `SELECT COUNT(*) FROM rekening_simpanan r JOIN anggota a ON a.id = r.anggota_id ${where}`, p);
   return { data, total, limit, offset };
 });
+
+/**
+ * Rincian satu transaksi simpanan untuk bukti setoran/penarikan (cetak).
+ * Diekspor agar portal anggota dapat memakai susunan yang sama.
+ */
+export function detailTransaksi(id) {
+  const t = get(
+    `SELECT t.*, r.nomor_rekening, r.anggota_id, r.status AS status_rekening, r.saldo AS saldo_rekening,
+            a.nama AS anggota_nama, a.nomor_anggota, a.alamat AS anggota_alamat,
+            p.nama AS produk_nama, p.jenis AS produk_jenis,
+            b.nama_bank, b.nomor_rekening AS bank_nomor_rekening, b.atas_nama AS bank_atas_nama,
+            u.nama AS petugas_nama, j.nomor AS jurnal_nomor
+       FROM transaksi_simpanan t
+       JOIN rekening_simpanan r ON r.id = t.rekening_id
+       JOIN anggota a ON a.id = r.anggota_id
+       JOIN produk_simpanan p ON p.id = r.produk_id
+       LEFT JOIN bank_account b ON b.id = t.bank_account_id
+       LEFT JOIN users u ON u.username = t.petugas
+       LEFT JOIN jurnal j ON j.id = t.jurnal_id
+      WHERE t.id = ?`, [id]);
+  if (!t) throw notFound('Transaksi simpanan tidak ditemukan');
+  const nominal = t.kredit || t.debit;
+  return { ...t, nominal, terbilang: terbilang(nominal) };
+}
+
+/** Rincian transaksi simpanan (bukti setoran / penarikan). */
+router.get('/api/simpanan/transaksi/:id', 'simpanan.view', ({ params }) => detailTransaksi(idParam(params)));
 
 router.get('/api/simpanan/ringkasan', 'simpanan.view', () => {
   const perProduk = all(
@@ -70,16 +97,16 @@ router.get('/api/simpanan/rekening/:id', 'simpanan.view', ({ params, query }) =>
   };
 });
 
-/** Buku tabungan digital (cetak per periode). */
-router.get('/api/simpanan/rekening/:id/buku', 'simpanan.view', ({ params, query }) => {
-  const id = idParam(params);
+/** Buku tabungan / rekening koran satu rekening untuk rentang tanggal (juga dipakai portal). */
+export function bukuRekening(id, { dari, sampai } = {}) {
   const rek = get(
-    `SELECT r.*, a.nama AS anggota_nama, a.nomor_anggota, p.nama AS produk_nama
+    `SELECT r.*, a.nama AS anggota_nama, a.nomor_anggota, a.alamat AS anggota_alamat,
+            p.nama AS produk_nama, p.jenis, p.bunga_tahunan
        FROM rekening_simpanan r JOIN anggota a ON a.id = r.anggota_id
        JOIN produk_simpanan p ON p.id = r.produk_id WHERE r.id = ?`, [id]);
   if (!rek) throw notFound('Rekening simpanan tidak ditemukan');
-  const dari = query.dari || `${new Date().getFullYear()}-01-01`;
-  const sampai = query.sampai || today();
+  dari = dari || `${new Date().getFullYear()}-01-01`;
+  sampai = sampai || today();
   const mutasi = all(
     `SELECT * FROM transaksi_simpanan WHERE rekening_id = ? AND tanggal BETWEEN ? AND ?
       ORDER BY tanggal, id`, [id, dari, sampai]);
@@ -92,7 +119,11 @@ router.get('/api/simpanan/rekening/:id/buku', 'simpanan.view', ({ params, query 
     total_penarikan: mutasi.reduce((s, m) => s + m.debit, 0),
     saldo_akhir: mutasi.length ? mutasi[mutasi.length - 1].saldo_akhir : saldoAwal,
   };
-});
+}
+
+/** Buku tabungan digital (cetak per periode). */
+router.get('/api/simpanan/rekening/:id/buku', 'simpanan.view', ({ params, query }) =>
+  bukuRekening(idParam(params), { dari: query.dari, sampai: query.sampai }));
 
 router.post('/api/simpanan/rekening', 'simpanan.create', ({ body, ctx }) => svc.bukaRekening({
   anggota_id: num(body, 'anggota_id', { min: 1 }),

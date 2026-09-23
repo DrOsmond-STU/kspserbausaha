@@ -16,14 +16,16 @@
  *     penanda_tambahan?: { <label>: nama }              // mengisi nama kolom ttd tertentu (mis. nama anggota)
  *   }
  */
-import { api, el, toast, galat } from './inti.js';
+import { api, el, toast, galat, modal } from './inti.js';
 import { negara } from './app.js';
 
 let cache = null;
 
 /** Kop, aktivasi, dan tanda tangan (disimpan sementara; segarkan sesudah Setup Koperasi diubah). */
 export async function dataCetak(paksa = false) {
-  if (!cache || paksa) cache = await api.get('/api/cetak/profil');
+  // Peran anggota hanya boleh mengakses /api/portal/*, sehingga memakai rute portal
+  const url = negara.user?.role === 'anggota' ? '/api/portal/cetak-profil' : '/api/cetak/profil';
+  if (!cache || paksa) cache = await api.get(url);
   return cache;
 }
 export const segarkanDataCetak = () => { cache = null; };
@@ -186,7 +188,11 @@ async function unduh(res) {
 
 /** Unduh model dokumen sebagai Excel (xlsx) atau Word (docx). Isi bebas (dok.isi) tidak ikut. */
 export async function unduhDokumen(dok, format) {
-  const { isi, ...model } = dok;
+  const { isi, nomor, terbilang, penanda_tambahan: _p, ...model } = dok;
+  // Pengekspor server belum mengenal nomor & terbilang: dibawa sebagai ringkasan dan catatan.
+  if (nomor) model.ringkasan = [{ label: 'Nomor', nilai: nomor }, ...(model.ringkasan || [])];
+  if (terbilang) model.catatan = [`Terbilang: ${terbilang}`, model.catatan].filter(Boolean).join(' — ');
+  model.bagian = model.bagian || [];
   const res = await fetch('/api/cetak/ekspor', {
     method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ format, dokumen: model }),
@@ -215,3 +221,30 @@ export function tombolCetak(ambil, { excel = true, word = true, label = 'Cetak /
     word && el('button.btn', { type: 'button', onclick: jalankan((d) => unduhDokumen(d, 'docx')) }, 'Word'),
   ].filter(Boolean));
 }
+
+/**
+ * Dialog sesudah transaksi tersimpan yang menawarkan cetak bukti.
+ * @param {string} judulDialog
+ * @param {Node|string|Array} isi ringkasan singkat transaksi
+ * @param {() => object|Promise<object>} ambil model dokumen bukti
+ */
+export function tawaranCetak(judulDialog, isi, ambil, { label = 'Cetak Bukti' } = {}) {
+  const tutup = modal({
+    judul: judulDialog, lebar: 'sempit', isi: el('div', [isi].flat().filter(Boolean)),
+    kaki: [
+      el('button.btn', { type: 'button', onclick: () => tutup() }, 'Tutup'),
+      el('button.btn.utama', { type: 'button', onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try { await cetakDokumen(await ambil()); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+      } }, label),
+    ],
+  });
+  return tutup;
+}
+
+/** Tanda air (mis. "BATAL") untuk isi bebas dokumen cetak. */
+export const tandaAir = (teks) => `<div style="position:fixed;top:38%;left:0;right:0;text-align:center;
+  font-size:96px;font-weight:700;color:rgba(200,0,0,.16);transform:rotate(-24deg);pointer-events:none;
+  letter-spacing:8px">${esc(teks)}</div><div style="text-align:center;font-weight:700;color:#b00;margin:4px 0">
+  DOKUMEN ${esc(teks)}</div>`;

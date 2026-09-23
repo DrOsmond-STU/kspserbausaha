@@ -8,6 +8,7 @@ import {
 import { grafikGaris } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 export async function render(param) {
   if (param[0]) return detail(Number(param[0]));
@@ -49,6 +50,19 @@ export async function render(param) {
     kosongkan(daftar).append(memuat());
     try {
       const d = await api.get('/api/simpanan/rekening', { q, limit: 100 });
+      const dokDaftar = () => ({
+        judul: 'Daftar Rekening Simpanan', jenis_ttd: 'laporan', orientasi: 'landscape',
+        keterangan: q ? [`Pencarian: "${q}"`] : [],
+        bagian: [{
+          kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor_rekening', label: 'No. Rekening' },
+            { kunci: 'nomor_anggota', label: 'No. Anggota' }, { kunci: 'anggota_nama', label: 'Nama Anggota' },
+            { kunci: 'produk_nama', label: 'Produk' }, { kunci: 'saldo', label: 'Saldo', tipe: 'uang' },
+            { kunci: 'saldo_blokir', label: 'Diblokir', tipe: 'uang' }, { kunci: 'status', label: 'Status' }],
+          baris: d.data.map((x, i) => ({ ...x, no: i + 1, status: judul(x.status) })),
+          total: { saldo: d.data.reduce((t, x) => t + x.saldo, 0),
+            saldo_blokir: d.data.reduce((t, x) => t + (x.saldo_blokir || 0), 0) },
+        }],
+      });
       kosongkan(daftar).append(panelTabel(`Rekening Simpanan (${angka(d.total)})`, tabel([
         { judul: 'No. Rekening', render: (x) => el('span.mono', x.nomor_rekening) },
         { judul: 'Anggota', render: (x) => el('div', [
@@ -70,6 +84,7 @@ export async function render(param) {
         izin('simpanan.create') && el('button.btn.utama', { onclick: () => formTransaksi('setoran', null, muat) }, '↓ Setoran'),
         izin('simpanan.create') && el('button.btn', { onclick: () => formTransaksi('penarikan', null, muat) }, '↑ Penarikan'),
         izin('simpanan.post') && el('button.btn', { onclick: () => formBunga(muat) }, 'Posting Jasa Simpanan'),
+        tombolCetak(dokDaftar, { label: 'Cetak' }),
       ]));
     } catch (err) { galat(err); }
   }
@@ -97,7 +112,7 @@ async function detail(id) {
       && el('button.btn', { onclick: () => formBlokir(r, segarkan) }, 'Blokir Saldo'),
     izin('simpanan.update') && r.status !== 'tutup'
       && el('button.btn.bahaya', { onclick: () => formTutup(r, segarkan) }, 'Tutup Rekening'),
-    el('button.btn', { onclick: () => window.print() }, 'Cetak Buku'),
+    r.status === 'tutup' && el('button.btn', { onclick: (e) => cetakBuktiTutup(e, r) }, 'Cetak Bukti Tutup Rekening'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [
@@ -139,6 +154,7 @@ async function bukuRekening(r, saatBerubah) {
     kosongkan(wadah).append(memuat());
     try {
       const b = await api.get(`/api/simpanan/rekening/${r.id}/buku`, { dari, sampai });
+      const bisaBukti = (m) => ['setoran', 'penarikan'].includes(m.jenis);
       kosongkan(wadah).append(panelTabel(`Buku Tabungan · ${tgl(b.periode.dari)} s.d. ${tgl(b.periode.sampai)}`, el('div', [
         el('div.antara', { gaya: { padding: '10px 14px' } }, [
           el('span.kecil.lembut', `Saldo awal ${rp(b.saldo_awal)}`),
@@ -158,15 +174,18 @@ async function bukuRekening(r, saatBerubah) {
           { judul: 'Penarikan', angka: true, render: (m) => (m.debit ? el('span.neg', rp(m.debit)) : '-') },
           { judul: 'Saldo', angka: true, render: (m) => el('strong', rp(m.saldo_akhir)) },
           { judul: 'Status', render: (m) => status(m.status || 'posted') },
-          { judul: '', render: (m) => (bisaBatal(m)
-            ? el('button.btn.kecil.bahaya', { onclick: () => formBatalTransaksi(m, saatBerubah) }, 'Batalkan')
-            : '') },
+          { judul: '', render: (m) => el('div.gap8.nowrap', [
+            bisaBukti(m) && el('button.btn.kecil', { title: 'Cetak bukti transaksi',
+              onclick: (e) => cetakBuktiTransaksi(e, m.id) }, 'Bukti'),
+            bisaBatal(m) && el('button.btn.kecil.bahaya', { onclick: () => formBatalTransaksi(m, saatBerubah) }, 'Batalkan'),
+          ].filter(Boolean)) },
         ], b.mutasi, { kosongTeks: 'Tidak ada mutasi pada periode ini' }),
       ]), [
         el('input', { type: 'date', nilai: dari, 'aria-label': 'Dari tanggal',
           onchange: (e) => { dari = e.target.value; muat(); } }),
         el('input', { type: 'date', nilai: sampai, 'aria-label': 'Sampai tanggal',
           onchange: (e) => { sampai = e.target.value; muat(); } }),
+        tombolCetak(() => dokBukuTabungan(b), { label: 'Cetak Buku' }),
       ]));
     } catch (err) { galat(err); kosongkan(wadah); }
   }
@@ -281,6 +300,11 @@ async function formTransaksi(jenis, rekening, saatSelesai) {
         toast(`${judul(jenis)} berhasil dicatat`, 'sukses',
           `${h.nomor} · saldo akhir ${rp(h.saldo_akhir)}`);
         tutup(); saatSelesai?.();
+        suksesCetak({
+          judul: `${judul(jenis)} Berhasil`, pesan: `${judul(jenis)} ${h.nomor} tercatat`,
+          detail: `Saldo akhir ${rp(h.saldo_akhir)}${h.jurnal?.nomor ? ` · jurnal ${h.jurnal.nomor}` : ''}`,
+          cetak: async () => cetakDokumen(dokBuktiSimpanan(await api.get(`/api/simpanan/transaksi/${h.id}`))),
+        });
       }),
     ],
   });
@@ -338,6 +362,11 @@ async function formTutup(r, saatSelesai) {
         const h = await api.post(`/api/simpanan/rekening/${r.id}/tutup`, bacaForm(form));
         toast('Rekening ditutup', 'sukses', `Dikembalikan ${rp(h.dikembalikan)}${h.jurnal ? ` · jurnal ${h.jurnal.nomor}` : ''}`);
         tutup(); saatSelesai?.();
+        suksesCetak({
+          judul: 'Rekening Ditutup', pesan: `Rekening ${r.nomor_rekening} ditutup`,
+          detail: `Saldo dikembalikan ${rp(h.dikembalikan)}`, tombol: 'Cetak Bukti Tutup Rekening',
+          cetak: async () => cetakDokumen(await dokBuktiTutup({ ...r, status: 'tutup' })),
+        });
       }),
     ],
   });
@@ -426,4 +455,162 @@ function formBunga(saatSelesai) {
       } }, 'Posting'),
     ],
   });
+}
+
+// ------------------------------- Cetakan -------------------------------
+
+const LABEL_METODE = { tunai: 'Tunai', transfer: 'Transfer bank', potong_gaji: 'Potong gaji',
+  pindah_buku: 'Pindah buku', simpanan: 'Simpanan' };
+
+/** Huruf pertama kapital (untuk terbilang). */
+export const kapital = (s) => (s ? `${String(s)[0].toUpperCase()}${String(s).slice(1)}` : '');
+
+/** Teks metode pembayaran, termasuk rekening bank bila transfer. */
+export function teksMetode(metode, t = {}) {
+  const dasar = LABEL_METODE[metode] || judul(metode || 'tunai');
+  return metode === 'transfer' && t.nama_bank ? `${dasar} · ${t.nama_bank} ${t.bank_nomor_rekening || ''}`.trim() : dasar;
+}
+
+/** Tanda "BATAL" besar pada cetakan (hanya tampilan cetak, tidak ikut Excel/Word). */
+export const capBatal = '<div style="border:3px solid #c00;color:#c00;font-size:22px;font-weight:700;'
+  + 'text-align:center;padding:4px;margin:6px auto;letter-spacing:6px;width:60%">BATAL</div>';
+
+/**
+ * Modal keberhasilan transaksi dengan tombol "Cetak Bukti".
+ * @param {{judul:string, pesan:string, detail?:string, cetak:Function, tombol?:string}} o
+ */
+export function suksesCetak({ judul: jdl, pesan, detail, cetak, tombol = 'Cetak Bukti' }) {
+  const tutup = modal({
+    judul: jdl, lebar: 'sempit',
+    isi: el('div.notis.sukses', [el('div.isi', [el('strong', pesan), detail && el('div.kecil', detail)])]),
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Selesai'),
+      el('button.btn.utama', { onclick: async (e) => {
+        const b = e.currentTarget;
+        b.disabled = true;
+        try { await cetak(); } catch (err) { galat(err); } finally { b.disabled = false; }
+      } }, tombol),
+    ],
+  });
+  return tutup;
+}
+
+/** Menjalankan aksi cetak dari tombol (tombol dinonaktifkan selama proses). */
+export async function denganTombol(e, fn) {
+  const tombol = e?.currentTarget;
+  e?.stopPropagation?.();
+  if (tombol) tombol.disabled = true;
+  try { await fn(); } catch (err) { galat(err); } finally { if (tombol) tombol.disabled = false; }
+}
+
+/** Model dokumen bukti setoran / penarikan simpanan dari GET /api/simpanan/transaksi/:id. */
+export function dokBuktiSimpanan(t) {
+  const setor = t.jenis === 'setoran' || (t.jenis !== 'penarikan' && t.kredit > 0);
+  const batal = t.status === 'batal';
+  return {
+    judul: `${setor ? 'Bukti Setoran Simpanan' : 'Bukti Penarikan Simpanan'}${batal ? ' (BATAL)' : ''}`,
+    nomor: t.nomor, ukuran: 'A5', orientasi: 'landscape',
+    jenis_ttd: setor ? 'setoran_simpanan' : 'penarikan_simpanan',
+    keterangan: batal ? ['Transaksi ini telah DIBATALKAN dan tidak berlaku sebagai bukti pembayaran.'] : [],
+    isi: batal ? capBatal : undefined,
+    ringkasan: [
+      { label: 'Nomor transaksi', nilai: t.nomor },
+      { label: 'Tanggal', nilai: t.tanggal, tipe: 'tanggal' },
+      { label: 'No. anggota', nilai: t.nomor_anggota },
+      { label: 'Nama anggota', nilai: t.anggota_nama },
+      { label: 'No. rekening', nilai: t.nomor_rekening },
+      { label: 'Produk simpanan', nilai: t.produk_nama },
+      { label: 'Metode', nilai: teksMetode(t.metode, t) },
+      { label: 'Petugas', nilai: t.petugas_nama || t.petugas || '-' },
+      { label: setor ? 'Nominal setoran' : 'Nominal penarikan', nilai: t.nominal, tipe: 'uang' },
+      { label: 'Saldo akhir', nilai: t.saldo_akhir, tipe: 'uang' },
+      { label: 'Status', nilai: batal ? 'BATAL' : 'Sah' },
+      t.jurnal_nomor && { label: 'No. jurnal', nilai: t.jurnal_nomor },
+    ].filter(Boolean),
+    bagian: [{
+      kolom: [{ kunci: 'uraian', label: 'Uraian' }, { kunci: 'nominal', label: 'Jumlah (Rp)', tipe: 'uang' }],
+      baris: [{ uraian: t.keterangan || `${setor ? 'Setoran' : 'Penarikan'} ${t.produk_nama}`, nominal: t.nominal }],
+      total: { nominal: t.nominal },
+    }],
+    terbilang: kapital(t.terbilang),
+    // Kolom petugas diisi petugas yang memproses transaksi, bukan pengguna yang mencetak ulang
+    penanda_tambahan: { Penyetor: t.anggota_nama, Penerima: t.anggota_nama, Anggota: t.anggota_nama,
+      Petugas: t.petugas_nama || t.petugas },
+  };
+}
+
+/** Model dokumen buku tabungan / rekening koran dari data /buku. */
+export function dokBukuTabungan(b) {
+  const r = b.rekening;
+  const baris = [
+    { tanggal: b.periode.dari, keterangan: 'Saldo awal', saldo: b.saldo_awal },
+    ...b.mutasi.map((m) => ({
+      tanggal: m.tanggal, nomor: m.nomor, jenis: judul(m.jenis),
+      keterangan: `${m.keterangan || ''}${m.status === 'batal' ? ' [BATAL]' : ''}`,
+      setoran: m.kredit || null, penarikan: m.debit || null, saldo: m.saldo_akhir,
+    })),
+  ].map((x, i) => ({ ...x, no: i + 1 }));
+  return {
+    judul: 'Buku Tabungan / Rekening Koran Simpanan',
+    subjudul: `Periode ${tgl(b.periode.dari, true)} s.d. ${tgl(b.periode.sampai, true)}`,
+    jenis_ttd: 'buku_tabungan',
+    ringkasan: [
+      { label: 'No. rekening', nilai: r.nomor_rekening },
+      { label: 'Produk', nilai: r.produk_nama },
+      { label: 'No. anggota', nilai: r.nomor_anggota },
+      { label: 'Nama anggota', nilai: r.anggota_nama },
+      { label: 'Saldo awal', nilai: b.saldo_awal, tipe: 'uang' },
+      { label: 'Total setoran', nilai: b.total_setoran, tipe: 'uang' },
+      { label: 'Total penarikan', nilai: b.total_penarikan, tipe: 'uang' },
+      { label: 'Saldo akhir', nilai: b.saldo_akhir, tipe: 'uang' },
+    ],
+    bagian: [{
+      kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' },
+        { kunci: 'nomor', label: 'Nomor' }, { kunci: 'jenis', label: 'Jenis' }, { kunci: 'keterangan', label: 'Keterangan' },
+        { kunci: 'setoran', label: 'Setoran', tipe: 'uang' }, { kunci: 'penarikan', label: 'Penarikan', tipe: 'uang' },
+        { kunci: 'saldo', label: 'Saldo', tipe: 'uang' }],
+      baris,
+      total: { setoran: b.total_setoran, penarikan: b.total_penarikan, saldo: b.saldo_akhir },
+    }],
+    penanda_tambahan: { Anggota: r.anggota_nama, 'Pemilik Rekening': r.anggota_nama },
+  };
+}
+
+/** Bukti penutupan rekening: memakai mutasi penarikan penutup (terakhir) rekening tersebut. */
+async function dokBuktiTutup(r) {
+  const d = await api.get(`/api/simpanan/rekening/${r.id}`, { limit: 50 });
+  const akhir = d.mutasi.find((m) => m.jenis === 'penarikan' && m.status !== 'batal');
+  const t = akhir ? await api.get(`/api/simpanan/transaksi/${akhir.id}`) : null;
+  return {
+    judul: 'Bukti Penutupan Rekening Simpanan', nomor: t?.nomor || d.nomor_rekening,
+    ukuran: 'A5', orientasi: 'landscape', jenis_ttd: 'penarikan_simpanan',
+    ringkasan: [
+      { label: 'No. rekening', nilai: d.nomor_rekening },
+      { label: 'Produk simpanan', nilai: d.produk_nama },
+      { label: 'No. anggota', nilai: d.nomor_anggota },
+      { label: 'Nama anggota', nilai: d.anggota_nama },
+      { label: 'Tanggal buka', nilai: d.tanggal_buka, tipe: 'tanggal' },
+      { label: 'Tanggal tutup', nilai: t?.tanggal || '-', tipe: 'tanggal' },
+      { label: 'Metode pengembalian', nilai: t ? teksMetode(t.metode, t) : '-' },
+      { label: 'Petugas', nilai: t?.petugas_nama || t?.petugas || '-' },
+      { label: 'Status rekening', nilai: judul(d.status) },
+    ],
+    bagian: [{
+      kolom: [{ kunci: 'uraian', label: 'Uraian' }, { kunci: 'nominal', label: 'Jumlah (Rp)', tipe: 'uang' }],
+      baris: [{ uraian: t?.keterangan || 'Pengembalian saldo - penutupan rekening', nominal: t?.nominal || 0 }],
+      total: { nominal: t?.nominal || 0, _label: 'SALDO DIKEMBALIKAN' },
+    }],
+    terbilang: t ? kapital(t.terbilang) : 'Nol rupiah',
+    catatan: 'Dengan ditandatanganinya bukti ini, rekening simpanan tersebut dinyatakan ditutup dan '
+      + 'seluruh saldonya telah diterima oleh anggota.',
+    penanda_tambahan: { Penerima: d.anggota_nama, Anggota: d.anggota_nama, Petugas: t?.petugas_nama || t?.petugas },
+  };
+}
+
+function cetakBuktiTransaksi(e, id) {
+  return denganTombol(e, async () => cetakDokumen(dokBuktiSimpanan(await api.get(`/api/simpanan/transaksi/${id}`))));
+}
+
+function cetakBuktiTutup(e, r) {
+  return denganTombol(e, async () => cetakDokumen(await dokBuktiTutup(r)));
 }

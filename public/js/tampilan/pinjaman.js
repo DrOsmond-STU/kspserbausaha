@@ -8,7 +8,10 @@ import {
 import { grafikCincin } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
-import { daftarBank, kolomBank } from './simpanan.js';
+import {
+  daftarBank, kolomBank, suksesCetak, denganTombol, kapital, teksMetode,
+} from './simpanan.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 /** Status pengajuan yang belum dicairkan sehingga masih dapat dibatalkan. */
 const STATUS_BISA_BATAL = ['diajukan', 'survey', 'dianalisis', 'disetujui'];
@@ -61,6 +64,19 @@ export async function render(param) {
       { judul: 'Status', render: (t) => status(t.kategori === 'tertunggak' ? 'ditolak' : 'peringatan',
         t.kategori === 'tertunggak' ? 'Tertunggak' : 'Akan jatuh tempo') },
     ], tagihan.data), [
+      tombolCetak(() => ({
+        judul: 'Daftar Tagihan & Tunggakan Angsuran', jenis_ttd: 'laporan', orientasi: 'landscape',
+        subjudul: `Per ${tgl(hariIni(), true)} (jatuh tempo s.d. 7 hari ke depan)`,
+        bagian: [{
+          kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'jatuh_tempo', label: 'Jatuh Tempo', tipe: 'tanggal' },
+            { kunci: 'nomor_pinjaman', label: 'No. Pinjaman' }, { kunci: 'anggota_nama', label: 'Anggota' },
+            { kunci: 'telepon', label: 'Telepon' }, { kunci: 'angsuran_ke', label: 'Ke-', tipe: 'angka' },
+            { kunci: 'sisa_tagihan', label: 'Sisa Tagihan', tipe: 'uang' }, { kunci: 'hari_telat', label: 'Telat (hari)', tipe: 'angka' },
+            { kunci: 'kategori', label: 'Status' }],
+          baris: tagihan.data.map((t, i) => ({ ...t, no: i + 1, kategori: judul(t.kategori) })),
+          total: { sisa_tagihan: tagihan.data.reduce((x, t) => x + t.sisa_tagihan, 0) },
+        }],
+      }), { label: 'Cetak' }),
       izin('pinjaman.update') && el('button.btn.kecil', { onclick: async () => {
         try {
           const h = await api.post('/api/pinjaman/refresh-kolektibilitas', {});
@@ -101,6 +117,21 @@ export async function render(param) {
         { onchange: (e) => { filter = e.target.value; muat(); } }),
         el('button.btn', { onclick: simulasi }, 'Simulasi Angsuran'),
         izin('pinjaman.create') && el('button.btn.utama', { onclick: () => formAjukan(muat) }, '+ Ajukan Pinjaman'),
+        tombolCetak(() => ({
+          judul: 'Daftar Pinjaman Anggota', jenis_ttd: 'laporan', orientasi: 'landscape',
+          keterangan: [filter && `Status: ${judul(filter)}`, q && `Pencarian: "${q}"`].filter(Boolean),
+          bagian: [{
+            kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor', label: 'Nomor' },
+              { kunci: 'nomor_anggota', label: 'No. Anggota' }, { kunci: 'anggota_nama', label: 'Anggota' },
+              { kunci: 'produk_nama', label: 'Produk' }, { kunci: 'tenor', label: 'Tenor (bln)', tipe: 'angka' },
+              { kunci: 'bunga_tahunan', label: 'Jasa % p.a.', tipe: 'persen' }, { kunci: 'pokok', label: 'Pokok', tipe: 'uang' },
+              { kunci: 'outstanding_pokok', label: 'Sisa Pokok', tipe: 'uang' }, { kunci: 'kolektibilitas', label: 'Kolek.', tipe: 'angka' },
+              { kunci: 'status', label: 'Status' }],
+            baris: d.data.map((p, i) => ({ ...p, no: i + 1, status: judul(p.status) })),
+            total: { pokok: d.data.reduce((t, p) => t + p.pokok, 0),
+              outstanding_pokok: d.data.reduce((t, p) => t + p.outstanding_pokok, 0) },
+          }],
+        }), { label: 'Cetak' }),
       ].filter(Boolean)));
     } catch (err) { galat(err); }
   }
@@ -135,6 +166,17 @@ async function detail(id) {
   }
   if (izin('pinjaman.update') && STATUS_BISA_BATAL.includes(p.status)) {
     aksi.push(el('button.btn.bahaya', { onclick: () => formBatal(p, segarkan) }, 'Batalkan Pengajuan'));
+  }
+  // Cetakan dokumen pinjaman
+  aksi.push(el('button.btn', { onclick: (e) => denganTombol(e, async () => cetakDokumen(await dokPengajuan(p))) },
+    'Cetak Formulir Pengajuan'));
+  if (p.tanggal_cair && !p.restruktur_dari) {
+    aksi.push(el('button.btn', { onclick: (e) => denganTombol(e, () => cetakDokumen(dokPencairan(p))) },
+      'Cetak Bukti Pencairan'));
+  }
+  if (p.restruktur_dari) {
+    aksi.push(el('button.btn', { onclick: (e) => denganTombol(e, () => cetakDokumen(dokRestrukturisasi(p))) },
+      'Cetak Restrukturisasi'));
   }
   wadah.append(el('div.gap8.mb16', aksi));
 
@@ -215,7 +257,9 @@ async function detail(id) {
     { judul: 'Sisa Pokok', angka: true, render: (j) => rp(j.sisa_pokok) },
     { judul: 'Status', render: (j) => status(j.status === 'lunas' ? 'lunas'
       : j.status === 'sebagian' ? 'peringatan' : 'netral', judul(j.status)) },
-  ], p.jadwal, { kosongTeks: 'Jadwal terbentuk setelah pencairan' })));
+  ], p.jadwal, { kosongTeks: 'Jadwal terbentuk setelah pencairan' }), [
+    p.jadwal.length ? tombolCetak(() => dokJadwal(p), { label: 'Cetak Jadwal' }) : null,
+  ].filter(Boolean)));
 
   wadah.append(panelTabel('Riwayat Pembayaran', tabel([
     { judul: 'Tanggal', render: (a) => tgl(a.tanggal) },
@@ -226,6 +270,9 @@ async function detail(id) {
     { judul: 'Denda', angka: true, render: (a) => (a.bayar_denda ? el('span.neg', rp(a.bayar_denda)) : '-') },
     { judul: 'Total', angka: true, render: (a) => el('strong', rp(a.total_bayar)) },
     { judul: 'Petugas', render: (a) => el('span.kecil.samar', a.petugas || '-') },
+    { judul: '', render: (a) => el('button.btn.kecil', { title: 'Cetak bukti pembayaran',
+      onclick: (e) => denganTombol(e, async () => cetakDokumen(dokBuktiAngsuran(
+        await api.get(`/api/pinjaman/angsuran/${a.id}`)))) }, 'Bukti') },
   ], p.angsuran, { kosongTeks: 'Belum ada pembayaran' })));
 
   return wadah;
@@ -245,8 +292,23 @@ async function simulasi() {
     ]),
     el('button.btn.utama', { onclick: async () => {
       try {
-        const h = await api.post('/api/pinjaman/simulasi', bacaForm(form));
+        const d = bacaForm(form);
+        const h = await api.post('/api/pinjaman/simulasi', d);
+        const pr = produk.data.find((x) => String(x.id) === String(d.produk_id));
         kosongkan(hasil).append(
+          el('div.mb8', [tombolCetak(() => ({
+            judul: 'Simulasi Angsuran Pinjaman', jenis_ttd: 'default',
+            keterangan: ['Simulasi bersifat perkiraan dan bukan persetujuan pinjaman.'],
+            ringkasan: [
+              { label: 'Produk', nilai: pr ? `${pr.nama} (${pr.bunga_tahunan}% ${judul(pr.metode_bunga)})` : '-' },
+              { label: 'Pokok', nilai: d.pokok, tipe: 'uang' },
+              { label: 'Tenor', nilai: `${d.tenor} bulan` },
+              { label: 'Angsuran pertama', nilai: h.angsuran_pertama, tipe: 'uang' },
+              { label: 'Total jasa', nilai: h.total_bunga, tipe: 'uang' },
+              { label: 'Total kewajiban', nilai: h.total_angsuran, tipe: 'uang' },
+            ],
+            bagian: [bagianJadwal(h.jadwal, false)],
+          }), { label: 'Cetak Simulasi' })]),
           el('div.grid.k3.mb16', [
             kpi('Angsuran / bulan', rp(h.angsuran_pertama)),
             kpi('Total jasa', rp(h.total_bunga)),
@@ -320,6 +382,11 @@ async function formAjukan(saatSelesai) {
           toast('Pengajuan pinjaman tercatat', 'sukses',
             `${h.nomor} · skor ${h.skoring.skor}/100${h.approval ? ' · menunggu persetujuan' : ''}`);
           tutup(); saatSelesai?.();
+          suksesCetak({
+            judul: 'Pengajuan Tercatat', pesan: `Pengajuan ${h.nomor} tercatat`,
+            detail: `Skor kredit ${h.skoring.skor}/100 — ${h.skoring.rekomendasi}`, tombol: 'Cetak Formulir Pengajuan',
+            cetak: async () => cetakDokumen(await dokPengajuan(await api.get(`/api/pinjaman/${h.id}`))),
+          });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Ajukan'),
     ],
@@ -401,6 +468,11 @@ async function formCairkan(p, saatSelesai) {
           toast('Pinjaman berhasil dicairkan', 'sukses',
             `Diterima ${rp(h.dicairkan)} · jurnal ${h.jurnal.nomor}`);
           tutup(); saatSelesai?.();
+          suksesCetak({
+            judul: 'Pencairan Berhasil', pesan: `Pinjaman ${p.nomor} dicairkan`,
+            detail: `Diterima bersih ${rp(h.dicairkan)} · jurnal ${h.jurnal.nomor}`, tombol: 'Cetak Bukti Pencairan',
+            cetak: async () => cetakDokumen(dokPencairan(await api.get(`/api/pinjaman/${p.id}`))),
+          });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Cairkan'),
     ],
@@ -440,6 +512,11 @@ async function formAngsuran(p, saatSelesai) {
           toast(h.lunas ? 'Angsuran tercatat — pinjaman LUNAS' : 'Angsuran berhasil dicatat', 'sukses',
             `Pokok ${rp(h.bayar_pokok)} · jasa ${rp(h.bayar_bunga)} · denda ${rp(h.bayar_denda)}`);
           tutup(); saatSelesai?.();
+          suksesCetak({
+            judul: h.lunas ? 'Pinjaman Lunas' : 'Angsuran Tercatat', pesan: `Pembayaran ${h.nomor} sebesar ${rp(h.total_bayar)}`,
+            detail: `Sisa pokok ${rp(h.outstanding_pokok)}`, tombol: 'Cetak Bukti Angsuran',
+            cetak: async () => cetakDokumen(dokBuktiAngsuran(await api.get(`/api/pinjaman/angsuran/${h.id}`))),
+          });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Bayar'),
     ],
@@ -473,9 +550,19 @@ async function formPelunasan(p, saatSelesai) {
         const tombol = e.currentTarget;
         tombol.disabled = true;
         try {
-          await api.post(`/api/pinjaman/${p.id}/pelunasan`, bacaForm(form));
+          const h = await api.post(`/api/pinjaman/${p.id}/pelunasan`, bacaForm(form));
           toast('Pinjaman berhasil dilunasi', 'sukses');
           tutup(); saatSelesai?.();
+          suksesCetak({
+            judul: 'Pelunasan Berhasil', pesan: `Pinjaman ${p.nomor} LUNAS`,
+            detail: `${h.nomor} · total ${rp(h.total)}`, tombol: 'Cetak Bukti Pelunasan',
+            cetak: async () => {
+              const d = await api.get(`/api/pinjaman/${p.id}`);
+              const a = d.angsuran.find((x) => x.nomor === h.nomor);
+              if (!a) throw new Error('Data pelunasan tidak ditemukan');
+              cetakDokumen(dokBuktiAngsuran(await api.get(`/api/pinjaman/angsuran/${a.id}`)));
+            },
+          });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, `Lunasi ${rp(sim.total)}`),
     ],
@@ -507,6 +594,11 @@ function formRestruktur(p, saatSelesai) {
           const h = await api.post(`/api/pinjaman/${p.id}/restrukturisasi`, bacaForm(form));
           toast('Restrukturisasi berhasil', 'sukses', `Pinjaman baru ${h.nomor} sebesar ${rp(h.pokok)}`);
           tutup(); location.hash = `#/pinjaman/${h.id}`;
+          suksesCetak({
+            judul: 'Restrukturisasi Berhasil', pesan: `Pinjaman baru ${h.nomor} sebesar ${rp(h.pokok)}`,
+            detail: `${h.tenor} bulan · menggantikan ${p.nomor}`, tombol: 'Cetak Berita Acara Restrukturisasi',
+            cetak: async () => cetakDokumen(dokRestrukturisasi(await api.get(`/api/pinjaman/${h.id}`))),
+          });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Proses Restrukturisasi'),
     ],
@@ -539,4 +631,205 @@ function formBatal(p, saatSelesai) {
       } }, 'Batalkan Pengajuan'),
     ],
   });
+}
+
+// ------------------------------- Cetakan -------------------------------
+
+const labelBunga = (p) => `${p.bunga_tahunan}% p.a. (${judul(p.metode_bunga)})`;
+
+/** Bagian tabel jadwal angsuran untuk model dokumen. */
+export function bagianJadwal(jadwal, lengkap = true) {
+  const kolom = [{ kunci: 'angsuran_ke', label: 'Ke-', tipe: 'angka' },
+    { kunci: 'jatuh_tempo', label: 'Jatuh Tempo', tipe: 'tanggal' },
+    { kunci: 'pokok', label: 'Pokok', tipe: 'uang' }, { kunci: 'bunga', label: 'Jasa', tipe: 'uang' },
+    { kunci: 'total', label: 'Total', tipe: 'uang' }, { kunci: 'sisa_pokok', label: 'Sisa Pokok', tipe: 'uang' }];
+  if (lengkap) {
+    kolom.push({ kunci: 'dibayar', label: 'Dibayar', tipe: 'uang' }, { kunci: 'tanggal_bayar', label: 'Tgl Bayar', tipe: 'tanggal' },
+      { kunci: 'status_teks', label: 'Status' });
+  }
+  const jml = (k) => jadwal.reduce((t, j) => t + (Number(j[k]) || 0), 0);
+  return {
+    judul: 'Jadwal Angsuran',
+    kolom,
+    baris: jadwal.map((j) => ({ ...j, dibayar: (j.bayar_pokok || 0) + (j.bayar_bunga || 0),
+      status_teks: judul(j.status || '') })),
+    total: { pokok: jml('pokok'), bunga: jml('bunga'), total: jml('total'),
+      ...(lengkap ? { dibayar: jml('bayar_pokok') + jml('bayar_bunga') } : {}) },
+  };
+}
+
+/** Formulir pengajuan pinjaman & hasil analisis/skoring. */
+async function dokPengajuan(p) {
+  let skor = null;
+  // Rincian skor dihitung ulang hanya selama pengajuan belum dicairkan
+  if (STATUS_BISA_BATAL.includes(p.status)) {
+    try {
+      skor = await api.post('/api/pinjaman/skoring', { anggota_id: p.anggota_id, pokok: p.pokok, tenor: p.tenor,
+        angsuran_bulanan: p.angsuran_total || p.jadwal?.[0]?.total || 0 });
+    } catch { skor = null; }
+  }
+  const bagian = [];
+  if (p.agunan?.length) {
+    bagian.push({ judul: 'Agunan', kolom: [{ kunci: 'jenis', label: 'Jenis' }, { kunci: 'deskripsi', label: 'Deskripsi' },
+      { kunci: 'nomor_dokumen', label: 'No. Dokumen' }, { kunci: 'nilai_taksiran', label: 'Nilai Taksiran', tipe: 'uang' }],
+    baris: p.agunan.map((g) => ({ ...g, jenis: judul(g.jenis) })),
+    total: { nilai_taksiran: p.agunan.reduce((t, g) => t + g.nilai_taksiran, 0) } });
+  }
+  bagian.push({ judul: 'Hasil Analisis Kredit', kolom: [{ kunci: 'aspek', label: 'Aspek' }, { kunci: 'uraian', label: 'Uraian' }],
+    baris: [
+      { aspek: 'Skor kredit', uraian: p.skor_kredit !== null && p.skor_kredit !== undefined
+        ? `${p.skor_kredit} / 100 — ${p.rekomendasi_skor || ''}` : 'Belum dinilai' },
+      { aspek: 'Hasil survey', uraian: p.hasil_survey || '-' },
+      { aspek: 'Catatan analis', uraian: p.catatan_analis || '-' },
+      { aspek: 'Status / keputusan', uraian: [judul(p.status),
+        p.tanggal_persetujuan && `tanggal ${tgl(p.tanggal_persetujuan, true)}`,
+        p.disetujui_oleh && `oleh ${p.disetujui_oleh}`, p.alasan_tolak && `alasan: ${p.alasan_tolak}`]
+        .filter(Boolean).join(', ') },
+    ] });
+  if (skor?.rincian?.length) {
+    bagian.push({ judul: 'Rincian Skoring 5C (dihitung per tanggal cetak)',
+      kolom: [{ kunci: 'aspek', label: 'Aspek' }, { kunci: 'nilai', label: 'Nilai', tipe: 'angka' },
+        { kunci: 'maks', label: 'Maks', tipe: 'angka' }, { kunci: 'catatan', label: 'Keterangan' }],
+      baris: skor.rincian, total: { nilai: skor.skor, maks: skor.maks, catatan: `${skor.rekomendasi} · DSR ${skor.dsr}%` } });
+  }
+  if (p.approval?.ada && p.approval.tahapan?.length) {
+    bagian.push({ judul: 'Persetujuan Berjenjang', kolom: [{ kunci: 'urut', label: 'Tahap', tipe: 'angka' },
+      { kunci: 'role', label: 'Peran' }, { kunci: 'oleh', label: 'Diputus Oleh' }, { kunci: 'waktu', label: 'Waktu' },
+      { kunci: 'catatan', label: 'Catatan' }, { kunci: 'status', label: 'Status' }],
+    baris: p.approval.tahapan.map((t) => ({ ...t, role: judul(t.role), status: judul(t.status) })) });
+  }
+  return {
+    judul: 'Formulir Pengajuan Pinjaman & Hasil Analisis', nomor: p.nomor, jenis_ttd: 'pengajuan_pinjaman',
+    ringkasan: [
+      { label: 'Tanggal pengajuan', nilai: p.tanggal_pengajuan, tipe: 'tanggal' },
+      { label: 'Status', nilai: judul(p.status) },
+      { label: 'No. anggota', nilai: p.nomor_anggota },
+      { label: 'Nama pemohon', nilai: p.anggota_nama },
+      { label: 'NIK', nilai: p.nik || '-' },
+      { label: 'Telepon', nilai: p.telepon || '-' },
+      { label: 'Alamat', nilai: p.alamat || '-' },
+      { label: 'Penghasilan / bulan', nilai: p.penghasilan, tipe: 'uang' },
+      { label: 'Produk pinjaman', nilai: p.produk_nama },
+      { label: 'Pokok diajukan', nilai: p.pokok, tipe: 'uang' },
+      { label: 'Tenor', nilai: `${p.tenor} bulan` },
+      { label: 'Jasa', nilai: labelBunga(p) },
+      { label: 'Perkiraan angsuran / bulan', nilai: p.angsuran_total || p.jadwal?.[0]?.total || 0, tipe: 'uang' },
+      { label: 'Biaya admin + provisi', nilai: (p.biaya_admin || 0) + (p.biaya_provisi || 0), tipe: 'uang' },
+      { label: 'Tujuan penggunaan', nilai: p.tujuan || '-' },
+    ],
+    bagian,
+    terbilang: kapital(p.terbilang_pokok),
+    penanda_tambahan: { Pemohon: p.anggota_nama, Anggota: p.anggota_nama },
+  };
+}
+
+/** Bukti pencairan pinjaman beserta jadwal angsuran. */
+function dokPencairan(p) {
+  const bersih = p.pokok - (p.biaya_admin || 0) - (p.biaya_provisi || 0);
+  return {
+    judul: 'Bukti Pencairan Pinjaman', nomor: p.nomor, jenis_ttd: 'pencairan_pinjaman',
+    ringkasan: [
+      { label: 'Tanggal pencairan', nilai: p.tanggal_cair, tipe: 'tanggal' },
+      { label: 'Produk', nilai: p.produk_nama },
+      { label: 'No. anggota', nilai: p.nomor_anggota },
+      { label: 'Nama anggota', nilai: p.anggota_nama },
+      { label: 'Pokok pinjaman', nilai: p.pokok, tipe: 'uang' },
+      { label: 'Tenor', nilai: `${p.tenor} bulan` },
+      { label: 'Jasa', nilai: labelBunga(p) },
+      { label: 'Angsuran / bulan', nilai: p.angsuran_total, tipe: 'uang' },
+      { label: 'Jatuh tempo pertama', nilai: p.jadwal?.[0]?.jatuh_tempo || '-', tipe: 'tanggal' },
+      { label: 'Jatuh tempo terakhir', nilai: p.jadwal?.[p.jadwal.length - 1]?.jatuh_tempo || '-', tipe: 'tanggal' },
+    ],
+    bagian: [
+      { judul: 'Rincian Pencairan', kolom: [{ kunci: 'uraian', label: 'Uraian' }, { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' }],
+        baris: [{ uraian: 'Pokok pinjaman', jumlah: p.pokok },
+          { uraian: 'Dikurangi biaya administrasi', jumlah: -(p.biaya_admin || 0) },
+          { uraian: 'Dikurangi biaya provisi', jumlah: -(p.biaya_provisi || 0) }],
+        total: { jumlah: bersih, _label: 'DITERIMA BERSIH' } },
+      bagianJadwal(p.jadwal || [], false),
+    ],
+    terbilang: kapital(p.terbilang_cair),
+    catatan: 'Anggota menyatakan telah menerima dana pinjaman di atas dan bersedia membayar angsuran '
+      + 'sesuai jadwal. Keterlambatan dikenakan denda sesuai ketentuan produk.',
+    penanda_tambahan: { Penerima: p.anggota_nama, Anggota: p.anggota_nama },
+  };
+}
+
+/** Jadwal angsuran (lengkap dengan realisasi pembayaran). */
+export function dokJadwal(p) {
+  return {
+    judul: 'Jadwal Angsuran Pinjaman', nomor: p.nomor, jenis_ttd: 'pencairan_pinjaman', orientasi: 'landscape',
+    ringkasan: [
+      { label: 'No. anggota', nilai: p.nomor_anggota },
+      { label: 'Nama anggota', nilai: p.anggota_nama },
+      { label: 'Produk', nilai: p.produk_nama },
+      { label: 'Pokok', nilai: p.pokok, tipe: 'uang' },
+      { label: 'Tenor', nilai: `${p.tenor} bulan` },
+      { label: 'Jasa', nilai: labelBunga(p) },
+      { label: 'Tanggal cair', nilai: p.tanggal_cair || '-', tipe: 'tanggal' },
+      { label: 'Sisa pokok', nilai: p.outstanding_pokok, tipe: 'uang' },
+    ],
+    bagian: [bagianJadwal(p.jadwal || [], true)],
+    penanda_tambahan: { Penerima: p.anggota_nama, Anggota: p.anggota_nama },
+  };
+}
+
+/** Bukti pembayaran angsuran / pelunasan dari GET /api/pinjaman/angsuran/:id. */
+export function dokBuktiAngsuran(a) {
+  const pelunasan = a.jenis === 'pelunasan_dipercepat';
+  return {
+    judul: pelunasan ? 'Bukti Pelunasan Pinjaman' : 'Bukti Pembayaran Angsuran', nomor: a.nomor,
+    ukuran: 'A5', orientasi: 'landscape', jenis_ttd: 'angsuran',
+    ringkasan: [
+      { label: 'Nomor', nilai: a.nomor },
+      { label: 'Tanggal bayar', nilai: a.tanggal, tipe: 'tanggal' },
+      { label: 'No. pinjaman', nilai: a.nomor_pinjaman },
+      { label: 'Produk', nilai: a.produk_nama },
+      { label: 'No. anggota', nilai: a.nomor_anggota },
+      { label: 'Nama anggota', nilai: a.anggota_nama },
+      { label: 'Angsuran ke', nilai: pelunasan ? 'Pelunasan dipercepat'
+        : `${a.angsuran_ke ?? '-'} dari ${a.tenor}${a.jatuh_tempo ? ` (jatuh tempo ${tgl(a.jatuh_tempo)})` : ''}` },
+      { label: 'Metode', nilai: teksMetode(a.metode) },
+      { label: 'Sisa pokok', nilai: a.sisa_pokok, tipe: 'uang' },
+      { label: 'Petugas', nilai: a.petugas_nama || a.petugas || '-' },
+    ],
+    bagian: [{
+      kolom: [{ kunci: 'uraian', label: 'Uraian' }, { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' }],
+      baris: [{ uraian: 'Pokok', jumlah: a.bayar_pokok },
+        { uraian: pelunasan ? 'Jasa berjalan & penalti pelunasan' : 'Jasa', jumlah: a.bayar_bunga },
+        { uraian: 'Denda keterlambatan', jumlah: a.bayar_denda }],
+      total: { jumlah: a.total_bayar },
+    }],
+    terbilang: kapital(a.terbilang),
+    catatan: [a.keterangan, a.sisa_pokok <= 0 ? 'Dengan pembayaran ini pinjaman dinyatakan LUNAS.' : null]
+      .filter(Boolean).join(' · '),
+    // Kolom petugas diisi petugas yang menerima pembayaran, bukan pengguna yang mencetak ulang
+    penanda_tambahan: { Penyetor: a.anggota_nama, Anggota: a.anggota_nama, Petugas: a.petugas_nama || a.petugas },
+  };
+}
+
+/** Berita acara restrukturisasi: pinjaman baru hasil pengalihan saldo pinjaman lama. */
+function dokRestrukturisasi(p) {
+  return {
+    judul: 'Berita Acara Restrukturisasi Pinjaman', nomor: p.nomor, jenis_ttd: 'pencairan_pinjaman',
+    ringkasan: [
+      { label: 'Tanggal', nilai: p.tanggal_cair || p.tanggal_pengajuan, tipe: 'tanggal' },
+      { label: 'Pinjaman lama', nilai: p.restruktur_dari_nomor || '-' },
+      { label: 'Pinjaman baru', nilai: p.nomor },
+      { label: 'Produk', nilai: p.produk_nama },
+      { label: 'No. anggota', nilai: p.nomor_anggota },
+      { label: 'Nama anggota', nilai: p.anggota_nama },
+      { label: 'Pokok baru', nilai: p.pokok, tipe: 'uang' },
+      { label: 'Tenor baru', nilai: `${p.tenor} bulan` },
+      { label: 'Jasa', nilai: labelBunga(p) },
+      { label: 'Angsuran / bulan', nilai: p.angsuran_total, tipe: 'uang' },
+      { label: 'Disetujui oleh', nilai: p.disetujui_oleh || '-' },
+      { label: 'Alasan', nilai: p.catatan_analis || '-' },
+    ],
+    bagian: [bagianJadwal(p.jadwal || [], false)],
+    terbilang: kapital(p.terbilang_pokok),
+    catatan: 'Sisa pokok (dan denda yang dikapitalisasi) pinjaman lama dialihkan menjadi pinjaman baru tanpa '
+      + 'arus kas; pinjaman lama dinyatakan ditutup. Anggota menyetujui jadwal angsuran baru di atas.',
+    penanda_tambahan: { Penerima: p.anggota_nama, Anggota: p.anggota_nama },
+  };
 }

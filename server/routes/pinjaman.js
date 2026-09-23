@@ -3,7 +3,7 @@
  */
 import { createRouter, notFound, badRequest } from '../lib/http.js';
 import { all, get, scalar } from '../db.js';
-import { idParam, num, str, date, oneOf, today } from '../lib/util.js';
+import { idParam, num, str, date, oneOf, today, terbilang } from '../lib/util.js';
 import * as svc from '../services/loans.js';
 import * as approval from '../services/approval.js';
 
@@ -69,16 +69,54 @@ router.post('/api/pinjaman/skoring', 'pinjaman.view', ({ body }) => svc.hitungSk
   angsuran_bulanan: num(body, 'angsuran_bulanan', { min: 0 }),
 }));
 
+/**
+ * Rincian satu pembayaran angsuran / pelunasan untuk bukti cetak, termasuk
+ * sisa pokok sesudah pembayaran tersebut. Diekspor untuk portal anggota.
+ */
+export function detailAngsuran(id) {
+  const a = get(
+    `SELECT s.*, p.nomor AS nomor_pinjaman, p.anggota_id, p.pokok, p.tenor, p.bunga_tahunan, p.metode_bunga,
+            p.tanggal_cair, p.status AS status_pinjaman, an.nama AS anggota_nama, an.nomor_anggota,
+            an.alamat AS anggota_alamat, pr.nama AS produk_nama, u.nama AS petugas_nama, j.nomor AS jurnal_nomor,
+            (SELECT jatuh_tempo FROM pinjaman_jadwal WHERE pinjaman_id = s.pinjaman_id
+                AND angsuran_ke = s.angsuran_ke) AS jatuh_tempo
+       FROM pinjaman_angsuran s
+       JOIN pinjaman p ON p.id = s.pinjaman_id
+       JOIN anggota an ON an.id = p.anggota_id
+       JOIN produk_pinjaman pr ON pr.id = p.produk_id
+       LEFT JOIN users u ON u.username = s.petugas
+       LEFT JOIN jurnal j ON j.id = s.jurnal_id
+      WHERE s.id = ?`, [id]);
+  if (!a) throw notFound('Data pembayaran angsuran tidak ditemukan');
+  const dibayarPokok = scalar(
+    "SELECT COALESCE(SUM(bayar_pokok),0) FROM pinjaman_angsuran WHERE pinjaman_id = ? AND id <= ? AND status <> 'batal'",
+    [a.pinjaman_id, id]);
+  return {
+    ...a,
+    sisa_pokok: Math.max(0, a.pokok - dibayarPokok),
+    angsuran_lunas: scalar(
+      "SELECT COUNT(*) FROM pinjaman_jadwal WHERE pinjaman_id = ? AND status = 'lunas'", [a.pinjaman_id]),
+    terbilang: terbilang(a.total_bayar),
+  };
+}
+
+/** Rincian pembayaran angsuran (bukti angsuran / pelunasan). */
+router.get('/api/pinjaman/angsuran/:id', 'pinjaman.view', ({ params }) => detailAngsuran(idParam(params)));
+
 router.get('/api/pinjaman/:id', 'pinjaman.view', ({ params }) => {
   const id = idParam(params);
   const p = get(
     `SELECT p.*, a.nama AS anggota_nama, a.nomor_anggota, a.nik, a.telepon, a.alamat, a.penghasilan,
-            pr.nama AS produk_nama, pr.denda_harian, pr.metode_bunga AS produk_metode
+            pr.nama AS produk_nama, pr.denda_harian, pr.metode_bunga AS produk_metode,
+            (SELECT nomor FROM pinjaman WHERE id = p.restruktur_dari) AS restruktur_dari_nomor
        FROM pinjaman p JOIN anggota a ON a.id = p.anggota_id
        JOIN produk_pinjaman pr ON pr.id = p.produk_id WHERE p.id = ?`, [id]);
   if (!p) throw notFound('Pinjaman tidak ditemukan');
   return {
     ...p,
+    // Untuk cetakan formulir pengajuan & bukti pencairan
+    terbilang_pokok: terbilang(p.pokok),
+    terbilang_cair: terbilang(p.pokok - p.biaya_admin - p.biaya_provisi),
     label_kolektibilitas: svc.LABEL_KOLEKTIBILITAS[p.kolektibilitas],
     jadwal: all('SELECT * FROM pinjaman_jadwal WHERE pinjaman_id = ? ORDER BY angsuran_ke', [id]),
     angsuran: all('SELECT * FROM pinjaman_angsuran WHERE pinjaman_id = ? ORDER BY tanggal DESC, id DESC', [id]),

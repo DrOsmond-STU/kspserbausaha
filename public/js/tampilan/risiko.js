@@ -6,6 +6,7 @@ import {
   pilih, bacaForm, toast, galat, memuat, kosongkan, desimal, konfirmasi,
 } from '../inti.js';
 import { izin } from '../app.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 const KATEGORI = ['kredit', 'likuiditas', 'operasional', 'kepatuhan', 'strategis', 'reputasi', 'teknologi'];
 const kelasLevel = (l) => ({ rendah: 'st-sukses', sedang: 'st-peringatan',
@@ -84,6 +85,7 @@ export async function render() {
         ], d.data, { saatKlik: (r) => lihat(r), kosongTeks: 'Belum ada risiko teridentifikasi' }), [
           izin('risiko.create') && el('button.btn.utama', { onclick: () => form(null, muat) },
             '+ Identifikasi Risiko'),
+          tombolCetak(() => dokRegister(m, d.data), { label: 'Cetak Risk Register' }),
         ].filter(Boolean)),
       );
     } catch (err) { galat(err); }
@@ -95,6 +97,7 @@ export async function render() {
 function lihat(r) {
   modal({
     judul: `${r.kode} — ${r.nama}`, lebar: 'lebar',
+    kaki: [el('button.btn.utama', { onclick: () => cetakDokumen(dokProfil(r)) }, 'Cetak Profil Risiko')],
     isi: el('dl.deskripsi', [
       el('dt', 'Kategori'), el('dd', judul(r.kategori)),
       el('dt', 'Deskripsi'), el('dd', r.deskripsi || '-'),
@@ -180,4 +183,56 @@ async function hapus(r, saatSelesai) {
     toast('Risiko dihapus', 'sukses');
     saatSelesai?.();
   } catch (err) { galat(err); }
+}
+
+// ------------------------------- Cetakan -------------------------------
+
+/** Risk register lengkap (inheren & residual) beserta ringkasan tingkat risiko. */
+function dokRegister(m, data) {
+  return {
+    judul: 'Risk Register (Profil Risiko)', jenis_ttd: 'laporan', orientasi: 'landscape',
+    ringkasan: [
+      { label: 'Risiko ekstrem', nilai: m.ringkasan.ekstrem, tipe: 'angka' },
+      { label: 'Risiko tinggi', nilai: m.ringkasan.tinggi, tipe: 'angka' },
+      { label: 'Risiko sedang', nilai: m.ringkasan.sedang, tipe: 'angka' },
+      { label: 'Risiko rendah', nilai: m.ringkasan.rendah, tipe: 'angka' },
+    ],
+    bagian: [{
+      kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Risiko' },
+        { kunci: 'kategori', label: 'Kategori' }, { kunci: 'ld', label: 'L x D' }, { kunci: 'inheren', label: 'Inheren' },
+        { kunci: 'kontrol', label: 'Pengendalian' }, { kunci: 'efektivitas', label: 'Efektivitas' },
+        { kunci: 'residual', label: 'Residual' }, { kunci: 'mitigasi', label: 'Rencana Mitigasi' }, { kunci: 'pic', label: 'PIC' }],
+      baris: data.map((r, i) => ({ ...r, no: i + 1, kategori: judul(r.kategori), ld: `${r.likelihood} x ${r.impact}`,
+        inheren: `${r.skor_inheren} (${judul(r.level_inheren)})`, residual: `${r.skor_residu} (${judul(r.level_residu)})`,
+        efektivitas: judul(r.efektivitas_kontrol || '-') })),
+    }],
+    catatan: 'Skor risiko = kemungkinan (likelihood) x dampak (impact); rendah 1-5, sedang 6-11, tinggi 12-19, ekstrem 20-25.',
+  };
+}
+
+/** Profil satu risiko. */
+function dokProfil(r) {
+  return {
+    judul: 'Profil Risiko', subjudul: r.nama, nomor: r.kode, jenis_ttd: 'laporan',
+    ringkasan: [
+      { label: 'Kategori', nilai: judul(r.kategori) },
+      { label: 'PIC', nilai: r.pic || '-' },
+      { label: 'Risiko inheren', nilai: `${r.likelihood} x ${r.impact} = ${r.skor_inheren} (${judul(r.level_inheren)})` },
+      { label: 'Risiko residual', nilai: `${r.likelihood_residu} x ${r.impact_residu} = ${r.skor_residu} (${judul(r.level_residu)})` },
+      { label: 'Efektivitas kontrol', nilai: judul(r.efektivitas_kontrol || '-') },
+      { label: 'Review terakhir', nilai: r.review_terakhir || '-', tipe: 'tanggal' },
+    ],
+    bagian: [{
+      kolom: [{ kunci: 'aspek', label: 'Aspek' }, { kunci: 'uraian', label: 'Uraian' }],
+      baris: [
+        { aspek: 'Deskripsi', uraian: r.deskripsi || '-' },
+        { aspek: 'Penyebab', uraian: r.penyebab || '-' },
+        { aspek: 'Dampak', uraian: r.dampak_deskripsi || '-' },
+        { aspek: 'Pengendalian', uraian: r.kontrol || '-' },
+        { aspek: 'Rencana mitigasi', uraian: r.mitigasi || '-' },
+        { aspek: 'Key Risk Indicator', uraian: r.kri_nama
+          ? `${r.kri_nama} — ambang ${desimal(r.kri_ambang)}, nilai terkini ${desimal(r.kri_nilai)}` : '-' },
+      ],
+    }],
+  };
 }

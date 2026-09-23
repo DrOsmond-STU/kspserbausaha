@@ -8,6 +8,7 @@ import {
 import { grafikCincin } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
+import { cetakDokumen, tombolCetak, tawaranCetak } from '../cetak.js';
 
 export async function render(param) {
   if (param[0]) return detail(Number(param[0]));
@@ -62,6 +63,7 @@ export async function render(param) {
     kosongTeks: 'Belum ada aset tetap terdaftar' }), [
     izin('aset.create') && el('button.btn.utama', { onclick: () => formAset() }, '+ Tambah Aset'),
     izin('aset.post') && el('button.btn', { onclick: () => formPenyusutan() }, 'Jalankan Penyusutan'),
+    tombolCetak(() => dokDaftarAset(d.data), { label: 'Cetak' }),
   ].filter(Boolean)));
 
   return wadah;
@@ -83,6 +85,8 @@ async function detail(id) {
     izin('aset.delete') && !dilepas && belumDisusutkan && el('button.btn.polos', {
       title: 'Hanya untuk aset salah input yang belum pernah disusutkan',
       onclick: (e) => hapusAset(e, a) }, 'Hapus'),
+    tombolCetak(() => dokKartuAset(a), { label: 'Cetak Kartu Aset' }),
+    dilepas && el('button.btn', { onclick: (e) => cetakPelepasan(e, a.id) }, 'Cetak Bukti Pelepasan'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [
@@ -125,6 +129,101 @@ async function detail(id) {
   ]));
 
   return wadah;
+}
+
+// ------------------------------- Cetak -------------------------------
+
+/** Kartu aset tetap beserta riwayat penyusutan & pemeliharaan (GET /api/aset/:id). */
+export function dokKartuAset(a) {
+  return {
+    judul: 'Kartu Aset Tetap', nomor: a.kode, subjudul: a.nama, jenis_ttd: 'aset',
+    ringkasan: [
+      { label: 'Kategori', nilai: judul(a.kategori || '-') },
+      { label: 'Tanggal perolehan', nilai: a.tanggal_perolehan, tipe: 'tanggal' },
+      { label: 'Harga perolehan', nilai: rp(a.harga_perolehan) },
+      { label: 'Nilai residu', nilai: rp(a.nilai_residu) },
+      { label: 'Umur manfaat', nilai: `${a.umur_manfaat} tahun` },
+      { label: 'Metode penyusutan', nilai: judul(a.metode) },
+      { label: 'Penyusutan / bulan', nilai: rp(a.penyusutan_per_bulan) },
+      { label: 'Akumulasi penyusutan', nilai: rp(a.akumulasi_penyusutan) },
+      { label: 'Nilai buku', nilai: rp(a.nilai_buku) },
+      { label: 'Akun aset / akumulasi / beban', nilai: `${a.coa_aset || '-'} / ${a.coa_akumulasi || '-'} / ${a.coa_beban || '-'}` },
+      { label: 'Lokasi', nilai: a.lokasi || '-' },
+      { label: 'Penanggung jawab', nilai: a.penanggung_jawab || '-' },
+      { label: 'Barcode', nilai: a.barcode || '-' },
+      { label: 'Status', nilai: judul(a.status) },
+      a.tanggal_disposal && { label: 'Tanggal pelepasan', nilai: a.tanggal_disposal, tipe: 'tanggal' },
+    ].filter(Boolean),
+    bagian: [
+      { judul: 'Riwayat Penyusutan', kolom: [
+        { kunci: 'periode', label: 'Periode' }, { kunci: 'nominal', label: 'Beban', tipe: 'uang' },
+        { kunci: 'akumulasi', label: 'Akumulasi', tipe: 'uang' }, { kunci: 'nilai_buku', label: 'Nilai Buku', tipe: 'uang' },
+      ], baris: [...(a.riwayat_penyusutan || [])].reverse(),
+      total: { nominal: (a.riwayat_penyusutan || []).reduce((s, p) => s + p.nominal, 0) } },
+      { judul: 'Riwayat Pemeliharaan', kolom: [
+        { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'jenis', label: 'Jenis' },
+        { kunci: 'vendor', label: 'Vendor' }, { kunci: 'keterangan', label: 'Keterangan' },
+        { kunci: 'biaya', label: 'Biaya', tipe: 'uang' }, { kunci: 'jadwal_berikutnya', label: 'Jadwal Berikutnya', tipe: 'tanggal' },
+      ], baris: a.maintenance || [], total: { biaya: (a.maintenance || []).reduce((s, m) => s + m.biaya, 0) } },
+    ],
+  };
+}
+
+/** Bukti pelepasan aset dari GET /api/aset/:id/pelepasan. */
+function dokPelepasan(p) {
+  const a = p.aset;
+  const laba = p.laba_rugi >= 0;
+  return {
+    judul: 'Bukti Pelepasan Aset Tetap', nomor: p.jurnal?.nomor || a.kode, jenis_ttd: 'aset',
+    ringkasan: [
+      { label: 'Kode aset', nilai: a.kode }, { label: 'Nama aset', nilai: a.nama },
+      { label: 'Kategori', nilai: judul(a.kategori || '-') },
+      { label: 'Tanggal pelepasan', nilai: a.tanggal_disposal, tipe: 'tanggal' },
+      { label: 'Tanggal perolehan', nilai: a.tanggal_perolehan, tipe: 'tanggal' },
+      { label: 'Lokasi', nilai: a.lokasi || '-' },
+    ],
+    bagian: [
+      { judul: 'Perhitungan Pelepasan', kolom: [{ kunci: 'uraian', label: 'Uraian' },
+        { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' }], baris: [
+        { uraian: 'Harga perolehan', jumlah: a.harga_perolehan },
+        { uraian: 'Akumulasi penyusutan', jumlah: a.akumulasi_penyusutan },
+        { uraian: 'Nilai buku saat dilepas', jumlah: p.nilai_buku },
+        { uraian: 'Hasil pelepasan (nilai jual)', jumlah: p.hasil },
+      ], total: { _label: laba ? 'Laba pelepasan' : 'Rugi pelepasan', jumlah: Math.abs(p.laba_rugi) } },
+      p.jurnal && { judul: `Jurnal ${p.jurnal.nomor}`, kolom: [
+        { kunci: 'coa_kode', label: 'Kode Akun' }, { kunci: 'akun_nama', label: 'Nama Akun' },
+        { kunci: 'debit', label: 'Debit', tipe: 'uang' }, { kunci: 'kredit', label: 'Kredit', tipe: 'uang' },
+      ], baris: p.jurnal.detail.map((d) => ({ ...d, debit: d.debit || null, kredit: d.kredit || null })) },
+    ].filter(Boolean),
+    terbilang: `Hasil pelepasan ${judul(p.terbilang)}`,
+    catatan: p.jurnal?.keterangan || undefined,
+  };
+}
+
+async function cetakPelepasan(e, id) {
+  const tombol = e.currentTarget;
+  tombol.disabled = true;
+  try { await cetakDokumen(dokPelepasan(await api.get(`/api/aset/${id}/pelepasan`))); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+}
+
+function dokDaftarAset(data) {
+  const jml = (k) => data.reduce((s, a) => s + (Number(a[k]) || 0), 0);
+  return {
+    judul: 'Daftar Aset Tetap', subjudul: `Per ${tgl(hariIni(), true)}`, jenis_ttd: 'aset', orientasi: 'landscape',
+    bagian: [{
+      kolom: [
+        { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Nama Aset' }, { kunci: 'kategori', label: 'Kategori' },
+        { kunci: 'tanggal_perolehan', label: 'Perolehan', tipe: 'tanggal' },
+        { kunci: 'harga_perolehan', label: 'Harga Perolehan', tipe: 'uang' },
+        { kunci: 'penyusutan_per_bulan', label: 'Penyusutan/bln', tipe: 'uang' },
+        { kunci: 'akumulasi_penyusutan', label: 'Akumulasi', tipe: 'uang' },
+        { kunci: 'nilai_buku', label: 'Nilai Buku', tipe: 'uang' }, { kunci: 'status', label: 'Status' },
+      ],
+      baris: data.map((a) => ({ ...a, kategori: judul(a.kategori || '-'), status: judul(a.status) })),
+      total: { harga_perolehan: jml('harga_perolehan'), akumulasi_penyusutan: jml('akumulasi_penyusutan'),
+        nilai_buku: jml('nilai_buku') },
+    }],
+  };
 }
 
 // ------------------------------ Pembantu ------------------------------
@@ -402,7 +501,13 @@ async function formDisposal(a) {
           const h = await api.post(`/api/aset/${a.id}/disposal`, bacaTerlihat(form));
           toast('Aset berhasil dilepas', 'sukses',
             `${h.laba_rugi >= 0 ? 'Laba' : 'Rugi'} pelepasan ${rp(Math.abs(h.laba_rugi))}`);
-          tutup(); navigasi(location.hash, true);
+          tutup(); await navigasi(location.hash, true);
+          tawaranCetak('Aset Berhasil Dilepas', el('dl.deskripsi', [
+            el('dt', 'Nilai buku'), el('dd', rp(h.nilai_buku)),
+            el('dt', 'Hasil pelepasan'), el('dd', rp(h.hasil)),
+            el('dt', h.laba_rugi >= 0 ? 'Laba' : 'Rugi'), el('dd', el('strong', rp(Math.abs(h.laba_rugi)))),
+            el('dt', 'Jurnal'), el('dd', el('span.mono', h.jurnal?.nomor || '-')),
+          ]), async () => dokPelepasan(await api.get(`/api/aset/${a.id}/pelepasan`)));
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Proses Pelepasan'),
     ],

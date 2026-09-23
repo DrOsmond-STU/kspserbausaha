@@ -6,6 +6,133 @@ import {
   kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, persen,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
+import { cetakDokumen, tombolCetak, tawaranCetak, tandaAir } from '../cetak.js';
+
+// ---------------------------- Cetak bukti ----------------------------
+
+const KOLOM_URAIAN = [{ kunci: 'uraian', label: 'Uraian' }, { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' }];
+
+/** Bukti pesanan pembelian (PO/PR) dari GET /api/pembelian/:id. */
+export function dokPO(p) {
+  const batal = p.status === 'batal';
+  return {
+    judul: p.tipe === 'pr' ? 'Permintaan Pembelian' : 'Pesanan Pembelian (Purchase Order)',
+    nomor: p.nomor, jenis_ttd: 'pesanan_pembelian',
+    ringkasan: [
+      { label: 'Tanggal', nilai: p.tanggal, tipe: 'tanggal' },
+      { label: 'Pemasok', nilai: p.supplier_nama || '-' },
+      { label: 'Gudang penerima', nilai: p.gudang_nama || '-' },
+      { label: 'Jatuh tempo', nilai: p.jatuh_tempo, tipe: 'tanggal' },
+      { label: 'Status', nilai: batal ? 'BATAL' : judul(p.status) },
+      { label: 'Dibuat oleh', nilai: p.dibuat_oleh || '-' },
+    ],
+    isi: batal ? tandaAir('BATAL') : undefined,
+    bagian: [
+      { judul: 'Rincian Barang', kolom: [
+        { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' },
+        { kunci: 'qty', label: 'Qty', tipe: 'angka' }, { kunci: 'satuan', label: 'Satuan' },
+        { kunci: 'harga', label: 'Harga', tipe: 'uang' }, { kunci: 'diskon', label: 'Diskon', tipe: 'uang' },
+        { kunci: 'subtotal', label: 'Subtotal', tipe: 'uang' },
+      ], baris: p.detail.map((d) => ({ ...d, diskon: d.diskon || null })),
+      total: { subtotal: p.detail.reduce((s, d) => s + d.subtotal, 0) } },
+      { kolom: KOLOM_URAIAN, baris: [
+        { uraian: 'Subtotal', jumlah: p.subtotal },
+        { uraian: 'Diskon', jumlah: p.diskon },
+        { uraian: 'Pajak (PPN)', jumlah: p.pajak },
+      ], total: { _label: 'TOTAL', jumlah: p.total } },
+    ],
+    terbilang: judul(p.terbilang),
+    catatan: batal ? `Dibatalkan: ${p.alasan_batal || '-'}` : undefined,
+    penanda_tambahan: p.supplier_nama ? { Pemasok: p.supplier_nama } : {},
+  };
+}
+
+/** Bukti penerimaan barang untuk satu proses penerimaan (GET /api/pembelian/:id/penerimaan). */
+export function dokPenerimaan(pb, t) {
+  return {
+    judul: 'Bukti Penerimaan Barang', nomor: t.jurnal?.nomor || `${pb.nomor}/${t.urut}`,
+    jenis_ttd: 'penerimaan_barang',
+    ringkasan: [
+      { label: 'Tanggal terima', nilai: t.tanggal, tipe: 'tanggal' },
+      { label: 'Nomor pesanan', nilai: pb.nomor },
+      { label: 'Pemasok', nilai: pb.supplier_nama || '-' },
+      { label: 'Gudang penerima', nilai: pb.gudang_nama || '-' },
+      { label: 'Penerimaan ke', nilai: String(t.urut) },
+      { label: 'Jurnal', nilai: t.jurnal?.nomor || '-' },
+    ],
+    bagian: [{ kolom: [
+      { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' },
+      { kunci: 'qty_pesan', label: 'Dipesan', tipe: 'angka' }, { kunci: 'qty', label: 'Diterima', tipe: 'angka' },
+      { kunci: 'satuan', label: 'Satuan' }, { kunci: 'harga', label: 'Harga Netto', tipe: 'uang' },
+      { kunci: 'nilai', label: 'Nilai', tipe: 'uang' }, { kunci: 'batch', label: 'Batch / Exp' },
+    ], baris: t.items.map((i) => ({ ...i, batch: [i.batch, i.expired].filter(Boolean).join(' / ') })),
+    total: { nilai: t.nilai } }],
+    catatan: 'Barang telah diterima dalam keadaan baik dan jumlah sesuai kolom "Diterima".',
+    penanda_tambahan: pb.supplier_nama ? { 'Diserahkan oleh': pb.supplier_nama } : {},
+  };
+}
+
+/** Bukti pembayaran utang / penerimaan piutang untuk satu jurnal pembayaran (GET /api/hutang-piutang/:id). */
+export function dokPembayaran(h, bayar) {
+  const hutang = h.jenis === 'hutang';
+  const batal = bayar.status === 'void';
+  const pihak = h.pihak_nama || '-';
+  return {
+    judul: hutang ? 'Bukti Pembayaran Utang' : 'Bukti Penerimaan Piutang', nomor: bayar.nomor,
+    jenis_ttd: 'pembayaran_hutang',
+    ringkasan: [
+      { label: 'Tanggal', nilai: bayar.tanggal, tipe: 'tanggal' },
+      { label: hutang ? 'Dibayarkan kepada' : 'Diterima dari', nilai: pihak },
+      { label: 'Dokumen sumber', nilai: h.sumber ? `${h.sumber.nomor} (${tgl(h.sumber.tanggal)})` : h.referensi },
+      { label: 'Nilai tagihan', nilai: rp(h.nominal) },
+      { label: 'Jumlah dibayar', nilai: rp(bayar.nominal) },
+      { label: 'Sisa tagihan saat ini', nilai: rp(h.sisa) },
+      { label: 'Status', nilai: batal ? 'BATAL' : (h.status === 'lunas' ? 'Lunas' : 'Terbuka') },
+      { label: 'Keterangan', nilai: bayar.keterangan || '-' },
+    ],
+    isi: batal ? tandaAir('BATAL') : undefined,
+    bagian: [{ judul: 'Jurnal Pembayaran', kolom: [
+      { kunci: 'coa_kode', label: 'Kode Akun' }, { kunci: 'akun_nama', label: 'Nama Akun' },
+      { kunci: 'debit', label: 'Debit', tipe: 'uang' }, { kunci: 'kredit', label: 'Kredit', tipe: 'uang' },
+    ], baris: bayar.akun.map((a) => ({ ...a, debit: a.debit || null, kredit: a.kredit || null })),
+    total: { debit: bayar.nominal, kredit: bayar.nominal } }],
+    terbilang: judul(bayar.terbilang),
+    penanda_tambahan: h.pihak_nama ? { Penerima: h.pihak_nama, Penyetor: h.pihak_nama } : {},
+  };
+}
+
+async function cetakDenganTombol(e, ambil) {
+  const tombol = e.currentTarget;
+  tombol.disabled = true;
+  try { await cetakDokumen(await ambil()); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+}
+
+/** Riwayat pembayaran sebuah tagihan dengan tombol cetak bukti per pembayaran. */
+async function riwayatBayar(id) {
+  let h;
+  try { h = await api.get(`/api/hutang-piutang/${id}`); } catch (err) { galat(err); return; }
+  const tutup = modal({
+    judul: `Riwayat ${h.jenis === 'hutang' ? 'Pembayaran Utang' : 'Penerimaan Piutang'} — ${h.sumber?.nomor || h.referensi}`,
+    lebar: 'lebar',
+    isi: el('div', [
+      el('dl.deskripsi.mb16', [
+        el('dt', 'Pihak'), el('dd', h.pihak_nama || '-'),
+        el('dt', 'Nilai tagihan'), el('dd', rp(h.nominal)),
+        el('dt', 'Terbayar'), el('dd', rp(h.terbayar)),
+        el('dt', 'Sisa'), el('dd', el('strong', rp(h.sisa))),
+      ]),
+      el('div.tabel-bungkus', [tabel([
+        { judul: 'Tanggal', render: (b) => tgl(b.tanggal) },
+        { judul: 'Nomor', render: (b) => el('span.mono.kecil', b.nomor) },
+        { judul: 'Nominal', angka: true, render: (b) => rp(b.nominal) },
+        { judul: 'Status', render: (b) => status(b.status) },
+        { judul: '', render: (b) => el('button.btn.kecil', {
+          onclick: (e) => cetakDenganTombol(e, () => dokPembayaran(h, b)) }, 'Cetak Bukti') },
+      ], h.pembayaran, { kosongTeks: 'Belum ada pembayaran' })]),
+    ]),
+    kaki: [el('button.btn.utama', { onclick: () => tutup() }, 'Tutup')],
+  });
+}
 
 /** Status dokumen pembelian yang masih boleh diubah/dibatalkan (belum ada penerimaan). */
 const STATUS_TERBUKA = ['draft', 'diajukan', 'disetujui'];
@@ -84,6 +211,10 @@ async function dokumenTab() {
         { judul: 'Terbayar', angka: true, render: (p) => rp(p.terbayar) },
         { judul: 'Status', render: (p) => el('div', [status(p.status),
           p.status === 'batal' && p.alasan_batal && el('div.kecil.samar', p.alasan_batal)]) },
+        { judul: '', render: (p) => el('button.btn.kecil.polos', {
+          title: 'Cetak bukti pesanan pembelian',
+          onclick: (e) => { e.stopPropagation(); cetakDenganTombol(e, async () => dokPO(await api.get(`/api/pembelian/${p.id}`))); },
+        }, 'Cetak') },
       ], d.data, { saatKlik: (p) => { location.hash = `#/pembelian/${p.id}`; },
         kosongTeks: 'Belum ada dokumen pembelian' }), [
         pilih('f', ['', 'draft', 'diajukan', 'disetujui', 'diterima', 'selesai', 'batal']
@@ -99,7 +230,10 @@ async function dokumenTab() {
 }
 
 async function detail(id) {
-  const p = await api.get(`/api/pembelian/${id}`);
+  const [p, riwayat] = await Promise.all([
+    api.get(`/api/pembelian/${id}`),
+    api.get(`/api/pembelian/${id}/penerimaan`).catch(() => ({ penerimaan: [] })),
+  ]);
   const wadah = el('div');
 
   wadah.append(el('div.gap8.mb16', [
@@ -110,7 +244,7 @@ async function detail(id) {
       && el('button.btn', { onclick: () => formPO(() => navigasi(location.hash, true), p) }, 'Ubah'),
     izin('pembelian.update') && bisaDiubah(p)
       && el('button.btn.bahaya', { onclick: () => formBatal(p) }, 'Batalkan'),
-    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
+    tombolCetak(() => dokPO(p), { label: p.tipe === 'pr' ? 'Cetak PR' : 'Cetak PO' }),
   ].filter(Boolean)));
 
   if (p.status === 'batal') {
@@ -149,6 +283,18 @@ async function detail(id) {
   ], p.detail, {
     kaki: { nama: 'TOTAL', subtotal: rp(p.total) },
   })));
+
+  if (riwayat.penerimaan.length) {
+    wadah.append(panelTabel('Riwayat Penerimaan Barang', tabel([
+      { judul: 'Ke', render: (t) => t.urut },
+      { judul: 'Tanggal', render: (t) => tgl(t.tanggal) },
+      { judul: 'Jurnal', render: (t) => el('span.mono.kecil', t.jurnal?.nomor || '-') },
+      { judul: 'Barang', render: (t) => el('span.kecil', t.items.map((i) => `${i.nama} ${desimal(i.qty)} ${i.satuan}`).join(', ')) },
+      { judul: 'Nilai', angka: true, render: (t) => rp(t.nilai) },
+      { judul: '', render: (t) => el('button.btn.kecil', {
+        onclick: (e) => cetakDenganTombol(e, () => dokPenerimaan(riwayat.pembelian, t)) }, 'Cetak Bukti') },
+    ], riwayat.penerimaan)));
+  }
 
   return wadah;
 }
@@ -229,7 +375,11 @@ async function formPO(saatSelesai, dok = null) {
             : await api.post('/api/pembelian', { ...isian, tipe: 'po' });
           toast(dok ? 'Dokumen pembelian diperbarui' : 'Purchase Order dibuat', 'sukses',
             `${h.nomor} · ${rp(h.total)}`);
-          tutup(); saatSelesai?.();
+          tutup(); await saatSelesai?.();
+          tawaranCetak(dok ? 'Dokumen Pembelian Diperbarui' : 'Purchase Order Dibuat', el('dl.deskripsi', [
+            el('dt', 'Nomor'), el('dd', el('span.mono', h.nomor)),
+            el('dt', 'Total'), el('dd', el('strong', rp(h.total))),
+          ]), async () => dokPO(await api.get(`/api/pembelian/${h.id}`)), { label: 'Cetak PO' });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, dok ? 'Simpan Perubahan' : 'Simpan PO'),
     ],
@@ -268,7 +418,16 @@ async function formTerima(p) {
           const h = await api.post(`/api/pembelian/${p.id}/terima`, {
             ...d, bank_account_id: d.metode_bayar === 'transfer' ? d.bank_account_id || null : null });
           toast('Barang diterima', 'sukses', `Nilai ${rp(h.total)} · jurnal ${h.jurnal.nomor}`);
-          tutup(); navigasi(location.hash, true);
+          tutup(); await navigasi(location.hash, true);
+          tawaranCetak('Barang Diterima', el('dl.deskripsi', [
+            el('dt', 'Nilai'), el('dd', el('strong', rp(h.total))),
+            el('dt', 'Jurnal'), el('dd', el('span.mono', h.jurnal.nomor)),
+          ]), async () => {
+            const r = await api.get(`/api/pembelian/${p.id}/penerimaan`);
+            const t = r.penerimaan.find((x) => x.jurnal?.id === h.jurnal.id) || r.penerimaan.at(-1);
+            if (!t) throw new Error('Data penerimaan tidak ditemukan');
+            return dokPenerimaan(r.pembelian, t);
+          }, { label: 'Cetak Bukti Penerimaan' });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Terima Barang'),
     ],
@@ -300,8 +459,12 @@ export async function hutangTab(jenis) {
           { judul: 'Nominal', angka: true, render: (h) => rp(h.nominal) },
           { judul: 'Sisa', angka: true, render: (h) => el('strong', rp(h.sisa)) },
           { judul: 'Status', render: (h) => status(h.status) },
-          { judul: '', render: (h) => (h.status === 'terbuka' && izin('kas.create')
-            ? el('button.btn.kecil.utama', { onclick: () => formBayar(h, muat) }, 'Bayar') : '') },
+          { judul: '', render: (h) => el('div.gap8', [
+            h.status === 'terbuka' && izin('kas.create')
+              && el('button.btn.kecil.utama', { onclick: () => formBayar(h, muat) }, 'Bayar'),
+            h.terbayar > 0 && el('button.btn.kecil', { title: 'Riwayat & cetak bukti pembayaran',
+              onclick: () => riwayatBayar(h.id) }, 'Bukti'),
+          ].filter(Boolean)) },
         ], d.data, { kosongTeks: `Tidak ada ${jenis} tercatat` })),
       );
     } catch (err) { galat(err); }
@@ -343,7 +506,16 @@ async function formBayar(h, saatSelesai) {
             ...d, id: h.id, bank_account_id: d.metode === 'transfer' ? d.bank_account_id || null : null });
           toast('Pembayaran tercatat', 'sukses',
             `Sisa ${rp(r.sisa)}${r.jurnal?.nomor ? ` · jurnal ${r.jurnal.nomor}` : ''}`);
-          tutup(); saatSelesai?.();
+          tutup(); await saatSelesai?.();
+          tawaranCetak('Pembayaran Tercatat', el('dl.deskripsi', [
+            el('dt', 'Nomor'), el('dd', el('span.mono', r.jurnal?.nomor || '-')),
+            el('dt', 'Sisa tagihan'), el('dd', el('strong', rp(r.sisa))),
+          ]), async () => {
+            const hp = await api.get(`/api/hutang-piutang/${h.id}`);
+            const b = hp.pembayaran.find((x) => x.id === r.jurnal?.id) || hp.pembayaran.at(-1);
+            if (!b) throw new Error('Data pembayaran tidak ditemukan');
+            return dokPembayaran(hp, b);
+          });
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Bayar'),
     ],

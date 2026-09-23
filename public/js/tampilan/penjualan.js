@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 import { hutangTab, daftarRekeningBank, kolomRekeningBank } from './pembelian.js';
+import { cetakDokumen, tombolCetak, tandaAir } from '../cetak.js';
 
 export async function render() {
   const wadah = el('div');
@@ -28,6 +29,103 @@ export async function render() {
   wadah.append(el('div.panel', [bilah]), isi);
   isi.append(await daftarTab[0].render());
   return wadah;
+}
+
+// ---------------------------- Cetak bukti ----------------------------
+
+const pembeli = (p) => (p.anggota_nama ? `${p.anggota_nama}${p.nomor_anggota ? ` (${p.nomor_anggota})` : ''}`
+  : p.customer_nama || 'Umum');
+const KOLOM_URAIAN = [{ kunci: 'uraian', label: 'Uraian' }, { kunci: 'jumlah', label: 'Jumlah (Rp)', tipe: 'uang' }];
+
+/** Faktur / nota penjualan dari GET /api/penjualan/:id. */
+export function dokFaktur(p) {
+  const batal = p.status === 'batal';
+  const adaRetur = p.detail.some((d) => d.qty_retur > 0);
+  return {
+    judul: p.tipe === 'pos' ? 'Nota Penjualan' : 'Faktur Penjualan', nomor: p.nomor, jenis_ttd: 'faktur_penjualan',
+    ringkasan: [
+      { label: 'Tanggal', nilai: p.tanggal, tipe: 'tanggal' },
+      { label: 'Pembeli', nilai: pembeli(p) },
+      { label: 'Metode bayar', nilai: judul(p.metode_bayar) },
+      { label: 'Gudang', nilai: p.gudang_nama || '-' },
+      { label: 'Kasir', nilai: p.kasir || '-' },
+      { label: 'Status', nilai: batal ? 'BATAL' : judul(p.status) },
+    ],
+    isi: batal ? tandaAir('BATAL') : undefined,
+    bagian: [
+      { judul: 'Rincian Barang', kolom: [
+        { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' },
+        { kunci: 'qty', label: 'Qty', tipe: 'angka' }, { kunci: 'satuan', label: 'Satuan' },
+        { kunci: 'harga', label: 'Harga', tipe: 'uang' }, { kunci: 'diskon', label: 'Diskon', tipe: 'uang' },
+        { kunci: 'subtotal', label: 'Subtotal', tipe: 'uang' },
+      ], baris: p.detail.map((d) => ({ ...d, diskon: d.diskon || null })),
+      total: { subtotal: p.detail.reduce((s, d) => s + d.subtotal, 0) } },
+      { kolom: KOLOM_URAIAN, baris: [
+        { uraian: 'Subtotal', jumlah: p.subtotal },
+        { uraian: 'Diskon', jumlah: p.diskon },
+        { uraian: 'Pajak (PPN)', jumlah: p.pajak },
+        { uraian: 'TOTAL', jumlah: p.total },
+        { uraian: 'Dibayar', jumlah: p.bayar },
+      ], total: { _label: 'Kembali', jumlah: p.kembali } },
+    ],
+    terbilang: judul(p.terbilang),
+    catatan: adaRetur ? `Sebagian barang telah diretur: ${p.detail.filter((d) => d.qty_retur > 0)
+      .map((d) => `${d.nama} ${desimal(d.qty_retur)} ${d.satuan}`).join(', ')}.` : undefined,
+    penanda_tambahan: p.anggota_nama || p.customer_nama ? { Pembeli: p.anggota_nama || p.customer_nama,
+      Pelanggan: p.anggota_nama || p.customer_nama } : {},
+  };
+}
+
+/** Bukti retur penjualan untuk satu proses retur (GET /api/penjualan/:id/retur). */
+export function dokRetur(p, r) {
+  return {
+    judul: 'Bukti Retur Penjualan', nomor: r.jurnal?.nomor || `${p.nomor}/R${r.urut}`, jenis_ttd: 'retur_penjualan',
+    ringkasan: [
+      { label: 'Tanggal retur', nilai: r.tanggal, tipe: 'tanggal' },
+      { label: 'Nomor transaksi', nilai: p.nomor },
+      { label: 'Tanggal transaksi', nilai: p.tanggal, tipe: 'tanggal' },
+      { label: 'Pembeli', nilai: pembeli(p) },
+      { label: 'Metode bayar semula', nilai: judul(p.metode_bayar) },
+      { label: 'Jurnal retur', nilai: r.jurnal?.nomor || '-' },
+    ],
+    bagian: [
+      { judul: 'Barang Diretur', kolom: [
+        { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' },
+        { kunci: 'qty', label: 'Qty', tipe: 'angka' }, { kunci: 'satuan', label: 'Satuan' },
+        { kunci: 'harga', label: 'Harga Netto', tipe: 'uang' }, { kunci: 'nilai', label: 'Nilai', tipe: 'uang' },
+      ], baris: r.items, total: { nilai: r.nilai_item } },
+      { kolom: KOLOM_URAIAN, baris: [{ uraian: 'Nilai barang diretur', jumlah: r.nilai_item }],
+        total: { _label: 'Nilai retur (termasuk koreksi diskon nota & PPN)', jumlah: r.nilai_retur } },
+    ],
+    terbilang: judul(r.terbilang),
+    catatan: `Pengembalian dana: ${INFO_REFUND[p.metode_bayar] || 'mengikuti metode bayar semula.'}`,
+    penanda_tambahan: p.anggota_nama || p.customer_nama ? { Pembeli: p.anggota_nama || p.customer_nama } : {},
+  };
+}
+
+async function cetakDenganTombol(e, ambil) {
+  const tombol = e.currentTarget;
+  tombol.disabled = true;
+  try { await cetakDokumen(await ambil()); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+}
+
+/** Daftar proses retur sebuah transaksi dengan tombol cetak bukti per retur. */
+async function riwayatRetur(p) {
+  let d;
+  try { d = await api.get(`/api/penjualan/${p.id}/retur`); } catch (err) { galat(err); return; }
+  const tutup = modal({
+    judul: `Retur ${p.nomor}`, lebar: 'lebar',
+    isi: el('div.tabel-bungkus', [tabel([
+      { judul: 'Ke', render: (r) => r.urut },
+      { judul: 'Tanggal', render: (r) => tgl(r.tanggal) },
+      { judul: 'Jurnal', render: (r) => el('span.mono.kecil', r.jurnal?.nomor || '-') },
+      { judul: 'Barang', render: (r) => el('span.kecil', r.items.map((i) => `${i.nama} ${desimal(i.qty)}`).join(', ')) },
+      { judul: 'Nilai Retur', angka: true, render: (r) => rp(r.nilai_retur) },
+      { judul: '', render: (r) => el('button.btn.kecil', {
+        onclick: (e) => cetakDenganTombol(e, () => dokRetur(p, r)) }, 'Cetak Bukti') },
+    ], d.retur, { kosongTeks: 'Belum ada retur' })]),
+    kaki: [el('button.btn.utama', { onclick: () => tutup() }, 'Tutup')],
+  });
 }
 
 async function transaksiTab() {
@@ -56,11 +154,29 @@ async function transaksiTab() {
           { judul: 'Total', angka: true, render: (p) => el('strong', rp(p.total)) },
           { judul: 'Laba Kotor', angka: true, render: (p) => el('span.pos', rp(p.total - p.hpp)) },
           { judul: 'Status', render: (p) => status(p.status) },
+          { judul: '', render: (p) => el('button.btn.kecil.polos', {
+            title: 'Cetak faktur / nota',
+            onclick: (e) => { e.stopPropagation(); cetakDenganTombol(e, async () => dokFaktur(await api.get(`/api/penjualan/${p.id}`))); },
+          }, 'Cetak') },
         ], d.data, { saatKlik: (p) => lihat(p.id), kosongTeks: 'Belum ada transaksi pada periode ini' }), [
           el('input', { type: 'search', placeholder: 'Cari nomor transaksi…',
             oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
           el('input', { type: 'date', nilai: dari, onchange: (e) => { dari = e.target.value; muat(); } }),
           el('input', { type: 'date', nilai: sampai, onchange: (e) => { sampai = e.target.value; muat(); } }),
+          tombolCetak(() => ({
+            judul: 'Daftar Transaksi Penjualan', subjudul: `Periode ${tgl(dari, true)} s.d. ${tgl(sampai, true)}`,
+            jenis_ttd: 'laporan', orientasi: 'landscape',
+            ringkasan: [{ label: 'Jumlah transaksi', nilai: angka(d.total) }, { label: 'Omzet periode', nilai: rp(d.omzet) }],
+            bagian: [{ kolom: [
+              { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'nomor', label: 'Nomor' },
+              { kunci: 'tipe', label: 'Tipe' }, { kunci: 'pembeli', label: 'Pembeli' }, { kunci: 'metode', label: 'Metode' },
+              { kunci: 'total', label: 'Total', tipe: 'uang' }, { kunci: 'laba', label: 'Laba Kotor', tipe: 'uang' },
+              { kunci: 'status', label: 'Status' },
+            ], baris: d.data.map((p) => ({ ...p, tipe: p.tipe.toUpperCase(), pembeli: pembeli(p),
+              metode: judul(p.metode_bayar), laba: p.total - p.hpp, status: judul(p.status) })),
+            total: { total: d.data.reduce((s, p) => s + p.total, 0), laba: d.data.reduce((s, p) => s + p.total - p.hpp, 0) } }],
+            catatan: d.total > d.data.length ? `Menampilkan ${d.data.length} dari ${d.total} transaksi.` : undefined,
+          }), { label: 'Cetak' }),
         ]),
       );
     } catch (err) { galat(err); }
@@ -109,6 +225,9 @@ async function lihat(id) {
     kaki: [
       izin('pos.update') && p.status === 'selesai' && el('button.btn.bahaya', {
         onclick: () => { tutup(); formRetur(p).catch(galat); } }, '↩ Retur'),
+      p.detail.some((d) => d.qty_retur > 0) && el('button.btn', {
+        onclick: () => { tutup(); riwayatRetur(p); } }, 'Bukti Retur'),
+      tombolCetak(() => dokFaktur(p), { label: p.tipe === 'pos' ? 'Cetak Nota' : 'Cetak Faktur' }),
       el('button.btn.utama', { onclick: () => tutup() }, 'Tutup'),
     ].filter(Boolean),
   });
@@ -226,6 +345,15 @@ function tampilkanHasilRetur(p, h) {
         el('div.kecil', INFO_REFUND[p.metode_bayar] || 'Mengikuti metode bayar semula.'),
       ])]),
     ]),
-    kaki: [el('button.btn.utama', { onclick: () => tutup() }, 'Tutup')],
+    kaki: [
+      el('button.btn', { onclick: (e) => cetakDenganTombol(e, async () => {
+        const d = await api.get(`/api/penjualan/${p.id}/retur`);
+        const r = d.retur.find((x) => x.jurnal?.id === h.jurnal?.id) || d.retur.at(-1);
+        if (!r) throw new Error('Data retur tidak ditemukan');
+        return dokRetur({ ...p, ...d.penjualan, anggota_nama: p.anggota_nama, nomor_anggota: p.nomor_anggota,
+          customer_nama: p.customer_nama }, r);
+      }) }, 'Cetak Bukti Retur'),
+      el('button.btn.utama', { onclick: () => tutup() }, 'Tutup'),
+    ],
   });
 }

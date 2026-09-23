@@ -5,22 +5,56 @@ import {
   api, el, kpi, panel, panelTabel, tabel, rp, angka, persen, judul, memuat, kosongkan, galat, tgl,
 } from '../inti.js';
 import { grafikPeringkat, SERI } from '../grafik.js';
+import { tombolCetak } from '../cetak.js';
+
+/** Laporan kinerja unit usaha dari GET /api/unit-usaha/kinerja. */
+function dokKinerja(d, tahun) {
+  return {
+    judul: 'Laporan Kinerja Unit Usaha', subjudul: `Tahun buku ${tahun}`, jenis_ttd: 'laporan', orientasi: 'landscape',
+    keterangan: [`Periode ${tgl(d.periode.dari, true)} s.d. ${tgl(d.periode.sampai, true)}`],
+    ringkasan: [
+      { label: 'Pendapatan konsolidasi', nilai: rp(d.konsolidasi.pendapatan) },
+      { label: 'Beban konsolidasi', nilai: rp(d.konsolidasi.beban) },
+      { label: 'SHU konsolidasi', nilai: rp(d.konsolidasi.shu) },
+      { label: 'Tanpa penandaan unit', nilai: `Pendapatan ${rp(d.tanpa_unit.pendapatan)} · SHU ${rp(d.tanpa_unit.shu)}` },
+    ],
+    bagian: [{
+      kolom: [
+        { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Unit Usaha' }, { kunci: 'jenis', label: 'Jenis' },
+        { kunci: 'pendapatan', label: 'Pendapatan', tipe: 'uang' }, { kunci: 'hpp', label: 'HPP', tipe: 'uang' },
+        { kunci: 'laba_kotor', label: 'Laba Kotor', tipe: 'uang' }, { kunci: 'beban', label: 'Beban', tipe: 'uang' },
+        { kunci: 'shu', label: 'SHU', tipe: 'uang' }, { kunci: 'margin', label: 'Margin', tipe: 'persen' },
+      ],
+      baris: d.per_unit.map((u) => ({ ...u, jenis: judul(u.jenis) })),
+      total: { _label: 'KONSOLIDASI', pendapatan: d.konsolidasi.pendapatan, beban: d.konsolidasi.beban,
+        shu: d.konsolidasi.shu },
+    }],
+    catatan: 'Transaksi yang tidak ditandai unit tertentu tidak termasuk dalam baris per unit.',
+  };
+}
 
 export async function render() {
   const wadah = el('div');
   let tahun = new Date().getFullYear();
   const isi = el('div');
 
+  let data = null;
   wadah.append(el('div.alat', [
     el('label.kecil.lembut', 'Tahun buku'),
     el('input', { type: 'number', nilai: tahun, gaya: { width: '110px' },
       onchange: (e) => { tahun = Number(e.target.value); muat(); } }),
+    tombolCetak(() => {
+      if (!data) throw new Error('Data kinerja belum dimuat');
+      return dokKinerja(data, tahun);
+    }),
   ]), isi);
 
   async function muat() {
     kosongkan(isi).append(memuat());
     try {
+      data = null;
       const d = await api.get('/api/unit-usaha/kinerja', { tahun });
+      data = d;
       kosongkan(isi).append(
         el('div.grid.k3.mb16', [
           kpi('Pendapatan Konsolidasi', rp(d.konsolidasi.pendapatan)),

@@ -6,6 +6,7 @@ import {
   pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, kosong, konfirmasi,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
+import { cetakDokumen, tombolCetak, tawaranCetak, tandaAir } from '../cetak.js';
 
 export async function render(param) {
   if (param[0]) return detailJurnal(Number(param[0]));
@@ -56,6 +57,10 @@ async function jurnalTab() {
         { judul: 'Debit', angka: true, render: (j) => rp(j.total_debit) },
         { judul: 'Kredit', angka: true, render: (j) => rp(j.total_kredit) },
         { judul: 'Status', render: (j) => status(j.status) },
+        { judul: '', render: (j) => el('button.btn.kecil.polos', {
+          title: 'Cetak bukti jurnal memorial',
+          onclick: (e) => { e.stopPropagation(); cetakJurnal(e, j.id); },
+        }, 'Cetak') },
       ], d.data, { saatKlik: (j) => { location.hash = `#/akuntansi/${j.id}`; } }), [
         el('input', { type: 'search', placeholder: 'Cari nomor atau keterangan…',
           oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
@@ -84,6 +89,60 @@ function lencanaSumber(s) {
   return status(warna, label);
 }
 
+// ---------------------------- Cetak bukti ----------------------------
+
+/** Model dokumen Bukti Jurnal Memorial dari detail jurnal (GET /api/akuntansi/jurnal/:id). */
+export function dokJurnal(j) {
+  const batal = j.status === 'void';
+  return {
+    judul: 'Bukti Jurnal Memorial', nomor: j.nomor, jenis_ttd: 'jurnal_memorial',
+    ringkasan: [
+      { label: 'Tanggal', nilai: j.tanggal, tipe: 'tanggal' },
+      { label: 'Tipe jurnal', nilai: judul(j.tipe) },
+      { label: 'Keterangan', nilai: j.keterangan || '-' },
+      { label: 'Referensi', nilai: j.referensi || '-' },
+      { label: 'Dibuat oleh', nilai: j.dibuat_oleh || '-' },
+      { label: 'Status', nilai: batal ? 'DIBATALKAN' : judul(j.status) },
+    ],
+    isi: batal ? tandaAir('BATAL') : undefined,
+    bagian: [{
+      kolom: [
+        { kunci: 'coa_kode', label: 'Kode Akun' },
+        { kunci: 'akun_nama', label: 'Nama Akun' },
+        { kunci: 'keterangan', label: 'Keterangan' },
+        { kunci: 'debit', label: 'Debit', tipe: 'uang' },
+        { kunci: 'kredit', label: 'Kredit', tipe: 'uang' },
+      ],
+      baris: (j.detail || []).map((d) => ({ coa_kode: d.coa_kode, akun_nama: d.akun_nama,
+        keterangan: d.keterangan || '', debit: d.debit || null, kredit: d.kredit || null })),
+      total: { debit: j.total_debit, kredit: j.total_kredit },
+    }],
+    terbilang: judul(j.terbilang),
+    catatan: batal && j.void_alasan ? `Alasan pembatalan: ${j.void_alasan}` : undefined,
+  };
+}
+
+const ambilDokJurnal = async (id) => dokJurnal(await api.get(`/api/akuntansi/jurnal/${id}`));
+
+/** Mencetak bukti jurnal dari tombol baris (tombol dikunci selama data diambil). */
+async function cetakJurnal(e, id) {
+  const tombol = e.currentTarget;
+  tombol.disabled = true;
+  try { await cetakDokumen(await ambilDokJurnal(id)); } catch (err) { galat(err); } finally { tombol.disabled = false; }
+}
+
+/** Daftar jurnal yang baru terbentuk (mis. dari jurnal berulang) dengan tombol cetak per jurnal. */
+function tawaranCetakDaftar(judulDialog, daftar) {
+  const tutup = modal({
+    judul: judulDialog, lebar: 'sempit',
+    isi: el('div', daftar.map((j) => el('div.antara.mb8', [
+      el('span', [el('span.mono.kecil', j.nomor), j.tanggal ? el('span.kecil.lembut', ` · ${tgl(j.tanggal)}`) : null]),
+      el('button.btn.kecil', { onclick: (e) => cetakJurnal(e, j.jurnal_id || j.id) }, 'Cetak Bukti'),
+    ]))),
+    kaki: [el('button.btn.utama', { onclick: () => tutup() }, 'Tutup')],
+  });
+}
+
 async function detailJurnal(id) {
   const j = await api.get(`/api/akuntansi/jurnal/${id}`);
   // Server menghitung dapat_dibatalkan; jurnal balik & jurnal sistem (selain penutup) tidak boleh dibatalkan di sini.
@@ -94,7 +153,7 @@ async function detailJurnal(id) {
     izin('akuntansi.post') && bisaBatal && el('button.btn.bahaya', {
       onclick: () => batalkan(j),
     }, '↩ Batalkan Jurnal'),
-    el('button.btn', { onclick: () => window.print() }, 'Cetak'),
+    tombolCetak(() => dokJurnal(j), { label: 'Cetak Bukti' }),
   ].filter(Boolean)));
 
   if (j.status === 'posted' && j.sumber === 'sistem' && !bisaBatal) {
@@ -272,6 +331,10 @@ async function formJurnal(saatSelesai) {
           const h = await api.post('/api/akuntansi/jurnal', { ...bacaForm(form), lines: editor.terisi() });
           toast('Jurnal berhasil diposting', 'sukses', `${h.nomor} · ${rp(h.total)}`);
           tutup(); saatSelesai?.();
+          tawaranCetak('Jurnal Berhasil Diposting', el('dl.deskripsi', [
+            el('dt', 'Nomor'), el('dd', el('span.mono', h.nomor)),
+            el('dt', 'Total'), el('dd', el('strong', rp(h.total))),
+          ]), () => ambilDokJurnal(h.id));
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Posting Jurnal'),
     ],
@@ -324,6 +387,7 @@ async function periodeTab() {
             try {
               const h = await api.post('/api/akuntansi/tutup-tahun', { tahun });
               toast('Jurnal penutup berhasil dibuat', 'sukses', `${h.nomor} · ${rp(h.total)}`);
+              if (h.id) tawaranCetakDaftar('Jurnal Penutup Dibuat', [h]);
             } catch (err) { galat(err); }
           } }, 'Tutup Buku Tahunan'),
         ].filter(Boolean)),
@@ -420,6 +484,7 @@ async function jalankanRecurring(e, r, saatSelesai) {
       h.dibuat?.length ? h.dibuat.map((j) => j.nomor).join(', ')
         : (h.jadwal_berikutnya ? `Jadwal berikutnya ${tgl(h.jadwal_berikutnya, true)}` : null));
     saatSelesai?.();
+    if (h.dibuat?.length) tawaranCetakDaftar(`Jurnal Berulang — ${r.nama}`, h.dibuat);
   } catch (err) { galat(err); tombol.disabled = false; }
 }
 
@@ -431,6 +496,7 @@ async function jalankanSemua(e, saatSelesai) {
   try {
     const h = await api.post('/api/akuntansi/recurring-jalankan-semua', {});
     const gagal = (h.template || []).filter((t) => t.galat);
+    const dibuat = (h.template || []).flatMap((t) => t.dibuat || []);
     toast(h.jumlah_jurnal ? `${h.jumlah_jurnal} jurnal berulang diposting` : 'Tidak ada jadwal yang jatuh tempo',
       h.jumlah_jurnal ? 'sukses' : 'info');
     if (gagal.length) {
@@ -438,6 +504,7 @@ async function jalankanSemua(e, saatSelesai) {
         gagal.map((t) => `${t.nama}: ${t.galat}`).join(' · '));
     }
     saatSelesai?.();
+    if (dibuat.length) tawaranCetakDaftar('Jurnal Berulang Diposting', dibuat);
   } catch (err) { galat(err); tombol.disabled = false; }
 }
 
@@ -540,6 +607,7 @@ async function detailRecurring(id, saatSelesai) {
       { judul: 'Nomor', render: (j) => el('a.mono.kecil', { href: `#/akuntansi/${j.id}`, onclick: () => tutup() }, j.nomor) },
       { judul: 'Nilai', angka: true, render: (j) => rp(j.total_debit) },
       { judul: 'Status', render: (j) => status(j.status) },
+      { judul: '', render: (j) => el('button.btn.kecil.polos', { onclick: (e) => cetakJurnal(e, j.id) }, 'Cetak') },
     ], r.riwayat, { kosongTeks: 'Belum ada jurnal yang terbentuk dari template ini' })]),
   ]);
 

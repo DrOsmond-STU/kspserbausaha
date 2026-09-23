@@ -6,6 +6,7 @@ import {
   input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, kosong, konfirmasi,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
+import { cetakDokumen, tombolCetak } from '../cetak.js';
 
 const KATEGORI = ['ad_art', 'sop', 'kebijakan', 'notulen', 'kontrak', 'legalitas',
   'sertifikat', 'rat', 'surat', 'lainnya'];
@@ -70,6 +71,18 @@ async function dokumenTab() {
             kategori, { onchange: (e) => { kategori = e.target.value; muat(); } }),
           izin('dokumen.create') && el('button.btn.utama', { onclick: () => formUnggah(muat) },
             '+ Unggah Dokumen'),
+          tombolCetak(() => ({
+            judul: 'Daftar Repositori Dokumen', jenis_ttd: 'laporan', orientasi: 'landscape',
+            keterangan: [kategori && `Kategori: ${judul(kategori)}`, q && `Pencarian: "${q}"`].filter(Boolean),
+            bagian: [{
+              kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor', label: 'Nomor' },
+                { kunci: 'judul', label: 'Judul' }, { kunci: 'kategori', label: 'Kategori' },
+                { kunci: 'versi', label: 'Versi', tipe: 'angka' }, { kunci: 'ttd_oleh', label: 'Ditandatangani' },
+                { kunci: 'hash', label: 'SHA-256 (awal)' }, { kunci: 'status', label: 'Status' }],
+              baris: d.data.map((x, i) => ({ ...x, no: i + 1, kategori: judul(x.kategori), status: judul(x.status),
+                hash: x.hash_sha256 ? x.hash_sha256.slice(0, 16) : '' })),
+            }],
+          }), { label: 'Cetak' }),
         ].filter(Boolean)),
       );
     } catch (err) { galat(err); }
@@ -253,6 +266,10 @@ async function suratTab() {
           ? 'peringatan' : 'netral', judul(s.sifat || 'biasa')) },
         { judul: 'Status', render: (s) => status(s.status) },
         { judul: '', render: (s) => el('div.gap8.nowrap', [
+          s.jenis === 'keluar' && el('button.btn.kecil', { title: 'Cetak surat keluar',
+            onclick: () => cetakDokumen(dokSuratKeluar(s)) }, 'Cetak Surat'),
+          el('button.btn.kecil', { title: 'Cetak lembar disposisi',
+            onclick: () => cetakDokumen(dokDisposisi(s)) }, 'Lembar Disposisi'),
           izin('surat.update') && s.jenis === 'masuk'
             && el('button.btn.kecil', { onclick: () => formDisposisi(s, muat) }, 'Disposisi'),
           izin('surat.update') && el('button.btn.kecil', { onclick: () => formSurat(s, muat) }, 'Ubah'),
@@ -263,6 +280,18 @@ async function suratTab() {
           { nilai: 'keluar', teks: 'Surat Keluar' }], jenis,
         { onchange: (e) => { jenis = e.target.value; muat(); } }),
         izin('surat.create') && el('button.btn.utama', { onclick: () => formSurat(null, muat) }, '+ Catat Surat'),
+        tombolCetak(() => ({
+          judul: jenis ? `Agenda Surat ${judul(jenis)}` : 'Agenda Persuratan', jenis_ttd: 'surat', orientasi: 'landscape',
+          bagian: [{
+            kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor', label: 'Nomor Surat' },
+              { kunci: 'jenis', label: 'Jenis' }, { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' },
+              { kunci: 'perihal', label: 'Perihal' }, { kunci: 'dari', label: 'Dari' }, { kunci: 'kepada', label: 'Kepada' },
+              { kunci: 'sifat', label: 'Sifat' }, { kunci: 'disposisi_kepada', label: 'Disposisi' },
+              { kunci: 'status', label: 'Status' }],
+            baris: d.data.map((x, i) => ({ ...x, no: i + 1, jenis: judul(x.jenis), sifat: judul(x.sifat || 'biasa'),
+              status: judul(x.status) })),
+          }],
+        }), { label: 'Cetak Agenda' }),
       ].filter(Boolean)));
     } catch (err) { galat(err); }
   }
@@ -332,12 +361,15 @@ function formDisposisi(s, saatSelesai) {
     judul: `Disposisi — ${s.nomor}`, isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
-      el('button.btn.utama', { onclick: async () => {
+      el('button.btn', { onclick: () => cetakDokumen(dokDisposisi({ ...s, ...bacaForm(form) })) }, 'Cetak Lembar Disposisi'),
+      el('button.btn.utama', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           await api.post(`/api/surat/${s.id}/disposisi`, bacaForm(form));
           toast('Disposisi tercatat', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
   });
@@ -363,4 +395,58 @@ async function retensiTab() {
       { judul: 'Retensi', render: (x) => `${x.retensi_tahun} tahun` },
     ], d.melewati_retensi, { kosongTeks: 'Tidak ada dokumen yang melewati masa retensi ✓' })),
   ]);
+}
+
+// ------------------------------- Cetakan -------------------------------
+
+/** Surat keluar dengan kop, nomor, perihal, tujuan, isi, dan tanda tangan jenis "surat". */
+function dokSuratKeluar(s) {
+  const isi = el('div', { gaya: { margin: '10px 0', lineHeight: '1.6', fontSize: '12px' } }, [
+    el('div', { gaya: { marginBottom: '10px' } }, ['Kepada Yth.', el('br'), el('b', s.kepada || '-'), el('br'), 'di tempat']),
+    el('div', { gaya: { whiteSpace: 'pre-wrap', textAlign: 'justify' } }, s.isi || ''),
+  ]);
+  return {
+    judul: s.perihal || 'Surat', nomor: s.nomor, jenis_ttd: 'surat',
+    ringkasan: [
+      { label: 'Tanggal', nilai: tgl(s.tanggal, true) },
+      { label: 'Sifat', nilai: judul(s.sifat || 'biasa') },
+      { label: 'Lampiran', nilai: s.lampiran || '-' },
+      { label: 'Perihal', nilai: s.perihal },
+    ],
+    isi,
+    bagian: [],
+  };
+}
+
+/** Lembar disposisi surat (kolom kosong disediakan untuk disposisi lanjutan secara manual). */
+function dokDisposisi(s) {
+  const baris = [
+    { no: 1, kepada: s.disposisi_kepada || '', isi: s.disposisi || '', tanggal: '', paraf: '' },
+    { no: 2, kepada: '', isi: '', tanggal: '', paraf: '' },
+    { no: 3, kepada: '', isi: '', tanggal: '', paraf: '' },
+  ];
+  return {
+    judul: 'Lembar Disposisi', nomor: s.nomor, jenis_ttd: 'surat',
+    ringkasan: [
+      { label: 'Jenis surat', nilai: s.jenis === 'masuk' ? 'Surat masuk' : 'Surat keluar' },
+      { label: 'Tanggal surat', nilai: s.tanggal, tipe: 'tanggal' },
+      { label: 'Nomor surat', nilai: s.nomor },
+      { label: 'Sifat', nilai: judul(s.sifat || 'biasa') },
+      { label: 'Dari', nilai: s.dari || '-' },
+      { label: 'Kepada', nilai: s.kepada || '-' },
+      { label: 'Perihal', nilai: s.perihal },
+      { label: 'Diterima / dicatat', nilai: s.created_at ? String(s.created_at).slice(0, 10) : '-', tipe: 'tanggal' },
+      { label: 'Lampiran', nilai: s.lampiran || '-' },
+      { label: 'Status', nilai: judul(s.status || 'baru') },
+    ],
+    isi: '<style>tbody td{height:34px}</style>',
+    bagian: [{
+      judul: 'Disposisi',
+      kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'kepada', label: 'Diteruskan Kepada' },
+        { kunci: 'isi', label: 'Isi / Instruksi Disposisi' }, { kunci: 'tanggal', label: 'Tanggal' },
+        { kunci: 'paraf', label: 'Paraf' }],
+      baris,
+    }],
+    catatan: s.isi ? `Ringkasan isi: ${s.isi}` : null,
+  };
 }

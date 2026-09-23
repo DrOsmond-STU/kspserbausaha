@@ -7,6 +7,7 @@ import {
 } from '../inti.js';
 import { grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
+import { tombolCetak } from '../cetak.js';
 import { ikon } from '../ikon.js';
 
 const KATEGORI = ['legalitas', 'perpajakan', 'ketenagakerjaan', 'perkoperasian', 'oss'];
@@ -74,6 +75,26 @@ export async function render() {
         ], d.data, { kosongTeks: 'Belum ada register kepatuhan' }), [
           izin('compliance.create') && el('button.btn.utama', { onclick: () => form(null, muat) },
             '+ Tambah Kewajiban'),
+          tombolCetak(() => ({
+            judul: 'Register Kepatuhan Koperasi', jenis_ttd: 'laporan', orientasi: 'landscape',
+            ringkasan: [
+              { label: 'Total kewajiban', nilai: d.total, tipe: 'angka' },
+              { label: 'Patuh', nilai: d.patuh, tipe: 'angka' },
+              { label: 'Perlu perhatian', nilai: d.perlu_perhatian, tipe: 'angka' },
+              { label: 'Kedaluwarsa', nilai: d.kadaluarsa, tipe: 'angka' },
+            ],
+            bagian: [{
+              kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'kategori', label: 'Kategori' },
+                { kunci: 'nama', label: 'Kewajiban' }, { kunci: 'dasar_hukum', label: 'Dasar Hukum' },
+                { kunci: 'nomor', label: 'Nomor' }, { kunci: 'penerbit', label: 'Penerbit' },
+                { kunci: 'tanggal_terbit', label: 'Terbit', tipe: 'tanggal' },
+                { kunci: 'berlaku', label: 'Berlaku s.d.' }, { kunci: 'pic', label: 'PIC' },
+                { kunci: 'status', label: 'Status' }],
+              baris: d.data.map((x, i) => ({ ...x, no: i + 1, kategori: judul(x.kategori),
+                berlaku: x.tanggal_kadaluarsa ? tgl(x.tanggal_kadaluarsa) : 'Permanen',
+                status: judul(x.status_terhitung) })),
+            }],
+          }), { label: 'Cetak Register' }),
         ].filter(Boolean)),
       );
     } catch (err) { galat(err); }

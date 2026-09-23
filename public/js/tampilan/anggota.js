@@ -8,7 +8,8 @@ import {
 import { grafikBatang, grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
-import { daftarBank, kolomBank } from './simpanan.js';
+import { daftarBank, kolomBank, denganTombol, kapital, teksMetode } from './simpanan.js';
+import { cetakDokumen, tombolCetak, dataCetak } from '../cetak.js';
 
 const STATUS = ['', 'calon', 'aktif', 'nonaktif', 'keluar', 'meninggal', 'ditolak'];
 
@@ -71,6 +72,19 @@ export async function render(param) {
           { onchange: (e) => { filter = e.target.value; muat(); } }),
         izin('anggota.create') && el('button.btn.utama', { onclick: () => formAnggota(null, muat) },
           '+ Daftarkan Anggota'),
+        tombolCetak(() => ({
+          judul: 'Daftar Anggota Koperasi', jenis_ttd: 'laporan', orientasi: 'landscape',
+          keterangan: [filter && `Status: ${judul(filter)}`, q && `Pencarian: "${q}"`].filter(Boolean),
+          bagian: [{
+            kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor_anggota', label: 'No. Anggota' },
+              { kunci: 'nama', label: 'Nama' }, { kunci: 'nik', label: 'NIK' }, { kunci: 'telepon', label: 'Telepon' },
+              { kunci: 'pekerjaan', label: 'Pekerjaan' }, { kunci: 'total_simpanan', label: 'Simpanan', tipe: 'uang' },
+              { kunci: 'outstanding_pinjaman', label: 'Pinjaman', tipe: 'uang' }, { kunci: 'status', label: 'Status' }],
+            baris: d.data.map((r, i) => ({ ...r, no: i + 1, status: judul(r.status) })),
+            total: { total_simpanan: d.data.reduce((t, r) => t + (r.total_simpanan || 0), 0),
+              outstanding_pinjaman: d.data.reduce((t, r) => t + (r.outstanding_pinjaman || 0), 0) },
+          }],
+        }), { label: 'Cetak' }),
       ]));
     } catch (err) { galat(err); }
   }
@@ -102,6 +116,10 @@ async function detail(id) {
       && el('button.btn.bahaya', { onclick: () => keluarAnggota(a) }, 'Proses Keluar'),
     !['calon', 'ditolak'].includes(a.status)
       && el('button.btn', { onclick: () => kartuAnggota(a).catch(galat) }, 'Kartu Anggota'),
+    el('button.btn', { onclick: (e) => denganTombol(e, () => cetakDokumen(dokBiodata(a))) },
+      a.status === 'calon' ? 'Cetak Formulir Pendaftaran' : 'Cetak Biodata'),
+    sudahKeluar && el('button.btn', { onclick: (e) => denganTombol(e, () => cetakBuktiKeluar(a.id)) },
+      'Cetak Bukti Keluar'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [
@@ -371,7 +389,10 @@ function ringkasanPengembalian(a, h, saatTutup) {
         { judul: 'Jurnal', render: (p) => (p.jurnal ? el('span.mono.kecil', p.jurnal.nomor) : el('span.samar', '-')) },
       ], h.pengembalian, { kaki: { dikembalikan: el('strong', rp(total)) } })]),
     ]),
-    kaki: [el('button.btn.utama', { onclick: () => tutup() }, 'Selesai')],
+    kaki: [
+      el('button.btn', { onclick: (e) => denganTombol(e, () => cetakBuktiKeluar(a.id)) }, 'Cetak Bukti Keluar'),
+      el('button.btn.utama', { onclick: () => tutup() }, 'Selesai'),
+    ],
   });
 }
 
@@ -454,8 +475,11 @@ async function hapusAhliWaris(w, saatSelesai) {
 
 // ---------------------------- Kartu anggota ----------------------------
 
-/** Membentuk kartu anggota (dipakai untuk pratinjau maupun jendela cetak). */
-function bentukKartu(k, doc = document) {
+/**
+ * Membentuk kartu anggota (dipakai untuk pratinjau maupun jendela cetak).
+ * `c` = data cetak (kop & tanda tangan) dari dataCetak().
+ */
+function bentukKartu(k, c, doc = document) {
   const buat = (tag, gaya, anak = []) => {
     const n = doc.createElement(tag);
     Object.assign(n.style, gaya);
@@ -473,13 +497,33 @@ function bentukKartu(k, doc = document) {
     Object.assign(foto.style, { width: '72px', height: '90px', objectFit: 'cover', borderRadius: '6px',
       border: '2px solid rgba(255,255,255,.6)' });
   }
+  let logo = null;
+  if (c?.profil?.logo) {
+    logo = doc.createElement('img');
+    logo.src = c.profil.logo;
+    logo.alt = 'Logo';
+    Object.assign(logo.style, { height: '22px', maxWidth: '40px', objectFit: 'contain', background: '#fff',
+      borderRadius: '4px', padding: '1px' });
+  }
+  // Tanda tangan sesuai pengaturan jenis cetakan "kartu_anggota"
+  const ttd = c?.ttd?.kartu_anggota || { penanda: [] };
+  const blokTtd = ttd.penanda?.length ? buat('div', { display: 'flex', gap: '10px', justifyContent: 'flex-end' },
+    ttd.penanda.map((p) => buat('div', { textAlign: 'center', fontSize: '8.5px', lineHeight: '1.25', minWidth: '70px' }, [
+      p.label ? buat('div', { opacity: '.85' }, p.label) : null,
+      buat('div', { opacity: '.85' }, p.jabatan),
+      buat('div', { height: '14px' }),
+      buat('div', { fontWeight: '700', borderTop: '1px solid rgba(255,255,255,.7)', paddingTop: '1px' },
+        p.nama || '(.....................)'),
+    ]))) : null;
   return buat('div', {
     width: '85.6mm', minHeight: '54mm', boxSizing: 'border-box', padding: '12px 14px', borderRadius: '10px',
     background: 'linear-gradient(135deg,#0f5132,#1baf7a)', color: '#fff', fontFamily: 'system-ui, sans-serif',
     display: 'flex', flexDirection: 'column', gap: '6px', printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact',
   }, [
-    buat('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }, [
-      buat('strong', { fontSize: '13px', letterSpacing: '.3px' }, k.koperasi),
+    buat('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }, [
+      buat('div', { display: 'flex', alignItems: 'center', gap: '6px' }, [
+        logo, buat('strong', { fontSize: '13px', letterSpacing: '.3px' }, c?.profil?.nama || k.koperasi),
+      ]),
       buat('span', { fontSize: '10px', opacity: '.85' }, 'KARTU ANGGOTA'),
     ]),
     buat('div', { display: 'flex', gap: '12px', alignItems: 'center', flex: '1' }, [
@@ -492,27 +536,130 @@ function bentukKartu(k, doc = document) {
         baris('Status', judul(k.status)),
       ]),
     ]),
-    buat('div', { fontFamily: 'ui-monospace, monospace', fontSize: '10px', background: 'rgba(255,255,255,.15)',
-      padding: '3px 6px', borderRadius: '4px', alignSelf: 'flex-start' }, k.qr),
+    buat('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '8px' }, [
+      buat('div', { fontFamily: 'ui-monospace, monospace', fontSize: '10px', background: 'rgba(255,255,255,.15)',
+        padding: '3px 6px', borderRadius: '4px' }, k.qr),
+      blokTtd,
+    ]),
   ]);
 }
 
 async function kartuAnggota(a) {
-  const k = await api.get(`/api/anggota/${a.id}/kartu`);
+  const [k, c] = await Promise.all([api.get(`/api/anggota/${a.id}/kartu`), dataCetak()]);
   const cetak = () => {
     const w = window.open('', '_blank', 'width=520,height=420');
     if (!w) { toast('Jendela cetak diblokir peramban', 'peringatan', 'Izinkan pop-up untuk situs ini lalu coba lagi.'); return; }
     w.document.title = `Kartu Anggota ${k.nomor_anggota}`;
     w.document.body.style.margin = '12mm';
-    w.document.body.append(bentukKartu(k, w.document));
+    const gaya = w.document.createElement('style');
+    gaya.textContent = '@page{size:A4 portrait;margin:10mm}';
+    w.document.head.append(gaya);
+    w.document.body.append(bentukKartu(k, c, w.document));
     w.focus();
-    setTimeout(() => { w.print(); }, 150);
+    const gambar = [...w.document.images];
+    const jalankan = () => setTimeout(() => { w.print(); }, 150);
+    if (gambar.every((g) => g.complete)) jalankan();
+    else Promise.all(gambar.map((g) => new Promise((r) => { g.onload = r; g.onerror = r; }))).then(jalankan);
   };
   const tutup = modal({
-    judul: `Kartu Anggota — ${k.nama}`, isi: el('div', { gaya: { display: 'flex', justifyContent: 'center' } }, [bentukKartu(k)]),
+    judul: `Kartu Anggota — ${k.nama}`, isi: el('div', { gaya: { display: 'flex', justifyContent: 'center' } }, [bentukKartu(k, c)]),
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Tutup'),
       el('button.btn.utama', { onclick: cetak }, 'Cetak Kartu'),
     ],
+  });
+}
+
+// ------------------------------- Cetakan -------------------------------
+
+const teksJk = (jk) => (jk === 'L' ? 'Laki-laki' : jk === 'P' ? 'Perempuan' : '-');
+
+/** Formulir pendaftaran / biodata anggota beserta ahli waris dan ringkasan simpanan. */
+function dokBiodata(a) {
+  const rek = a.simpanan?.rekening || [];
+  const pinjamanBerjalan = (a.pinjaman || []).filter((p) => ['dicairkan', 'restrukturisasi', 'disetujui',
+    'diajukan', 'dianalisis', 'survey'].includes(p.status));
+  return {
+    judul: a.status === 'calon' ? 'Formulir Pendaftaran Anggota' : 'Biodata Anggota Koperasi',
+    nomor: a.nomor_anggota, jenis_ttd: 'anggota',
+    ringkasan: [
+      { label: 'Nama lengkap', nilai: a.nama },
+      { label: 'NIK', nilai: a.nik },
+      { label: 'No. KK', nilai: a.no_kk || '-' },
+      { label: 'NPWP', nilai: a.npwp || '-' },
+      { label: 'Jenis kelamin', nilai: teksJk(a.jenis_kelamin) },
+      { label: 'Tempat, tgl lahir', nilai: `${a.tempat_lahir || '-'}, ${tgl(a.tanggal_lahir, true)}` },
+      { label: 'Alamat', nilai: [a.alamat, a.kelurahan, a.kecamatan, a.kota, a.provinsi, a.kode_pos]
+        .filter(Boolean).join(', ') || '-' },
+      { label: 'Telepon', nilai: a.telepon || '-' },
+      { label: 'Surel', nilai: a.email || '-' },
+      { label: 'Pekerjaan', nilai: [a.pekerjaan, a.nama_instansi].filter(Boolean).join(' - ') || '-' },
+      { label: 'Penghasilan / bulan', nilai: a.penghasilan, tipe: 'uang' },
+      { label: 'Pendidikan', nilai: a.pendidikan || '-' },
+      { label: 'Jenis anggota', nilai: judul(a.jenis_anggota) },
+      { label: 'Cabang', nilai: a.cabang_nama || '-' },
+      { label: 'Tanggal daftar', nilai: a.tanggal_daftar, tipe: 'tanggal' },
+      { label: 'Tanggal bergabung', nilai: a.tanggal_gabung || '-', tipe: 'tanggal' },
+      { label: 'Status', nilai: judul(a.status) },
+      a.tanggal_keluar && { label: 'Tanggal keluar', nilai: a.tanggal_keluar, tipe: 'tanggal' },
+    ].filter(Boolean),
+    bagian: [
+      { judul: 'Ahli Waris', kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nama', label: 'Nama' },
+        { kunci: 'nik', label: 'NIK' }, { kunci: 'hubungan', label: 'Hubungan' }, { kunci: 'telepon', label: 'Telepon' },
+        { kunci: 'alamat', label: 'Alamat' }, { kunci: 'persentase', label: 'Bagian', tipe: 'persen' }],
+      baris: (a.ahli_waris || []).map((w, i) => ({ ...w, no: i + 1, hubungan: judul(w.hubungan || '-') })) },
+      { judul: 'Ringkasan Simpanan', kolom: [{ kunci: 'nomor_rekening', label: 'No. Rekening' },
+        { kunci: 'produk_nama', label: 'Produk' }, { kunci: 'jenis', label: 'Jenis' },
+        { kunci: 'tanggal_buka', label: 'Dibuka', tipe: 'tanggal' }, { kunci: 'saldo', label: 'Saldo', tipe: 'uang' },
+        { kunci: 'status', label: 'Status' }],
+      baris: rek.map((r) => ({ ...r, jenis: judul(r.jenis), status: judul(r.status) })),
+      total: { saldo: a.simpanan?.total_simpanan || 0 } },
+      pinjamanBerjalan.length ? { judul: 'Pinjaman Berjalan', kolom: [{ kunci: 'nomor', label: 'Nomor' },
+        { kunci: 'produk_nama', label: 'Produk' }, { kunci: 'pokok', label: 'Pokok', tipe: 'uang' },
+        { kunci: 'outstanding_pokok', label: 'Sisa Pokok', tipe: 'uang' }, { kunci: 'status', label: 'Status' }],
+      baris: pinjamanBerjalan.map((p) => ({ ...p, status: judul(p.status) })) } : null,
+    ].filter(Boolean),
+    catatan: a.status === 'calon'
+      ? 'Dengan menandatangani formulir ini, pemohon menyatakan data di atas benar dan bersedia mematuhi '
+        + 'Anggaran Dasar, Anggaran Rumah Tangga, serta ketentuan koperasi, termasuk menyetor simpanan pokok dan wajib.'
+      : null,
+    penanda_tambahan: { Anggota: a.nama, Pemohon: a.nama },
+  };
+}
+
+/** Bukti keluar anggota & pengembalian simpanan. */
+async function cetakBuktiKeluar(id) {
+  const d = await api.get(`/api/anggota/${id}/bukti-keluar`);
+  const a = d.anggota;
+  const meninggal = a.status === 'meninggal';
+  const aw = meninggal ? d.ahli_waris[0] : null;
+  const penerima = aw ? `${aw.nama} (ahli waris)` : a.nama;
+  cetakDokumen({
+    judul: 'Bukti Keluar Anggota & Pengembalian Simpanan', nomor: a.nomor_anggota, jenis_ttd: 'penarikan_simpanan',
+    ringkasan: [
+      { label: 'No. anggota', nilai: a.nomor_anggota },
+      { label: 'Nama anggota', nilai: a.nama },
+      { label: 'NIK', nilai: a.nik },
+      { label: 'Tanggal bergabung', nilai: a.tanggal_gabung || '-', tipe: 'tanggal' },
+      { label: 'Tanggal keluar', nilai: a.tanggal_keluar || '-', tipe: 'tanggal' },
+      { label: 'Alasan', nilai: judul(a.alasan_keluar || a.status) },
+      { label: 'Total dikembalikan', nilai: d.total, tipe: 'uang' },
+      { label: 'Simpanan belum dikembalikan', nilai: d.sisa_saldo, tipe: 'uang' },
+      aw && { label: 'Diterima oleh', nilai: penerima },
+    ].filter(Boolean),
+    bagian: [{
+      judul: 'Rincian Pengembalian Simpanan',
+      kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'nomor', label: 'No. Transaksi' },
+        { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'nomor_rekening', label: 'No. Rekening' },
+        { kunci: 'produk_nama', label: 'Produk' }, { kunci: 'metode', label: 'Metode' },
+        { kunci: 'nominal', label: 'Dikembalikan', tipe: 'uang' }],
+      baris: d.pengembalian.map((x, i) => ({ ...x, no: i + 1, metode: teksMetode(x.metode) })),
+      total: { nominal: d.total },
+    }],
+    terbilang: kapital(d.terbilang),
+    catatan: d.sisa_saldo > 0
+      ? 'Masih terdapat saldo simpanan yang belum dikembalikan; pengembalian dilakukan melalui menu Simpanan → Tutup Rekening.'
+      : 'Dengan ini keanggotaan yang bersangkutan dinyatakan berakhir dan seluruh simpanan telah dikembalikan.',
+    penanda_tambahan: { Penerima: penerima, Anggota: penerima },
   });
 }

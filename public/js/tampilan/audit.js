@@ -6,6 +6,7 @@ import {
   input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah, konfirmasi,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
+import { tombolCetak } from '../cetak.js';
 import { ikon } from '../ikon.js';
 
 const RATING = ['rendah', 'sedang', 'tinggi', 'kritis'];
@@ -114,6 +115,7 @@ async function detailPlan(id) {
     izin('audit.delete') && el('button.btn.bahaya', {
       onclick: () => hapusPlan({ ...p, jumlah_temuan: p.temuan.length },
         () => { location.hash = '#/audit'; }) }, 'Hapus Rencana'),
+    tombolCetak(() => dokLaporanAudit(p), { label: 'Cetak Laporan Hasil Audit' }),
   ].filter(Boolean)));
 
   wadah.append(panel(p.judul, el('dl.deskripsi', [
@@ -177,6 +179,10 @@ async function temuanTab() {
       ], d.data, { kosongTeks: 'Belum ada temuan audit' }), [
         izin('audit.create') && el('button.btn.utama', { onclick: () => formTemuan(null, null, muat) },
           '+ Tambah Temuan'),
+        tombolCetak(() => ({
+          judul: 'Daftar Temuan Audit & Tindak Lanjut (CAPA)', jenis_ttd: 'laporan', orientasi: 'landscape',
+          bagian: [bagianTemuan(d.data)],
+        }), { label: 'Cetak' }),
       ].filter(Boolean)));
     } catch (err) { galat(err); }
   }
@@ -289,4 +295,38 @@ function formTemuan(data, planId, saatSelesai) {
       } }, 'Simpan'),
     ],
   });
+}
+
+// ------------------------------- Cetakan -------------------------------
+
+function bagianTemuan(temuan, jdl = null) {
+  return {
+    judul: jdl,
+    kolom: [{ kunci: 'no', label: 'No', tipe: 'angka' }, { kunci: 'kode', label: 'Kode' }, { kunci: 'judul', label: 'Temuan' },
+      { kunci: 'deskripsi', label: 'Kondisi' }, { kunci: 'kriteria', label: 'Kriteria' }, { kunci: 'sebab', label: 'Sebab' },
+      { kunci: 'akibat', label: 'Akibat' }, { kunci: 'rekomendasi', label: 'Rekomendasi' }, { kunci: 'capa', label: 'CAPA' },
+      { kunci: 'risk_rating', label: 'Risiko' }, { kunci: 'pic', label: 'PIC' },
+      { kunci: 'batas_waktu', label: 'Batas Waktu', tipe: 'tanggal' }, { kunci: 'status', label: 'Status' }],
+    baris: temuan.map((t, i) => ({ ...t, no: i + 1, risk_rating: judul(t.risk_rating), status: judul(t.status) })),
+  };
+}
+
+/** Laporan hasil audit internal: rencana audit dan seluruh temuannya. */
+function dokLaporanAudit(p) {
+  const terbuka = p.temuan.filter((t) => !['selesai', 'ditutup'].includes(t.status)).length;
+  return {
+    judul: 'Laporan Hasil Audit Internal', subjudul: p.judul, nomor: p.nomor, jenis_ttd: 'laporan',
+    orientasi: 'landscape',
+    ringkasan: [
+      { label: 'Tahun', nilai: p.tahun },
+      { label: 'Objek audit', nilai: p.objek || '-' },
+      { label: 'Auditor', nilai: p.auditor || '-' },
+      { label: 'Periode', nilai: `${tgl(p.tanggal_mulai, true)} - ${tgl(p.tanggal_selesai, true)}` },
+      { label: 'Ruang lingkup', nilai: p.ruang_lingkup || '-' },
+      { label: 'Status', nilai: judul(p.status) },
+      { label: 'Jumlah temuan', nilai: p.temuan.length, tipe: 'angka' },
+      { label: 'Temuan terbuka', nilai: terbuka, tipe: 'angka' },
+    ],
+    bagian: [bagianTemuan(p.temuan, 'Temuan Audit & Rencana Tindakan (CAPA)')],
+  };
 }
