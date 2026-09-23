@@ -102,13 +102,28 @@ async function sajikanStatis(req, res, pathname) {
   }
   try {
     const data = await readFile(file);
+    // Semua berkas statis wajib dicek ulang ke server (no-cache + ETag). Tanpa
+    // ini browser dan singgahan hosting masih menjalankan app.js/app.css versi
+    // lama sampai beberapa menit sesudah pemasangan, dan modul yang diimpor
+    // app.js bisa bercampur antara versi lama dan baru. Pengecekan ulang hanya
+    // berbiaya jawaban 304 kosong bila berkas tidak berubah.
+    const etag = `"${createHash('sha1').update(data).digest('hex').slice(0, 16)}"`;
+    const kepala = {
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+      ETag: etag,
+    };
+    if (req.headers['if-none-match'] === etag) {
+      res.writeHead(304, kepala);
+      res.end();
+      return;
+    }
     res.writeHead(200, {
+      ...kepala,
       'Content-Type': MIME[extname(file)] || 'application/octet-stream',
       'Content-Length': data.length,
-      'X-Content-Type-Options': 'nosniff',
-      'Cache-Control': extname(file) === '.html' ? 'no-cache' : 'public, max-age=300',
     });
-    res.end(data);
+    res.end(req.method === 'HEAD' ? undefined : data);
   } catch {
     sendText(res, 404, 'Berkas tidak ditemukan');
   }

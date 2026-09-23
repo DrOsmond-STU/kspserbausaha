@@ -108,6 +108,19 @@ describe('Penyajian berkas statis', () => {
     }
   });
 
+  test('aset selalu dicek ulang (no-cache + ETag) sehingga versi baru langsung terpakai', async () => {
+    for (const jalur of ['/js/app.js', '/app.css', '/']) {
+      const r = await fetch(`${asal}${jalur}`);
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('cache-control'), 'no-cache', jalur);
+      const etag = r.headers.get('etag');
+      assert.ok(etag, `${jalur} tanpa ETag`);
+      await r.arrayBuffer();
+      const ulang = await fetch(`${asal}${jalur}`, { headers: { 'If-None-Match': etag } });
+      assert.equal(ulang.status, 304, `${jalur} tidak berubah seharusnya 304`);
+    }
+  });
+
   test('naik folder tidak dapat keluar dari direktori publik', async () => {
     const r = await fetch(`${asal}/../server/db.js`);
     assert.ok(r.status >= 400, `seharusnya ditolak, bukan ${r.status}`);
