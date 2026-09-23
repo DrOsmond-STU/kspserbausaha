@@ -31,6 +31,9 @@ const KOLOM_SUSULAN = [
   // sumbernya agar buku pembantu (simpanan, kas, stok) tetap sejalan.
   ['jurnal', 'sumber', 'TEXT'],
   ['kas_bank', 'status', "TEXT NOT NULL DEFAULT 'posted'"],
+  // Akun pendapatan & biaya bawaan setiap unit usaha (menu Transaksi Unit).
+  ['unit_usaha', 'coa_pendapatan', 'TEXT'],
+  ['unit_usaha', 'coa_beban', 'TEXT'],
   ['kas_bank', 'alasan_batal', 'TEXT'],
   ['transaksi_simpanan', 'status', "TEXT NOT NULL DEFAULT 'posted'"],
   ['pembelian', 'alasan_batal', 'TEXT'],

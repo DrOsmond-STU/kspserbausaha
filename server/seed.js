@@ -75,6 +75,7 @@ const COA = [
   ['4-1202', 'Pendapatan Administrasi & Provisi', 'pendapatan', 'K', '4-1', 3, 1],
   ['4-1203', 'Pendapatan Denda', 'pendapatan', 'K', '4-1', 3, 1],
   ['4-1301', 'Pendapatan Lain-lain', 'pendapatan', 'K', '4-1', 3, 1],
+  ['4-1401', 'Pendapatan Jasa Unit Usaha', 'pendapatan', 'K', '4-1', 3, 1],
 
   ['5', 'BEBAN', 'beban', 'D', null, 1, 0],
   ['5-1', 'Harga Pokok Penjualan', 'beban', 'D', '5', 2, 0],
@@ -90,6 +91,7 @@ const COA = [
   ['5-2401', 'Beban Organisasi & RAT', 'beban', 'D', '5-2', 3, 1],
   ['5-2402', 'Beban Pendidikan & Pelatihan', 'beban', 'D', '5-2', 3, 1],
   ['5-2501', 'Beban Penyisihan Kerugian Piutang', 'beban', 'D', '5-2', 3, 1],
+  ['5-2601', 'Beban Operasional Unit Usaha', 'beban', 'D', '5-2', 3, 1],
   ['5-2901', 'Beban Selisih Kas & Persediaan', 'beban', 'D', '5-2', 3, 1],
   ['5-2902', 'Beban Lain-lain', 'beban', 'D', '5-2', 3, 1],
 ];
@@ -227,11 +229,19 @@ export function pastikanDataAwal() {
            VALUES('PST','Kantor Pusat','Jl. Koperasi No. 1','Jakarta',1)`);
     }
     if (!scalar('SELECT COUNT(*) FROM unit_usaha')) {
-      run(`INSERT INTO unit_usaha(kode, nama, jenis, cabang_id) VALUES
-           ('USP','Unit Simpan Pinjam','simpan_pinjam',1),
-           ('TOK','Unit Toko Koperasi','retail',1),
-           ('JSA','Unit Jasa','jasa',1)`);
+      // Unit jasa mencatat pendapatan & biayanya lewat menu Unit Usaha →
+      // Transaksi Unit; akun bawaannya dapat diganti di Master Data.
+      run(`INSERT INTO unit_usaha(kode, nama, jenis, cabang_id, coa_pendapatan, coa_beban) VALUES
+           ('USP','Unit Simpan Pinjam','simpan_pinjam',1,NULL,NULL),
+           ('TOK','Unit Toko Koperasi','retail',1,NULL,NULL),
+           ('JSA','Unit Jasa','jasa',1,'4-1401','5-2601')`);
     }
+    // Basis data yang dibuat sebelum ada akun bawaan per unit: Unit Jasa bawaan
+    // diberi akun pendapatan/biaya jasa, hanya bila belum pernah diatur (NULL).
+    run(`UPDATE unit_usaha SET coa_pendapatan = '4-1401'
+          WHERE kode = 'JSA' AND coa_pendapatan IS NULL AND EXISTS (SELECT 1 FROM coa WHERE kode = '4-1401')`);
+    run(`UPDATE unit_usaha SET coa_beban = '5-2601'
+          WHERE kode = 'JSA' AND coa_beban IS NULL AND EXISTS (SELECT 1 FROM coa WHERE kode = '5-2601')`);
     if (!scalar('SELECT COUNT(*) FROM gudang')) {
       run(`INSERT INTO gudang(kode, nama, alamat, cabang_id, unit_usaha_id)
            VALUES('GD01','Gudang Toko Utama','Jl. Koperasi No. 1',1,2)`);
@@ -981,6 +991,20 @@ export async function seedDemo() {
     // Setoran hasil penjualan toko dari kas ke bank
     buktiKas({ jenis: 'kas_keluar', tanggal: hariKe(akhir, -3), coaKas: '1-1101', coaLawan: '1-1501',
       nominal: 1_500_000, keterangan: `Pembayaran asuransi dibayar di muka ${p}`, pihak: 'PT Asuransi Mitra' });
+    // Unit Jasa (sewa tenda & peralatan, fotokopi, pembayaran tagihan):
+    // pendapatan dua kali sebulan dan biaya operasionalnya.
+    const unitJasa = get("SELECT id FROM unit_usaha WHERE kode = 'JSA'")?.id || null;
+    if (unitJasa) {
+      buktiKas({ jenis: 'kas_masuk', tanggal: hariKe(akhir, -20), coaKas: '1-1101', coaLawan: '4-1401',
+        nominal: antara(20, 45) * 100_000, keterangan: `Sewa tenda & peralatan acara ${p}`,
+        pihak: pick(['Bapak Suryadi', 'Ibu Ratna', 'Karang Taruna RW 05', 'Masjid Al-Ikhlas']), unitUsaha: unitJasa });
+      buktiKas({ jenis: 'kas_masuk', tanggal: hariKe(akhir, -2), coaKas: '1-1101', coaLawan: '4-1401',
+        nominal: antara(12, 30) * 100_000, keterangan: `Jasa fotokopi & pembayaran tagihan ${p}`,
+        pihak: 'Pelanggan umum', unitUsaha: unitJasa });
+      buktiKas({ jenis: 'kas_keluar', tanggal: hariKe(akhir, -10), coaKas: '1-1101', coaLawan: '5-2601',
+        nominal: antara(6, 15) * 100_000, keterangan: `Perawatan peralatan & bahan habis pakai unit jasa ${p}`,
+        pihak: 'Toko Sumber Rejeki', unitUsaha: unitJasa });
+    }
     if (Number(p.slice(5)) % 3 === 0) {
       buktiKas({ jenis: 'kas_masuk', tanggal: hariKe(akhir, -5), coaKas: '1-1201', coaLawan: '4-1301',
         nominal: antara(8, 24) * 100_000, keterangan: `Jasa giro bank ${p}`, pihak: 'Bank BRI' });

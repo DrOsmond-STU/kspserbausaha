@@ -391,9 +391,29 @@ function pantauTumpang(halaman) {
 
 let rutePakai = null;
 
+/**
+ * Halaman awal pengguna: Dasbor Eksekutif bila berhak, kalau tidak menu
+ * pertama yang boleh dibuka. Anggota langsung mendarat di Portal Anggota,
+ * bukan di halaman "akses ditolak".
+ */
+export function beranda() {
+  if (izin('dashboard.view')) return '/';
+  for (const g of MENU) {
+    for (const i of g.item) {
+      if (i.rute !== '/' && izin(i.izin) && (!i.syarat || i.syarat(negara.user))) return i.rute;
+    }
+  }
+  return '/';
+}
+
 export async function navigasi(hash, paksa = false) {
   if (!negara.user) return;
-  const bersih = (hash || '#/').replace(/^#/, '') || '/';
+  let bersih = (hash || '#/').replace(/^#/, '') || '/';
+  if (bersih === '/' && beranda() !== '/') {
+    bersih = beranda();
+    // Mengganti alamat tanpa menambah riwayat (tombol Kembali tidak memantul ke "#/").
+    history.replaceState(null, '', `#${bersih}`);
+  }
   if (bersih === rutePakai && !paksa) return;
   // Pindah halaman menutup dialog yang masih terbuka; kalau tidak, modal
   // halaman lama menutupi halaman baru.
@@ -422,7 +442,7 @@ export async function navigasi(hash, paksa = false) {
     kosongkan(halaman).append(el('div.kosong', [
       el('div.ikon', '🧭'),
       el('div.judul', 'Halaman tidak ditemukan'),
-      el('a', { href: '#/' }, 'Kembali ke dasbor'),
+      el('a', { href: `#${beranda()}` }, 'Kembali ke halaman awal'),
     ]));
     return;
   }

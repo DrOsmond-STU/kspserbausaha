@@ -57,7 +57,12 @@ const ENTITAS = {
     form: [['kode', 'Kode', 'text', true], ['nama', 'Nama Unit', 'text', true],
       ['jenis', 'Jenis', 'pilih', true, ['simpan_pinjam', 'retail', 'pertanian', 'perikanan',
         'peternakan', 'jasa', 'transportasi', 'wisata', 'apotek', 'spbu', 'lainnya']],
-      fCabang(), ['penanggung_jawab', 'Penanggung Jawab'], fStatus()],
+      fCabang(), ['penanggung_jawab', 'Penanggung Jawab'],
+      fAkun('coa_pendapatan', 'Akun Pendapatan Bawaan', 'pendapatan', { kosong: '- pilih saat input -',
+        bantuan: 'Terisi otomatis pada Unit Usaha → Transaksi Unit (pendapatan); tetap dapat diganti' }),
+      fAkun('coa_beban', 'Akun Biaya Bawaan', 'beban', { kosong: '- pilih saat input -',
+        bantuan: 'Terisi otomatis pada Unit Usaha → Transaksi Unit (biaya); tetap dapat diganti' }),
+      fStatus()],
   },
   coa: {
     nama: 'Bagan Akun (COA)', path: '/api/master/coa',

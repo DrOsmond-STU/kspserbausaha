@@ -49,6 +49,7 @@ router.put('/api/koreksi/kas/:id', 'kas.koreksi', ({ params, body, ctx }) => {
   }
   if (body.nominal !== undefined) data.nominal = num(body, 'nominal', { min: 1, label: 'Nominal' });
   if (body.tanggal) data.tanggal = date(body, 'tanggal');
+  if (body.unit_usaha_id !== undefined) data.unit_usaha_id = Number(body.unit_usaha_id) || null;
   return ubahBuktiKas(idParam(params), data, alasan(body), ctx);
 });
 

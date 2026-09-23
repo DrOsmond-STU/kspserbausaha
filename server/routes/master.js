@@ -45,10 +45,14 @@ mountCrud(router, '/api/master/cabang', 'master', crud({
 // ---------------------------- Unit Usaha ----------------------------
 mountCrud(router, '/api/master/unit-usaha', 'master', crud({
   table: 'unit_usaha', modul: 'master',
-  fields: ['kode', 'nama', 'jenis', 'cabang_id', 'penanggung_jawab', 'status'],
+  fields: ['kode', 'nama', 'jenis', 'cabang_id', 'penanggung_jawab', 'coa_pendapatan', 'coa_beban', 'status'],
   required: ['kode', 'nama', 'jenis'], unique: ['kode'], search: ['kode', 'nama'], orderBy: 'kode ASC',
   selectSql: `SELECT t.*, c.nama AS cabang_nama FROM unit_usaha t LEFT JOIN cabang c ON c.id = t.cabang_id`,
   filters: ['jenis', 'cabang_id'],
+  validate(data) {
+    cekAkun(data, 'coa_pendapatan', { tipe: 'pendapatan', label: 'Akun pendapatan bawaan' });
+    cekAkun(data, 'coa_beban', { tipe: 'beban', label: 'Akun biaya bawaan' });
+  },
 }));
 
 // ------------------------ Chart of Account --------------------------

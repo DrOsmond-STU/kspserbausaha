@@ -193,7 +193,7 @@ tidak meninggalkan data separuh jadi.
 | 12 | Toko Koperasi (POS) | Kasir barcode, harga khusus anggota, QRIS, potong simpanan, poin loyalti, struk |
 | 13 | Pembelian | PO, penerimaan barang, utang usaha, evaluasi supplier |
 | 14 | Penjualan | Riwayat transaksi, retur, piutang & analisis umur |
-| 15 | Unit Usaha | Laporan hasil usaha per segmen (cost center) |
+| 15 | Unit Usaha | Laporan hasil usaha per segmen (cost center); input pendapatan & biaya unit (jasa, sewa, pertanian, dll.) dengan akun bawaan per unit, terjurnal otomatis sebagai BKM/BKK bertanda unit, dapat diubah/dibatalkan |
 | 16 | Aset Tetap | Registrasi, penyusutan berkala, pemeliharaan, pelepasan |
 | 17 | RAT | Agenda, undangan, presensi + TTE, kuorum, voting, berita acara |
 | 18 | Dokumen & Persuratan | Repositori berversi, sidik jari SHA-256, TTE, retensi, surat masuk/keluar & disposisi |

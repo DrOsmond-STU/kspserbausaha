@@ -43,7 +43,7 @@ const AKSI_KHUSUS = new Set(['koreksi']);
 
 /** Seluruh modul yang memiliki transaksi terjurnal. */
 const KOREKSI_SEMUA = ['akuntansi', 'kas', 'simpanan', 'pinjaman', 'pos', 'penjualan', 'pembelian',
-  'persediaan', 'aset'].map((m) => `${m}.koreksi`);
+  'persediaan', 'aset', 'unit'].map((m) => `${m}.koreksi`);
 
 export const ROLES = {
   super_admin: {
@@ -80,7 +80,7 @@ export const ROLES = {
       'anggaran.view', 'anggaran.create', 'anggaran.update', 'laporan.view',
       'laporan.export', 'master.view', 'anggota.view', 'aset.view', 'bi.view',
       'crm.view', 'crm.update', 'approval.view', 'dokumen.view', 'akuntansi.view',
-      'pos.koreksi', 'penjualan.koreksi', 'pembelian.koreksi', 'persediaan.koreksi',
+      'pos.koreksi', 'penjualan.koreksi', 'pembelian.koreksi', 'persediaan.koreksi', 'unit.koreksi',
     ],
   },
   bendahara: {

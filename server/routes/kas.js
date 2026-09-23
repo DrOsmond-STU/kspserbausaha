@@ -15,13 +15,15 @@ const router = createRouter();
 router.get('/api/kas', 'kas.view', ({ query }) => {
   const w = [];
   const p = [];
-  if (query.dari) { w.push('tanggal >= ?'); p.push(query.dari); }
-  if (query.sampai) { w.push('tanggal <= ?'); p.push(query.sampai); }
-  if (query.jenis) { w.push('jenis = ?'); p.push(query.jenis); }
-  if (query.status) { w.push('status = ?'); p.push(query.status); }
+  if (query.dari) { w.push('k.tanggal >= ?'); p.push(query.dari); }
+  if (query.sampai) { w.push('k.tanggal <= ?'); p.push(query.sampai); }
+  if (query.jenis) { w.push('k.jenis = ?'); p.push(query.jenis); }
+  if (query.status) { w.push('k.status = ?'); p.push(query.status); }
+  if (query.unit_usaha_id) { w.push('k.unit_usaha_id = ?'); p.push(Number(query.unit_usaha_id)); }
   const where = w.length ? `WHERE ${w.join(' AND ')}` : '';
   const limit = Math.min(Number(query.limit) || 100, 500);
-  const data = all(`SELECT * FROM kas_bank ${where} ORDER BY tanggal DESC, id DESC LIMIT ?`, [...p, limit]);
+  const data = all(`SELECT k.*, u.nama AS unit_nama FROM kas_bank k LEFT JOIN unit_usaha u ON u.id = k.unit_usaha_id
+                     ${where} ORDER BY k.tanggal DESC, k.id DESC LIMIT ?`, [...p, limit]);
   const berlaku = data.filter((r) => r.status !== 'batal');
   return {
     data,

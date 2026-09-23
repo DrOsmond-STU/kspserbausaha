@@ -1,12 +1,14 @@
 /**
  * Modul 6 (SHU), 15 (Unit Usaha), 16 (Aset Tetap), 17 (RAT).
  */
-import { createRouter, notFound, badRequest, conflict } from '../lib/http.js';
+import { createRouter, notFound, badRequest, conflict, forbidden } from '../lib/http.js';
+import { can } from '../lib/rbac.js';
 import { all, get, run, scalar, tx, nextNumber } from '../db.js';
 import { logAudit, notify } from '../lib/audit.js';
 import { idParam, num, str, date, oneOf, today, terbilang } from '../lib/util.js';
 import * as shu from '../services/shu.js';
 import * as aset from '../services/assets.js';
+import * as unitSvc from '../services/unit.js';
 import { labaRugi, saldoAkun } from '../services/accounting.js';
 import crypto from 'node:crypto';
 
@@ -96,6 +98,67 @@ router.get('/api/unit-usaha/:id/laporan', 'unit.view', ({ params, query }) => {
     gudang: all('SELECT * FROM gudang WHERE unit_usaha_id = ?', [id]),
     aset: aset.daftar({ unit_usaha_id: id }),
   };
+});
+
+// ------------------ Transaksi unit usaha (pendapatan & biaya) ------------------
+
+/** Minimal salah satu izin dimiliki (mis. unit.create ATAU kas.create). */
+function wajibSalahSatu(ctx, ...izin) {
+  if (!izin.some((i) => can(ctx.user.role, i))) {
+    throw forbidden(`Aksi ini memerlukan izin ${izin.map((i) => `"${i}"`).join(' atau ')}`);
+  }
+}
+
+/** Pilihan formulir: unit aktif (dengan akun bawaannya) dan akun dari bagan akun. */
+router.get('/api/unit-usaha/opsi', 'unit.view', () => {
+  const akun = all(`SELECT kode, nama, tipe, is_kas, is_bank FROM coa
+                     WHERE is_postable = 1 AND status = 'aktif' ORDER BY kode`);
+  return {
+    unit: all(`SELECT id, kode, nama, jenis, coa_pendapatan, coa_beban FROM unit_usaha
+                WHERE status = 'aktif' ORDER BY kode`),
+    akun_pendapatan: akun.filter((a) => a.tipe === 'pendapatan'),
+    akun_beban: akun.filter((a) => a.tipe === 'beban'),
+    akun_kas: akun.filter((a) => a.is_kas || a.is_bank),
+  };
+});
+
+router.get('/api/unit-usaha/transaksi', 'unit.view', ({ query }) => unitSvc.daftarTransaksiUnit(query));
+
+router.get('/api/unit-usaha/transaksi/:id', 'unit.view', ({ params }) => {
+  const k = unitSvc.transaksiUnit(idParam(params));
+  return { ...k, terbilang: terbilang(k.nominal) };
+});
+
+const isianTransaksiUnit = (body, wajib) => {
+  const d = {};
+  if (wajib || body.unit_usaha_id !== undefined) d.unit_usaha_id = Number(body.unit_usaha_id) || null;
+  if (wajib || body.nominal !== undefined) d.nominal = num(body, 'nominal', { min: 1, label: 'Nominal' });
+  if (wajib || body.coa_kas !== undefined) d.coa_kas = str(body, 'coa_kas', { max: 20, label: 'Akun kas/bank' });
+  if (body.coa_akun !== undefined) d.coa_akun = str(body, 'coa_akun', { required: false, max: 20 }) || undefined;
+  if (body.tanggal) d.tanggal = date(body, 'tanggal');
+  if (body.keterangan !== undefined) d.keterangan = str(body, 'keterangan', { required: false, max: 300 });
+  if (body.pihak !== undefined) d.pihak = str(body, 'pihak', { required: false, max: 150 }) || null;
+  return d;
+};
+
+router.post('/api/unit-usaha/transaksi', null, ({ body, ctx }) => {
+  wajibSalahSatu(ctx, 'unit.create', 'kas.create');
+  return unitSvc.catatTransaksiUnit({
+    jenis: oneOf(body, 'jenis', Object.keys(unitSvc.JENIS_TRANSAKSI_UNIT), { label: 'Jenis transaksi' }),
+    tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
+    ...isianTransaksiUnit(body, true),
+  }, ctx);
+});
+
+router.put('/api/unit-usaha/transaksi/:id', null, ({ params, body, ctx }) => {
+  wajibSalahSatu(ctx, 'unit.koreksi', 'kas.koreksi');
+  return unitSvc.ubahTransaksiUnit(idParam(params), isianTransaksiUnit(body, false),
+    str(body, 'alasan', { max: 300, label: 'Alasan perubahan' }), ctx);
+});
+
+router.post('/api/unit-usaha/transaksi/:id/batal', null, ({ params, body, ctx }) => {
+  wajibSalahSatu(ctx, 'unit.koreksi', 'kas.koreksi');
+  return unitSvc.batalTransaksiUnit(idParam(params), str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' }), ctx);
 });
 
 // ---------------------------- Aset Tetap ----------------------------

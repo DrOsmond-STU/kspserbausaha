@@ -69,6 +69,7 @@ async function transaksiTab() {
           : k.jenis === 'kas_keluar' ? 'peringatan' : 'info', judul(k.jenis)) },
         { judul: 'Keterangan', render: (k) => el('div', [
           el('span.kecil', k.keterangan || '-'),
+          k.unit_nama && el('div.kecil.samar', `Unit: ${k.unit_nama}`),
           batal(k) && k.alasan_batal && el('div.kecil.neg', `Dibatalkan: ${k.alasan_batal}`),
         ]) },
         { judul: 'Pihak', kunci: 'pihak', render: (k) => el('span.kecil.samar', k.pihak || '-') },
@@ -243,6 +244,15 @@ async function semuaAkun() {
   return opsiAkun((await akunPostable()).filter((c) => !c.is_kas && !c.is_bank));
 }
 
+/** Unit usaha aktif sebagai pilihan opsional (penandaan segmen / cost center). */
+async function opsiUnit(terpilih) {
+  let unit = [];
+  try { unit = (await api.get('/api/master/unit-usaha', { limit: 200 })).data; } catch { /* tanpa izin: dilewati */ }
+  return [{ nilai: '', teks: '- tanpa unit (umum) -' }, ...unit
+    .filter((u) => u.status === 'aktif' || String(u.id) === String(terpilih ?? ''))
+    .map((u) => ({ nilai: u.id, teks: `${u.kode} — ${u.nama}` }))];
+}
+
 /** Pastikan akun bukti lama tetap muncul di pilihan walau kini tersaring/nonaktif. */
 const denganAkunLama = (opsi, kode, nama) => (kode && !opsi.some((o) => o.nilai === kode)
   ? [...opsi, { nilai: kode, teks: akunTeks(kode, nama) }] : opsi);
@@ -278,7 +288,10 @@ async function simpanUbah(lama, data, tutup, saatSelesai) {
 async function formKas(jenis, saatSelesai, lama = null) {
   let kasBank;
   let lawan;
-  try { [kasBank, lawan] = await Promise.all([akunKasBank(), semuaAkun()]); } catch (err) { galat(err); return; }
+  let unit;
+  try {
+    [kasBank, lawan, unit] = await Promise.all([akunKasBank(), semuaAkun(), opsiUnit(lama?.unit_usaha_id)]);
+  } catch (err) { galat(err); return; }
   if (lama) {
     kasBank = denganAkunLama(kasBank, lama.coa_kas, lama.akun_kas_nama);
     lawan = denganAkunLama(lawan, lama.coa_lawan, lama.akun_lawan_nama);
@@ -296,6 +309,8 @@ async function formKas(jenis, saatSelesai, lama = null) {
       { wajib: true }),
     kolom('Keterangan', input('keterangan', { nilai: lama?.keterangan || '' }), { wajib: true }),
     kolom('Pihak Terkait', input('pihak', { placeholder: 'Opsional', nilai: lama?.pihak || '' })),
+    kolom('Unit Usaha', pilih('unit_usaha_id', unit, lama?.unit_usaha_id ?? ''), {
+      bantuan: 'Opsional. Transaksi bertanda unit masuk ke laporan kinerja unit tersebut.' }),
     lama && kolomAlasan(),
   ].filter(Boolean));
   const namaBukti = masuk ? 'Bukti Kas Masuk' : jenis === 'petty_cash' ? 'Bukti Petty Cash' : 'Bukti Kas Keluar';
@@ -311,7 +326,8 @@ async function formKas(jenis, saatSelesai, lama = null) {
         try {
           if (lama) {
             await simpanUbah(lama, { tanggal: data.tanggal, nominal: data.nominal, coa_kas: data.coa_kas,
-              coa_lawan: data.coa_lawan, keterangan: data.keterangan, pihak: data.pihak, alasan: data.alasan },
+              coa_lawan: data.coa_lawan, keterangan: data.keterangan, pihak: data.pihak,
+              unit_usaha_id: data.unit_usaha_id, alasan: data.alasan },
             tutup, saatSelesai);
             return;
           }
