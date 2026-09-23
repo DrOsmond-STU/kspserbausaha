@@ -164,7 +164,7 @@ router.get('/api/aset/:id/pelepasan', 'aset.view', ({ params }) => {
 
 router.put('/api/aset/:id', 'aset.update', ({ params, body, ctx }) => aset.ubah(idParam(params), body, ctx));
 
-router.delete('/api/aset/:id', 'aset.delete', ({ params, ctx }) => aset.hapus(idParam(params), ctx));
+router.delete('/api/aset/:id', 'aset.koreksi', ({ params, ctx }) => aset.hapus(idParam(params), ctx));
 
 router.post('/api/aset/penyusutan', 'aset.post', ({ body, ctx }) =>
   aset.jalankanPenyusutan(str(body, 'periode', { max: 7, label: 'Periode (YYYY-MM)' }), ctx));

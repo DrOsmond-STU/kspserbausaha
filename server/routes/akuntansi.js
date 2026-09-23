@@ -62,7 +62,7 @@ router.post('/api/akuntansi/jurnal', 'akuntansi.create', ({ body, ctx }) => acc.
   lines: body.lines || body.detail || [],
 }, ctx));
 
-router.post('/api/akuntansi/jurnal/:id/batal', 'akuntansi.post', ({ params, body, ctx }) =>
+router.post('/api/akuntansi/jurnal/:id/batal', 'akuntansi.koreksi', ({ params, body, ctx }) =>
   acc.voidJournal(idParam(params), str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' }), ctx));
 
 // ------------------------- Jurnal berulang --------------------------

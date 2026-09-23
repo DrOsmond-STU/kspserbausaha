@@ -5,7 +5,8 @@ import { createRouter, notFound, badRequest, conflict } from '../lib/http.js';
 import { all, get, run, scalar, tx, nextNumber } from '../db.js';
 import { logAudit } from '../lib/audit.js';
 import { idParam, num, str, date, oneOf, today, rupiah, terbilang, yearOf } from '../lib/util.js';
-import { postJournal, voidJournal, saldoAkun, AKUN, assertAkunKas } from '../services/accounting.js';
+import { postJournal, saldoAkun, AKUN, assertAkunKas } from '../services/accounting.js';
+import * as kasSvc from '../services/kas.js';
 
 const router = createRouter();
 
@@ -44,90 +45,33 @@ router.get('/api/kas/posisi', 'kas.view', ({ query }) => {
 });
 
 /** Bukti kas masuk / keluar. */
-router.post('/api/kas', 'kas.create', ({ body, ctx }) => {
-  const jenis = oneOf(body, 'jenis', ['kas_masuk', 'kas_keluar', 'petty_cash'], { label: 'Jenis transaksi' });
-  const nominal = num(body, 'nominal', { min: 1, label: 'Nominal' });
-  const coaKas = str(body, 'coa_kas', { max: 20, label: 'Akun kas/bank' });
-  const coaLawan = str(body, 'coa_lawan', { max: 20, label: 'Akun lawan' });
-  if (coaKas === coaLawan) throw badRequest('Akun kas dan akun lawan tidak boleh sama');
-  assertAkunKas(coaKas);
-  const tanggal = date(body, 'tanggal', { required: false, dflt: today() });
-  const keterangan = str(body, 'keterangan', { max: 300, label: 'Keterangan' });
-
-  return tx(() => {
-    const masuk = jenis === 'kas_masuk';
-    // Nomor bukti kas dipakai sekaligus sebagai nomor jurnal agar keduanya
-    // dapat ditelusuri sebagai satu dokumen yang sama.
-    const nomor = nextNumber(masuk ? 'BKM' : 'BKK', tanggal);
-    const jurnal = postJournal({
-      nomor, tanggal, tipe: masuk ? 'kas_masuk' : 'kas_keluar',
-      keterangan, cabang_id: body.cabang_id ? Number(body.cabang_id) : null,
-      unit_usaha_id: body.unit_usaha_id ? Number(body.unit_usaha_id) : null,
-      lines: masuk
-        ? [{ coa_kode: coaKas, debit: nominal }, { coa_kode: coaLawan, kredit: nominal }]
-        : [{ coa_kode: coaLawan, debit: nominal }, { coa_kode: coaKas, kredit: nominal }],
-    }, ctx);
-    const { lastInsertRowid: id } = run(
-      `INSERT INTO kas_bank(nomor, tanggal, jenis, coa_kas, coa_lawan, nominal, keterangan, pihak,
-         cabang_id, unit_usaha_id, jurnal_id, dibuat_oleh)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [nomor, tanggal, jenis, coaKas, coaLawan, nominal, keterangan, body.pihak || null,
-        body.cabang_id || null, body.unit_usaha_id || null, jurnal.id, ctx?.user?.username || 'sistem'],
-    );
-    logAudit(ctx, { aksi: 'create', modul: 'kas', entitas_id: id,
-      keterangan: `${nomor} ${jenis} Rp ${nominal.toLocaleString('id-ID')}: ${keterangan}` });
-    return { id, nomor, jurnal, terbilang: terbilang(nominal) };
-  });
-});
+router.post('/api/kas', 'kas.create', ({ body, ctx }) => kasSvc.buatBuktiKas({
+  jenis: oneOf(body, 'jenis', ['kas_masuk', 'kas_keluar', 'petty_cash'], { label: 'Jenis transaksi' }),
+  nominal: num(body, 'nominal', { min: 1, label: 'Nominal' }),
+  coa_kas: str(body, 'coa_kas', { max: 20, label: 'Akun kas/bank' }),
+  coa_lawan: str(body, 'coa_lawan', { max: 20, label: 'Akun lawan' }),
+  tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
+  keterangan: str(body, 'keterangan', { max: 300, label: 'Keterangan' }),
+  pihak: str(body, 'pihak', { required: false, max: 150 }),
+  cabang_id: body.cabang_id ? Number(body.cabang_id) : null,
+  unit_usaha_id: body.unit_usaha_id ? Number(body.unit_usaha_id) : null,
+}, ctx));
 
 /** Transfer antar kas / bank. */
-router.post('/api/kas/transfer', 'kas.create', ({ body, ctx }) => {
-  const dari = str(body, 'coa_kas', { max: 20, label: 'Akun asal' });
-  const ke = str(body, 'coa_tujuan', { max: 20, label: 'Akun tujuan' });
-  if (dari === ke) throw badRequest('Akun asal dan tujuan tidak boleh sama');
-  assertAkunKas(dari, 'Akun asal');
-  assertAkunKas(ke, 'Akun tujuan');
-  const nominal = num(body, 'nominal', { min: 1 });
-  const tanggal = date(body, 'tanggal', { required: false, dflt: today() });
-  const keterangan = str(body, 'keterangan', { required: false, max: 300 }) || `Transfer ${dari} → ${ke}`;
-
-  return tx(() => {
-    const nomor = nextNumber('TRF', tanggal);
-    const jurnal = postJournal({
-      nomor, tanggal, tipe: 'umum', keterangan,
-      lines: [{ coa_kode: ke, debit: nominal }, { coa_kode: dari, kredit: nominal }],
-    }, ctx);
-    const { lastInsertRowid: id } = run(
-      `INSERT INTO kas_bank(nomor, tanggal, jenis, coa_kas, coa_lawan, coa_tujuan, nominal,
-         keterangan, jurnal_id, dibuat_oleh) VALUES(?,?,'transfer',?,?,?,?,?,?,?)`,
-      [nomor, tanggal, dari, ke, ke, nominal, keterangan, jurnal.id, ctx?.user?.username || 'sistem'],
-    );
-    logAudit(ctx, { aksi: 'create', modul: 'kas', entitas_id: id,
-      keterangan: `${nomor} transfer Rp ${nominal.toLocaleString('id-ID')} dari ${dari} ke ${ke}` });
-    return { id, nomor, jurnal };
-  });
-});
+router.post('/api/kas/transfer', 'kas.create', ({ body, ctx }) => kasSvc.buatTransfer({
+  coa_kas: str(body, 'coa_kas', { max: 20, label: 'Akun asal' }),
+  coa_tujuan: str(body, 'coa_tujuan', { max: 20, label: 'Akun tujuan' }),
+  nominal: num(body, 'nominal', { min: 1 }),
+  tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
+  keterangan: str(body, 'keterangan', { required: false, max: 300 }),
+}, ctx));
 
 /**
- * Membatalkan bukti kas / transfer yang salah input. Bukti tetap tersimpan
- * berstatus "batal" dan jurnalnya dibalik (reversing entry).
+ * Membatalkan bukti kas / transfer. Memerlukan izin koreksi; bukti tetap
+ * tersimpan berstatus "batal" dan jurnalnya dibalik (reversing entry).
  */
-router.post('/api/kas/:id/batal', 'kas.update', ({ params, body, ctx }) => {
-  const id = idParam(params);
-  const alasan = str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' });
-  const k = get('SELECT * FROM kas_bank WHERE id = ?', [id]);
-  if (!k) throw notFound('Bukti kas tidak ditemukan');
-  if (k.status === 'batal') throw conflict('Bukti kas ini sudah dibatalkan');
-  if (k.rekonsiliasi) throw conflict('Bukti kas yang sudah direkonsiliasi tidak dapat dibatalkan',
-    'Batalkan tanda rekonsiliasinya terlebih dahulu.');
-  return tx(() => {
-    const jurnal = k.jurnal_id ? voidJournal(k.jurnal_id, `Pembatalan ${k.nomor}: ${alasan}`, ctx, { sistem: true }) : null;
-    run("UPDATE kas_bank SET status = 'batal', alasan_batal = ? WHERE id = ?", [alasan, id]);
-    logAudit(ctx, { aksi: 'void', modul: 'kas', entitas_id: id,
-      keterangan: `${k.nomor} dibatalkan: ${alasan}`, before: k });
-    return { ...get('SELECT * FROM kas_bank WHERE id = ?', [id]), jurnal };
-  });
-});
+router.post('/api/kas/:id/batal', 'kas.koreksi', ({ params, body, ctx }) =>
+  kasSvc.batalBuktiKas(idParam(params), str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' }), ctx));
 
 /** Rekonsiliasi bank: menandai transaksi yang sudah cocok dengan rekening koran. */
 router.post('/api/kas/rekonsiliasi', 'kas.update', ({ body, ctx }) => {
