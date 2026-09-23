@@ -57,10 +57,14 @@ async function jurnalTab() {
         { judul: 'Debit', angka: true, render: (j) => rp(j.total_debit) },
         { judul: 'Kredit', angka: true, render: (j) => rp(j.total_kredit) },
         { judul: 'Status', render: (j) => status(j.status) },
-        { judul: '', render: (j) => el('button.btn.kecil.polos', {
-          title: 'Cetak bukti jurnal memorial',
-          onclick: (e) => { e.stopPropagation(); cetakJurnal(e, j.id); },
-        }, 'Cetak') },
+        { judul: '', render: (j) => el('div.gap8.nowrap', { onclick: (e) => e.stopPropagation() }, [
+          el('button.btn.kecil.polos', {
+            title: 'Cetak bukti jurnal memorial',
+            onclick: (e) => cetakJurnal(e, j.id),
+          }, 'Cetak'),
+          bolehKoreksi(j) && el('button.btn.kecil', { onclick: () => ubahJurnal(j.id, muat) }, 'Ubah'),
+          bolehKoreksi(j) && el('button.btn.kecil.polos', { onclick: () => batalkan(j, muat) }, 'Batal'),
+        ].filter(Boolean)) },
       ], d.data, { saatKlik: (j) => { location.hash = `#/akuntansi/${j.id}`; } }), [
         el('input', { type: 'search', placeholder: 'Cari nomor atau keterangan…',
           oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
@@ -77,6 +81,15 @@ async function jurnalTab() {
   await muat();
   return wadah;
 }
+
+/**
+ * Jurnal yang boleh diubah/dibatalkan dari buku besar: jurnal manual atau hasil
+ * jurnal berulang yang masih posted dan bukan jurnal balik. Jurnal otomatis
+ * modul dikoreksi dari dokumen sumbernya. Hanya untuk pemegang izin koreksi.
+ */
+const jurnalManual = (j) => j.status === 'posted' && ['manual', 'recurring'].includes(j.sumber)
+  && !String(j.referensi || '').startsWith('void:') && j.tipe !== 'penutup';
+const bolehKoreksi = (j) => izin('akuntansi.koreksi') && jurnalManual(j);
 
 /** Lencana asal jurnal: manual, berulang, atau otomatis dari modul. */
 const SUMBER = {
@@ -147,10 +160,14 @@ async function detailJurnal(id) {
   const j = await api.get(`/api/akuntansi/jurnal/${id}`);
   // Server menghitung dapat_dibatalkan; jurnal balik & jurnal sistem (selain penutup) tidak boleh dibatalkan di sini.
   const bisaBatal = j.status === 'posted' && j.dapat_dibatalkan !== false;
+  const koreksi = izin('akuntansi.koreksi');
   const wadah = el('div');
   wadah.append(el('div.gap8.mb16', [
     el('button.btn', { onclick: () => { location.hash = '#/akuntansi'; } }, '← Kembali'),
-    izin('akuntansi.post') && bisaBatal && el('button.btn.bahaya', {
+    koreksi && jurnalManual(j) && el('button.btn', {
+      onclick: () => ubahJurnal(j.id),
+    }, '✎ Ubah Jurnal'),
+    koreksi && bisaBatal && el('button.btn.bahaya', {
       onclick: () => batalkan(j),
     }, '↩ Batalkan Jurnal'),
     tombolCetak(() => dokJurnal(j), { label: 'Cetak Bukti' }),
@@ -193,7 +210,14 @@ async function detailJurnal(id) {
   return wadah;
 }
 
-function batalkan(j) {
+/** Setelah koreksi: tetap di halaman detail (muat ulang) atau pindah ke jurnal pengganti. */
+function segarkan(saatSelesai, idBaru) {
+  if (saatSelesai) { saatSelesai(); return; }
+  if (idBaru) location.hash = `#/akuntansi/${idBaru}`;
+  else navigasi(location.hash, true);
+}
+
+function batalkan(j, saatSelesai) {
   const form = el('div', [
     el('div.notis.peringatan', [el('div.isi', [
       el('strong', 'Jurnal tidak dihapus'),
@@ -208,15 +232,17 @@ function batalkan(j) {
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.bahaya', { onclick: async (e) => {
         const tombol = e.currentTarget;
+        const data = bacaForm(form);
+        if (!data.alasan.trim()) { toast('Alasan pembatalan wajib diisi', 'peringatan'); return; }
         tombol.disabled = true;
         try {
-          const h = await api.post(`/api/akuntansi/jurnal/${j.id}/batal`, bacaForm(form));
+          const h = await api.post(`/api/koreksi/jurnal/${j.id}/batal`, data);
           toast('Jurnal dibatalkan', 'sukses', `Jurnal balik ${h.nomor} dibuat`);
-          tutup(); navigasi(location.hash, true);
+          tutup(); segarkan(saatSelesai);
         } catch (err) {
           // 409: jurnal sistem / sudah dibatalkan - pesan & detail dari server menjelaskan jalannya.
           galat(err);
-          if (err.status === 409) { tutup(); navigasi(location.hash, true); } else tombol.disabled = false;
+          if (err.status === 409) { tutup(); segarkan(saatSelesai); } else tombol.disabled = false;
         }
       } }, 'Batalkan'),
     ],
@@ -303,31 +329,65 @@ function editorBaris(akun, baris) {
 
 // --------------------------- Jurnal manual ---------------------------
 
-async function formJurnal(saatSelesai) {
+/**
+ * Formulir jurnal manual. Dengan `lama` (detail jurnal), formulir terisi dan
+ * disimpan sebagai koreksi: jurnal lama dibalik lalu jurnal pengganti
+ * bernomor baru diposting (PUT /api/koreksi/jurnal/:id).
+ */
+async function formJurnal(saatSelesai, lama = null) {
   let akun;
   try { akun = await akunPostable(); } catch (err) { galat(err); return; }
-  const editor = editorBaris(akun, [{}, {}]);
+  const baris = lama ? (lama.detail || []).map((d) => ({ coa_kode: d.coa_kode, debit: d.debit || 0,
+    kredit: d.kredit || 0, keterangan: d.keterangan || '' })) : [{}, {}];
+  while (baris.length < 2) baris.push({});
+  const editor = editorBaris(akun, baris);
+  const inAlasan = el('textarea', { name: 'alasan', placeholder: 'mis. salah akun / salah nominal' });
 
   const form = el('div', [
+    lama && el('div.notis.peringatan', [el('div.isi', [
+      el('strong', `Koreksi jurnal ${lama.nomor}`),
+      el('div.kecil', 'Jurnal lama tidak dihapus: sistem membuat jurnal balik atasnya, lalu memposting '
+        + 'jurnal pengganti bernomor baru. Buku besar dan neraca ikut terkoreksi.'),
+    ])]),
     el('div.baris-form.k3', [
-      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() })),
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: lama?.tanggal || hariIni() })),
       kolom('Tipe', pilih('tipe', ['umum', 'penyesuaian', 'pembuka']
-        .map((t) => ({ nilai: t, teks: judul(t) })))),
-      kolom('Referensi', input('referensi', { placeholder: 'Opsional' })),
+        .map((t) => ({ nilai: t, teks: judul(t) })), lama?.tipe)),
+      lama ? kolom('Referensi', el('input', { type: 'text', nilai: lama.referensi || '-', disabled: true }))
+        : kolom('Referensi', input('referensi', { placeholder: 'Opsional' })),
     ]),
-    kolom('Keterangan Jurnal', input('keterangan'), { wajib: true }),
+    kolom('Keterangan Jurnal', input('keterangan', { nilai: lama?.keterangan || '' }), { wajib: true }),
     el('div.tebal.mt16.mb8', 'Rincian Jurnal'),
     editor.node,
-  ]);
+    lama && el('div.mt16', [kolom('Alasan Perubahan', inAlasan, { wajib: true })]),
+  ].filter(Boolean));
 
   const tutup = modal({
-    judul: 'Jurnal Manual', lebar: 'lebar', isi: form,
+    judul: lama ? `Ubah Jurnal ${lama.nomor}` : 'Jurnal Manual', lebar: 'lebar', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
         const tombol = e.currentTarget;
+        if (lama && !editor.seimbang()) { toast('Jurnal belum seimbang', 'peringatan'); return; }
+        if (lama && !inAlasan.value.trim()) { toast('Alasan perubahan wajib diisi', 'peringatan'); return; }
         tombol.disabled = true;
         try {
+          if (lama) {
+            const d = bacaForm(form);
+            const h = await api.put(`/api/koreksi/jurnal/${lama.id}`, {
+              tanggal: d.tanggal, tipe: d.tipe, keterangan: d.keterangan, alasan: d.alasan, lines: editor.terisi(),
+            });
+            const baru = h.pengganti;
+            toast('Jurnal berhasil diubah', 'sukses', `${h.dibatalkan} dibatalkan → ${baru.nomor}`);
+            tutup(); segarkan(saatSelesai, baru.id);
+            tawaranCetak('Jurnal Berhasil Diubah', el('dl.deskripsi', [
+              el('dt', 'Jurnal lama'), el('dd', [el('span.mono', h.dibatalkan), ' ', status('batal', 'Dibatalkan')]),
+              h.jurnal_balik && el('dt', 'Jurnal balik'), h.jurnal_balik && el('dd', el('span.mono', h.jurnal_balik.nomor)),
+              el('dt', 'Jurnal pengganti'), el('dd', el('span.mono', baru.nomor)),
+              el('dt', 'Total'), el('dd', el('strong', rp(baru.total))),
+            ].filter(Boolean)), () => ambilDokJurnal(baru.id), { label: 'Cetak Jurnal Pengganti' });
+            return;
+          }
           const h = await api.post('/api/akuntansi/jurnal', { ...bacaForm(form), lines: editor.terisi() });
           toast('Jurnal berhasil diposting', 'sukses', `${h.nomor} · ${rp(h.total)}`);
           tutup(); saatSelesai?.();
@@ -336,9 +396,16 @@ async function formJurnal(saatSelesai) {
             el('dt', 'Total'), el('dd', el('strong', rp(h.total))),
           ]), () => ambilDokJurnal(h.id));
         } catch (err) { galat(err); tombol.disabled = false; }
-      } }, 'Posting Jurnal'),
+      } }, lama ? 'Simpan Perubahan' : 'Posting Jurnal'),
     ],
   });
+}
+
+/** Membuka editor jurnal terisi data jurnal yang akan dikoreksi. */
+async function ubahJurnal(id, saatSelesai) {
+  let j;
+  try { j = await api.get(`/api/akuntansi/jurnal/${id}`); } catch (err) { galat(err); return; }
+  formJurnal(saatSelesai, j);
 }
 
 // ------------------------------ Periode ------------------------------
