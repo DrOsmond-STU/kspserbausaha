@@ -69,7 +69,7 @@ async function detail(id) {
     izin('rat.create') && !selesai && el('button.btn', { onclick: () => formVoting(r, segarkan) }, 'Buat Voting'),
     el('button.btn', { onclick: () => beritaAcara(id) }, 'Berita Acara'),
     izin('rat.update') && !selesai && el('button.btn', { onclick: () => formRat(r, segarkan) }, 'Ubah'),
-    izin('rat.update') && !selesai && el('button.btn.utama', {
+    izin('rat.update') && ['undangan', 'berlangsung'].includes(r.status) && el('button.btn.utama', {
       onclick: () => formSelesai(r, segarkan) }, 'Selesaikan RAT'),
     izin('rat.delete') && r.status === 'rencana' && !r.hadir && el('button.btn.bahaya', {
       onclick: () => hapusRat(r) }, 'Hapus'),
