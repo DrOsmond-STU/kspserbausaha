@@ -35,7 +35,9 @@ import portalRoutes from './routes/portal.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, '..', 'public');
-const PORT = Number(process.env.PORT) || 3000;
+// PORT=0 sah (sistem operasi memilih porta bebas - dipakai uji otomatis),
+// jadi tidak boleh ikut jatuh ke nilai bawaan seperti `Number(x) || 3000`.
+const PORT = process.env.PORT !== undefined && process.env.PORT !== '' ? Number(process.env.PORT) : 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 const router = mergeRouters(
@@ -229,7 +231,7 @@ server.listen(PORT, HOST, () => {
   console.log('  ║   Aplikasi Koperasi Serba Usaha                               ║');
   console.log('  ╚══════════════════════════════════════════════════════════════╝');
   console.log('');
-  console.log(`  Server berjalan  : http://localhost:${PORT}`);
+  console.log(`  Server berjalan  : http://localhost:${server.address().port}`);
   if (setting('mode_demo', '0') === '1') {
     console.log('  Akun contoh      : admin / Admin12345  (Super Administrator)');
   }

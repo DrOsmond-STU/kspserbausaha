@@ -141,9 +141,28 @@ yang menolak jurnal tidak seimbang, akun induk, akun nonaktif, dan periode yang
 sudah ditutup. Laporan keuangan dihitung dari buku besar, bukan dari
 tabel ringkasan terpisah, sehingga tidak mungkin terjadi selisih antar modul.
 
+**Tidak ada kode akun di dalam program.** Setiap jurnal otomatis mengambil
+akunnya dari master data (akun pada produk simpanan/pinjaman, barang, rekening
+bank, aset) atau dari **pemetaan akun** di Parameter Sistem (`coa.*`). Bila
+pemetaan belum diisi, transaksi ditolak dengan pesan yang menyebut pengaturan
+mana yang harus dilengkapi — sistem tidak pernah diam-diam menebak akun.
+Pemetaan divalidasi saat disimpan: akun harus ada, dapat dijurnal, aktif, dan
+bertipe sesuai; akun yang sedang dipetakan tidak dapat dihapus atau
+dinonaktifkan dari bagan akun.
+
+**Jurnal otomatis di setiap transaksi keuangan.** Setoran, penarikan, jasa
+simpanan, pencairan & angsuran pinjaman, penjualan kasir & retur, penerimaan
+barang, penyesuaian & opname stok, bukti kas, perolehan/pemeliharaan/
+penyusutan/pelepasan aset, pengembalian simpanan anggota keluar, serta
+pengesahan & distribusi SHU langsung membentuk jurnal. Jurnal berulang (sewa,
+amortisasi) diposting otomatis oleh server saat jatuh tempo.
+
 **Pembatalan tanpa penghapusan.** Jurnal tidak pernah dihapus. Pembatalan
 membentuk jurnal balik (*reversing entry*) dan jurnal asli tetap tersimpan —
-jejak audit tidak dapat disangkal sesuai UU ITE.
+jejak audit tidak dapat disangkal sesuai UU ITE. Jurnal yang dibentuk modul
+hanya dapat dibatalkan lewat dokumen sumbernya (bukti kas, transaksi simpanan,
+retur penjualan, hapus aset) sehingga saldo rekening, stok, dan register ikut
+terkoreksi; jurnal umum yang diinput manual dibatalkan dari buku besar.
 
 **Audit trail berantai.** Setiap baris audit menyimpan
 `sha256(hash_sebelumnya + isi)`. Penyisipan, penghapusan, atau perubahan satu
@@ -279,8 +298,14 @@ dan kedaluwarsa penguncian akun, serta penyajian berkas statis.
 
 Parameter operasional — identitas koperasi, persentase pembagian SHU sesuai
 AD/ART, batas pinjaman, masa tenggang denda, nilai poin loyalti, dan pemetaan
-akun bawaan — diubah melalui antarmuka pada **Administrator → Parameter Sistem**,
+akun — diubah melalui antarmuka pada **Administrator → Parameter Sistem**,
 tanpa perlu menyunting kode.
+
+| Kelompok pengaturan | Isi |
+|---|---|
+| `coa.*` — Pemetaan akun jurnal otomatis | Kas, bank, piutang, persediaan, PPN masukan/keluaran, aset tetap & akumulasi penyusutan, utang usaha, dana-dana SHU, simpanan pokok/wajib, cadangan, SHU berjalan, penjualan, pendapatan jasa/administrasi/denda/lain-lain, HPP, beban jasa simpanan, penyusutan, pemeliharaan, selisih, dan beban lain-lain. Akun pada master data (produk, barang, rekening bank, aset) didahulukan; pemetaan ini dipakai bila master tidak menentukan. |
+| `kelompok.*` — Kelompok akun laporan | Awalan kode akun (dipisah koma) untuk HPP, aset lancar, kewajiban lancar, piutang, persediaan, aset tetap, arus kas investasi/pendanaan, dan rekap pajak. Kas & setara kas ditentukan oleh tanda *kas*/*bank* pada bagan akun. |
+| `akuntansi.recurring_otomatis` | `1` = jurnal berulang diposting otomatis saat jatuh tempo (dicek saat server menyala dan setiap jam), `0` = hanya lewat tombol *Jalankan*. |
 
 ---
 
