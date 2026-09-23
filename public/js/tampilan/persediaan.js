@@ -9,6 +9,7 @@ import { grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
 import { cetakDokumen, tombolCetak, tawaranCetak, tandaAir } from '../cetak.js';
+import { dialogKoreksi } from './pembelian.js';
 
 // ---------------------------- Cetak bukti ----------------------------
 
@@ -58,7 +59,9 @@ export function dokPenyesuaian(m) {
       { label: 'Jenis', nilai: masuk ? 'Barang masuk (penambahan)' : 'Barang keluar (pengurangan)' },
       { label: 'Gudang', nilai: m.gudang_nama },
       { label: 'Keterangan', nilai: m.keterangan || '-' },
-    ],
+      m.dibatalkan && { label: 'Status', nilai: 'BATAL' },
+    ].filter(Boolean),
+    isi: m.dibatalkan ? tandaAir('BATAL') : undefined,
     bagian: [
       { judul: 'Barang', kolom: [
         { kunci: 'kode', label: 'Kode' }, { kunci: 'nama', label: 'Barang' },
@@ -91,6 +94,7 @@ export async function render() {
   const daftarTab = [
     { judul: 'Nilai Persediaan', render: stokTab },
     { judul: 'Kartu Stok', render: kartuTab },
+    { judul: 'Penyesuaian Stok', render: penyesuaianTab },
     { judul: 'Stock Opname', render: opnameTab },
   ];
   const bilah = el('div.tab', daftarTab.map((t, i) => el('button', {
@@ -171,51 +175,119 @@ async function kartuTab() {
     ...barang.data.map((b) => ({ nilai: b.id, teks: `${b.kode} — ${b.nama}` }))], '', {
     onchange: async (e) => {
       if (!e.target.value) { kosongkan(isi); return; }
-      kosongkan(isi).append(memuat());
-      try {
-        const d = await api.get('/api/persediaan/kartu-stok', { barang_id: e.target.value });
-        kosongkan(isi).append(
-          el('div.grid.k3.mb16', [
-            kpi('Barang', d.barang.nama, { catatan: d.barang.kode }),
-            kpi('HPP Rata-rata', rp(d.barang.harga_beli)),
-            kpi('Harga Jual', rp(d.barang.harga_jual), {
-              catatan: `Harga anggota ${rp(d.barang.harga_anggota)}` }),
-          ]),
-          panelTabel('Kartu Stok', tabel([
-            { judul: 'Tanggal', render: (m) => tgl(m.tanggal) },
-            { judul: 'Jenis', render: (m) => judul(m.jenis) },
-            { judul: 'Gudang', kunci: 'gudang_nama' },
-            { judul: 'Referensi', render: (m) => el('span.mono.kecil', m.referensi || '-') },
-            { judul: 'Masuk', angka: true, render: (m) => (m.qty > 0 ? el('span.pos', desimal(m.qty)) : '-') },
-            { judul: 'Keluar', angka: true, render: (m) => (m.qty < 0 ? el('span.neg', desimal(-m.qty)) : '-') },
-            { judul: 'Harga', angka: true, render: (m) => rp(m.harga) },
-            { judul: 'Saldo', angka: true, render: (m) => el('strong', desimal(m.saldo_qty)) },
-            { judul: '', render: (m) => (String(m.jenis).startsWith('penyesuaian_')
-              ? el('button.btn.kecil.polos', { title: 'Cetak bukti penyesuaian',
-                onclick: (ev) => cetakDenganTombol(ev, () => ambilDokPenyesuaian(m.id)) }, 'Bukti') : '') },
-          ], d.mutasi, { kosongTeks: 'Belum ada mutasi untuk barang ini' }), [
-            tombolCetak(() => ({
-              judul: 'Kartu Stok', subjudul: `${d.barang.kode} — ${d.barang.nama}`, jenis_ttd: 'laporan',
-              ringkasan: [{ label: 'Satuan', nilai: d.barang.satuan }, { label: 'HPP rata-rata', nilai: rp(d.barang.harga_beli) },
-                { label: 'Harga jual', nilai: rp(d.barang.harga_jual) },
-                { label: 'Saldo akhir', nilai: desimal(d.mutasi.at(-1)?.saldo_qty ?? 0) }],
-              bagian: [{ kolom: [
-                { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'jenis', label: 'Jenis' },
-                { kunci: 'gudang_nama', label: 'Gudang' }, { kunci: 'referensi', label: 'Referensi' },
-                { kunci: 'masuk', label: 'Masuk', tipe: 'angka' }, { kunci: 'keluar', label: 'Keluar', tipe: 'angka' },
-                { kunci: 'harga', label: 'Harga', tipe: 'uang' }, { kunci: 'saldo_qty', label: 'Saldo', tipe: 'angka' },
-              ], baris: d.mutasi.map((m) => ({ ...m, jenis: judul(m.jenis), masuk: m.qty > 0 ? m.qty : null,
-                keluar: m.qty < 0 ? -m.qty : null })),
-              total: { masuk: d.mutasi.reduce((s, m) => s + (m.qty > 0 ? m.qty : 0), 0),
-                keluar: d.mutasi.reduce((s, m) => s + (m.qty < 0 ? -m.qty : 0), 0) } }],
-            }), { label: 'Cetak Kartu Stok' }),
-          ]),
-        );
-      } catch (err) { galat(err); }
+      await muatKartu(e.target.value);
     },
   });
+  async function muatKartu(barangId) {
+    kosongkan(isi).append(memuat());
+    try {
+      const d = await api.get('/api/persediaan/kartu-stok', { barang_id: barangId });
+      // Penyesuaian yang sudah dibatalkan memiliki mutasi balik berreferensi "batal:stok:<id>".
+      const dibatalkan = new Set(d.mutasi.map((m) => String(m.referensi || ''))
+        .filter((r) => r.startsWith('batal:stok:')).map((r) => Number(r.slice(11))));
+      kosongkan(isi).append(
+        el('div.grid.k3.mb16', [
+          kpi('Barang', d.barang.nama, { catatan: d.barang.kode }),
+          kpi('HPP Rata-rata', rp(d.barang.harga_beli)),
+          kpi('Harga Jual', rp(d.barang.harga_jual), {
+            catatan: `Harga anggota ${rp(d.barang.harga_anggota)}` }),
+        ]),
+        panelTabel('Kartu Stok', tabel([
+          { judul: 'Tanggal', render: (m) => tgl(m.tanggal) },
+          { judul: 'Jenis', render: (m) => judul(m.jenis) },
+          { judul: 'Gudang', kunci: 'gudang_nama' },
+          { judul: 'Referensi', render: (m) => el('span.mono.kecil', m.referensi || '-') },
+          { judul: 'Masuk', angka: true, render: (m) => (m.qty > 0 ? el('span.pos', desimal(m.qty)) : '-') },
+          { judul: 'Keluar', angka: true, render: (m) => (m.qty < 0 ? el('span.neg', desimal(-m.qty)) : '-') },
+          { judul: 'Harga', angka: true, render: (m) => rp(m.harga) },
+          { judul: 'Saldo', angka: true, render: (m) => el('strong', desimal(m.saldo_qty)) },
+          { judul: '', render: (m) => (String(m.jenis).startsWith('penyesuaian_')
+            ? el('div.gap8', [
+              dibatalkan.has(m.id) && status('batal'),
+              el('button.btn.kecil.polos', { title: 'Cetak bukti penyesuaian',
+                onclick: (ev) => cetakDenganTombol(ev, () => ambilDokPenyesuaian(m.id)) }, 'Bukti'),
+              izin('persediaan.koreksi') && !dibatalkan.has(m.id) && el('button.btn.kecil.bahaya', {
+                onclick: () => batalPenyesuaian({ ...m, nama: d.barang.nama, satuan: d.barang.satuan },
+                  () => muatKartu(barangId)) }, 'Batal'),
+            ].filter(Boolean)) : '') },
+        ], d.mutasi, { kosongTeks: 'Belum ada mutasi untuk barang ini' }), [
+          tombolCetak(() => ({
+            judul: 'Kartu Stok', subjudul: `${d.barang.kode} — ${d.barang.nama}`, jenis_ttd: 'laporan',
+            ringkasan: [{ label: 'Satuan', nilai: d.barang.satuan }, { label: 'HPP rata-rata', nilai: rp(d.barang.harga_beli) },
+              { label: 'Harga jual', nilai: rp(d.barang.harga_jual) },
+              { label: 'Saldo akhir', nilai: desimal(d.mutasi.at(-1)?.saldo_qty ?? 0) }],
+            bagian: [{ kolom: [
+              { kunci: 'tanggal', label: 'Tanggal', tipe: 'tanggal' }, { kunci: 'jenis', label: 'Jenis' },
+              { kunci: 'gudang_nama', label: 'Gudang' }, { kunci: 'referensi', label: 'Referensi' },
+              { kunci: 'masuk', label: 'Masuk', tipe: 'angka' }, { kunci: 'keluar', label: 'Keluar', tipe: 'angka' },
+              { kunci: 'harga', label: 'Harga', tipe: 'uang' }, { kunci: 'saldo_qty', label: 'Saldo', tipe: 'angka' },
+            ], baris: d.mutasi.map((m) => ({ ...m, jenis: judul(m.jenis), masuk: m.qty > 0 ? m.qty : null,
+              keluar: m.qty < 0 ? -m.qty : null })),
+            total: { masuk: d.mutasi.reduce((s, m) => s + (m.qty > 0 ? m.qty : 0), 0),
+              keluar: d.mutasi.reduce((s, m) => s + (m.qty < 0 ? -m.qty : 0), 0) } }],
+          }), { label: 'Cetak Kartu Stok' }),
+        ]),
+      );
+    } catch (err) { galat(err); }
+  }
   wadah.append(el('div.alat', [el('label.kecil.lembut', 'Pilih barang'), pilihan]), isi);
   return wadah;
+}
+
+/** Riwayat penyesuaian stok manual beserta pembatalannya (koreksi). */
+async function penyesuaianTab() {
+  const wadah = el('div');
+  async function muat() {
+    kosongkan(wadah).append(memuat());
+    try {
+      const d = await api.get('/api/persediaan/penyesuaian', { limit: 200 });
+      kosongkan(wadah).append(panelTabel('Riwayat Penyesuaian Stok', tabel([
+        { judul: 'Tanggal', render: (m) => tgl(m.tanggal) },
+        { judul: 'Barang', render: (m) => el('div', [el('div', m.nama), el('div.kecil.samar', m.kode)]) },
+        { judul: 'Gudang', kunci: 'gudang_nama' },
+        { judul: 'Jenis', render: (m) => (m.jenis === 'penyesuaian_masuk' ? 'Masuk' : 'Keluar') },
+        { judul: 'Qty', angka: true, render: (m) => el(m.qty > 0 ? 'span.pos' : 'span.neg',
+          `${m.qty > 0 ? '+' : '−'}${desimal(Math.abs(m.qty))} ${m.satuan}`) },
+        { judul: 'Nilai', angka: true, render: (m) => rp(Math.abs(m.nilai ?? m.qty * m.harga)) },
+        { judul: 'Jurnal', render: (m) => el('span.mono.kecil', m.jurnal_nomor || '-') },
+        { judul: 'Keterangan', render: (m) => el('span.kecil', m.keterangan || '-') },
+        { judul: 'Status', render: (m) => (m.dibatalkan ? status('batal') : status('posted', 'Berlaku')) },
+        { judul: '', render: (m) => el('div.gap8', [
+          el('button.btn.kecil.polos', { title: 'Cetak bukti penyesuaian',
+            onclick: (e) => cetakDenganTombol(e, () => ambilDokPenyesuaian(m.id)) }, 'Bukti'),
+          izin('persediaan.koreksi') && !m.dibatalkan && el('button.btn.kecil.bahaya', {
+            onclick: () => batalPenyesuaian(m, muat) }, 'Batal'),
+        ].filter(Boolean)) },
+      ], d.data, { kosongTeks: 'Belum ada penyesuaian stok' }), [
+        izin('persediaan.update') && el('button.btn', { onclick: () => formPenyesuaian() }, '± Penyesuaian Stok'),
+      ].filter(Boolean)));
+    } catch (err) { galat(err); }
+  }
+  await muat();
+  return wadah;
+}
+
+/** Membatalkan satu penyesuaian stok manual: mutasi balik + jurnal balik. */
+function batalPenyesuaian(m, saatSelesai) {
+  const masuk = m.jenis === 'penyesuaian_masuk';
+  dialogKoreksi({
+    judul: 'Batalkan Penyesuaian Stok',
+    pesan: `Batalkan penyesuaian ${masuk ? 'masuk' : 'keluar'} ${desimal(Math.abs(m.qty))} ${m.satuan || ''} `
+      + `${m.nama || ''} tanggal ${tgl(m.tanggal)}?`,
+    rincian: [
+      masuk ? 'Barang dikeluarkan kembali dari gudang senilai saat penyesuaian dicatat.'
+        : 'Barang dikembalikan ke gudang senilai saat penyesuaian dicatat.',
+      'Jurnal penyesuaiannya dibalik sehingga saldo persediaan di neraca ikut terkoreksi. Penyesuaian tetap '
+        + 'tercatat di kartu stok bersama mutasi pembatalannya.',
+    ],
+    tombol: 'Batalkan Penyesuaian',
+    kirim: (alasan) => api.post(`/api/koreksi/stok/${m.id}/batal`, { alasan }),
+    saatBerhasil: async (h) => {
+      toast('Penyesuaian stok dibatalkan', 'sukses', h.jurnal_balik?.length
+        ? `Jurnal balik ${h.jurnal_balik.map((j) => j.nomor).join(', ')}` : 'Tanpa jurnal (nilai nol)');
+      await saatSelesai?.();
+    },
+  });
 }
 
 async function opnameTab() {

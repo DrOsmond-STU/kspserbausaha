@@ -3,12 +3,13 @@
  */
 import {
   api, el, kpi, panel, panelTabel, tabel, rp, angka, desimal, tgl, judul, modal, kolom, input,
-  pilih, bacaForm, toast, galat, kosongkan, kosong, hariIni, status,
+  pilih, bacaForm, toast, galat, kosongkan, kosong, hariIni, status, waktu,
 } from '../inti.js';
-import { negara } from '../app.js';
+import { negara, izin } from '../app.js';
 import { daftarRekeningBank, kolomRekeningBank, aturKolomBank } from './pembelian.js';
+import { bolehKoreksiJual, batalPenjualan, formUbahPenjualan } from './penjualan.js';
 import { ikon } from '../ikon.js';
-import { cetakDokumen, tombolCetak } from '../cetak.js';
+import { cetakDokumen, tombolCetak, tandaAir } from '../cetak.js';
 
 export async function render() {
   const [gudang, rekap, bank] = await Promise.all([
@@ -20,6 +21,9 @@ export async function render() {
   const gudangId = gudang.data[0]?.id;
 
   const wadah = el('div');
+  const kotakKpi = el('div');
+  const kotakRekap = el('div');
+  const kotakRiwayat = el('div');
   const daftarItem = el('div');
   const ringkas = el('div');
   const kotakAnggota = el('div');
@@ -223,19 +227,81 @@ export async function render() {
             gambarAnggota(); gambarKeranjang();
             kotakCari.focus();
             tampilkanStruk(hasil);
+            segarkanRekap();
           } catch (err) { galat(err); tombol.disabled = false; }
         } }, 'Proses Pembayaran'),
       ],
     });
   }
 
+  // ------------------------- Rekap & transaksi hari ini -------------------------
+  // Rekap (hanya transaksi berstatus selesai) dan daftar transaksi hari ini dimuat
+  // ulang sesudah penjualan/koreksi tanpa mengosongkan keranjang yang sedang diisi.
+  function gambarRekap(r) {
+    kosongkan(kotakKpi).append(el('div.grid.k4.mb16', [
+      kpi('Transaksi Hari Ini', angka(r.jumlah_transaksi), { ikon: ikon('struk') }),
+      kpi('Omzet Hari Ini', rp(r.total), { ikon: ikon('uang') }),
+      kpi('Laba Kotor', rp(r.laba_kotor), { jenis: 'sukses' }),
+      kpi('Diskon Diberikan', rp(r.diskon)),
+    ]));
+    kosongkan(kotakRekap).append(el('div.grid.k2', [
+      panelTabel('Rekap per Metode Bayar (hari ini)', tabel([
+        { judul: 'Metode', render: (m) => judul(m.metode_bayar) },
+        { judul: 'Transaksi', angka: true, render: (m) => angka(m.jumlah) },
+        { judul: 'Nilai', angka: true, render: (m) => rp(m.total) },
+      ], r.per_metode, { kosongTeks: 'Belum ada transaksi hari ini' }), [
+        tombolCetak(() => dokRekap(r), { label: 'Cetak Rekap' }),
+      ]),
+      panelTabel('Barang Terlaris (hari ini)', tabel([
+        { judul: 'Kode', render: (b) => el('span.mono.kecil', b.kode) },
+        { judul: 'Barang', kunci: 'nama' },
+        { judul: 'Qty', angka: true, render: (b) => desimal(b.qty) },
+        { judul: 'Nilai', angka: true, render: (b) => rp(b.nilai) },
+      ], r.terlaris, { kosongTeks: 'Belum ada penjualan' })),
+    ]));
+  }
+
+  async function muatRiwayat() {
+    if (!izin('penjualan.view')) return;
+    const hari = rekap.tanggal || hariIni();
+    const d = await api.get('/api/penjualan', { dari: hari, sampai: hari, tipe: 'pos', limit: 200 });
+    const koreksi = bolehKoreksiJual();
+    kosongkan(kotakRiwayat).append(panelTabel(`Transaksi Hari Ini (${angka(d.total)})`, tabel([
+      { judul: 'Waktu', render: (p) => el('span.kecil.nowrap', waktu(p.created_at)) },
+      { judul: 'Nomor', render: (p) => el('span.mono.kecil', p.nomor) },
+      { judul: 'Pembeli', render: (p) => p.anggota_nama || p.customer_nama || el('span.samar', 'Umum') },
+      { judul: 'Metode', render: (p) => judul(p.metode_bayar) },
+      { judul: 'Kasir', render: (p) => el('span.kecil', p.kasir || '-') },
+      { judul: 'Total', angka: true, render: (p) => (p.status === 'batal'
+        ? el('s.samar', rp(p.total)) : el('strong', rp(p.total))) },
+      { judul: 'Status', render: (p) => el('div', [status(p.status),
+        p.status === 'batal' && p.alasan_batal && el('div.kecil.samar', p.alasan_batal)]) },
+      { judul: '', render: (p) => el('div.gap8', [
+        el('button.btn.kecil.polos', { title: 'Cetak ulang struk', onclick: async (e) => {
+          const tombol = e.currentTarget;
+          tombol.disabled = true;
+          try { await cetakDokumen(dokStruk(strukDariPenjualan(await api.get(`/api/penjualan/${p.id}`))));
+          } catch (err) { galat(err); } finally { tombol.disabled = false; }
+        } }, 'Struk'),
+        koreksi && p.status === 'selesai' && el('button.btn.kecil', {
+          title: 'Ubah transaksi (dibatalkan lalu diganti transaksi bernomor baru)',
+          onclick: () => formUbahPenjualan(p.id, { saatSelesai: segarkanRekap,
+            cetak: (baru) => dokStruk(baru), labelCetak: 'Cetak Struk Pengganti' }).catch(galat) }, 'Ubah'),
+        koreksi && p.status === 'selesai' && el('button.btn.kecil.bahaya', {
+          onclick: () => batalPenjualan(p, segarkanRekap) }, 'Batal'),
+      ].filter(Boolean)) },
+    ], d.data, { kosongTeks: 'Belum ada transaksi hari ini' })));
+  }
+
+  async function segarkanRekap() {
+    try {
+      const [r] = await Promise.all([api.get('/api/pos/rekap'), muatRiwayat()]);
+      gambarRekap(r);
+    } catch (err) { galat(err); }
+  }
+
   // ------------------------------ Tata letak ------------------------------
-  wadah.append(el('div.grid.k4.mb16', [
-    kpi('Transaksi Hari Ini', angka(rekap.jumlah_transaksi), { ikon: ikon('struk') }),
-    kpi('Omzet Hari Ini', rp(rekap.total), { ikon: ikon('uang') }),
-    kpi('Laba Kotor', rp(rekap.laba_kotor), { jenis: 'sukses' }),
-    kpi('Diskon Diberikan', rp(rekap.diskon)),
-  ]));
+  wadah.append(kotakKpi);
 
   wadah.append(el('div', { gaya: { display: 'grid', gap: '16px',
     gridTemplateColumns: 'minmax(0,1.9fr) minmax(280px,1fr)' }, class: 'pos-tata' }, [
@@ -259,22 +325,10 @@ export async function render() {
     ]),
   ]));
 
-  // Rekap penutupan kasir
-  wadah.append(el('div.grid.k2', [
-    panelTabel('Rekap per Metode Bayar (hari ini)', tabel([
-      { judul: 'Metode', render: (m) => judul(m.metode_bayar) },
-      { judul: 'Transaksi', angka: true, render: (m) => angka(m.jumlah) },
-      { judul: 'Nilai', angka: true, render: (m) => rp(m.total) },
-    ], rekap.per_metode, { kosongTeks: 'Belum ada transaksi hari ini' }), [
-      tombolCetak(() => dokRekap(rekap), { label: 'Cetak Rekap' }),
-    ]),
-    panelTabel('Barang Terlaris (hari ini)', tabel([
-      { judul: 'Kode', render: (b) => el('span.mono.kecil', b.kode) },
-      { judul: 'Barang', kunci: 'nama' },
-      { judul: 'Qty', angka: true, render: (b) => desimal(b.qty) },
-      { judul: 'Nilai', angka: true, render: (b) => rp(b.nilai) },
-    ], rekap.terlaris, { kosongTeks: 'Belum ada penjualan' })),
-  ]));
+  // Rekap penutupan kasir & transaksi hari ini (dengan koreksi bagi yang berwenang)
+  wadah.append(kotakRekap, kotakRiwayat);
+  gambarRekap(rekap);
+  await muatRiwayat().catch(galat);
 
   gambarAnggota();
   gambarKeranjang();
@@ -284,9 +338,11 @@ export async function render() {
 
 /** Struk kasir (kertas 80 mm) dari hasil POST /api/pos/jual. */
 export function dokStruk(h) {
-  const kasir = negara.user ? (negara.user.nama || negara.user.username) : '';
+  // Cetak ulang memakai kasir yang tercatat; struk baru memakai pengguna yang sedang masuk.
+  const kasir = h.kasir || (negara.user ? (negara.user.nama || negara.user.username) : '');
   return {
     judul: 'Struk Belanja', nomor: h.nomor, ukuran: 'struk', jenis_ttd: 'struk_pos',
+    isi: h.status === 'batal' ? tandaAir('BATAL') : undefined,
     keterangan: [`${tgl(h.tanggal)}${kasir ? ` · Kasir ${kasir}` : ''}`,
       h.anggota ? `Anggota: ${h.anggota.nama} (${h.anggota.nomor_anggota})` : null].filter(Boolean),
     bagian: [
@@ -304,6 +360,16 @@ export function dokStruk(h) {
       ].filter(Boolean) },
     ],
     catatan: 'Terima kasih telah berbelanja di koperasi kita — dari anggota, oleh anggota, untuk anggota.',
+  };
+}
+
+/** Menyusun data struk (bentuk hasil POST /api/pos/jual) dari GET /api/penjualan/:id untuk cetak ulang. */
+function strukDariPenjualan(p) {
+  return {
+    ...p,
+    items: p.detail.map((d) => ({ kode: d.kode, nama: d.nama, qty: d.qty, satuan: d.satuan,
+      harga: d.harga, diskon: d.diskon, subtotal: d.subtotal })),
+    anggota: p.anggota_nama ? { nama: p.anggota_nama, nomor_anggota: p.nomor_anggota } : null,
   };
 }
 

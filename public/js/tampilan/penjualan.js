@@ -6,8 +6,8 @@ import {
   galat, memuat, kosongkan, hariIni, awalTahun, kolom, input, pilih, bacaForm,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
-import { hutangTab, daftarRekeningBank, kolomRekeningBank } from './pembelian.js';
-import { cetakDokumen, tombolCetak, tandaAir } from '../cetak.js';
+import { hutangTab, daftarRekeningBank, kolomRekeningBank, aturKolomBank, dialogKoreksi } from './pembelian.js';
+import { cetakDokumen, tombolCetak, tawaranCetak, tandaAir } from '../cetak.js';
 
 export async function render() {
   const wadah = el('div');
@@ -69,7 +69,7 @@ export function dokFaktur(p) {
       ], total: { _label: 'Kembali', jumlah: p.kembali } },
     ],
     terbilang: judul(p.terbilang),
-    catatan: adaRetur ? `Sebagian barang telah diretur: ${p.detail.filter((d) => d.qty_retur > 0)
+    catatan: batal ? `Dibatalkan: ${p.alasan_batal || '-'}` : adaRetur ? `Sebagian barang telah diretur: ${p.detail.filter((d) => d.qty_retur > 0)
       .map((d) => `${d.nama} ${desimal(d.qty_retur)} ${d.satuan}`).join(', ')}.` : undefined,
     penanda_tambahan: p.anggota_nama || p.customer_nama ? { Pembeli: p.anggota_nama || p.customer_nama,
       Pelanggan: p.anggota_nama || p.customer_nama } : {},
@@ -138,11 +138,15 @@ async function transaksiTab() {
     kosongkan(wadah).append(memuat());
     try {
       const d = await api.get('/api/penjualan', { dari, sampai, q, limit: 200 });
+      // Transaksi batal tetap tampil, tetapi tidak dihitung pada omzet/rata-rata/total cetak.
+      const batal = d.jumlah_batal ?? d.data.filter((p) => p.status === 'batal').length;
+      const sah = d.data.filter((p) => p.status !== 'batal');
+      const koreksi = bolehKoreksiJual();
       kosongkan(wadah).append(
         el('div.grid.k3.mb16', [
-          kpi('Jumlah Transaksi', angka(d.total)),
+          kpi('Jumlah Transaksi', angka(d.total - batal), { catatan: batal ? `${angka(batal)} transaksi batal tidak dihitung` : undefined }),
           kpi('Omzet Periode', rp(d.omzet), { jenis: 'sukses' }),
-          kpi('Rata-rata per Transaksi', rp(d.total ? d.omzet / d.total : 0)),
+          kpi('Rata-rata per Transaksi', rp(d.total - batal ? d.omzet / (d.total - batal) : 0)),
         ]),
         panelTabel('Transaksi Penjualan', tabel([
           { judul: 'Tanggal', render: (p) => el('span.nowrap', tgl(p.tanggal)) },
@@ -152,13 +156,22 @@ async function transaksiTab() {
             || el('span.samar', 'Umum') },
           { judul: 'Metode', render: (p) => judul(p.metode_bayar) },
           { judul: 'Total', angka: true, render: (p) => el('strong', rp(p.total)) },
-          { judul: 'Laba Kotor', angka: true, render: (p) => el('span.pos', rp(p.total - p.hpp)) },
-          { judul: 'Status', render: (p) => status(p.status) },
-          { judul: '', render: (p) => el('button.btn.kecil.polos', {
-            title: 'Cetak faktur / nota',
-            onclick: (e) => { e.stopPropagation(); cetakDenganTombol(e, async () => dokFaktur(await api.get(`/api/penjualan/${p.id}`))); },
-          }, 'Cetak') },
-        ], d.data, { saatKlik: (p) => lihat(p.id), kosongTeks: 'Belum ada transaksi pada periode ini' }), [
+          { judul: 'Laba Kotor', angka: true, render: (p) => (p.status === 'batal' ? el('span.samar', '-')
+            : el('span.pos', rp(p.total - p.hpp))) },
+          { judul: 'Status', render: (p) => el('div', [status(p.status),
+            p.status === 'batal' && p.alasan_batal && el('div.kecil.samar', p.alasan_batal)]) },
+          { judul: '', render: (p) => el('div.gap8', { onclick: (e) => e.stopPropagation() }, [
+            el('button.btn.kecil.polos', {
+              title: 'Cetak faktur / nota',
+              onclick: (e) => cetakDenganTombol(e, async () => dokFaktur(await api.get(`/api/penjualan/${p.id}`))),
+            }, 'Cetak'),
+            koreksi && p.status === 'selesai' && el('button.btn.kecil', {
+              title: 'Ubah transaksi (dibatalkan lalu diganti transaksi bernomor baru)',
+              onclick: () => formUbahPenjualan(p.id, { saatSelesai: muat }).catch(galat) }, 'Ubah'),
+            koreksi && p.status === 'selesai' && el('button.btn.kecil.bahaya', {
+              onclick: () => batalPenjualan(p, muat) }, 'Batal'),
+          ].filter(Boolean)) },
+        ], d.data, { saatKlik: (p) => lihat(p.id, muat).catch(galat), kosongTeks: 'Belum ada transaksi pada periode ini' }), [
           el('input', { type: 'search', placeholder: 'Cari nomor transaksi…',
             oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
           el('input', { type: 'date', nilai: dari, onchange: (e) => { dari = e.target.value; muat(); } }),
@@ -173,9 +186,11 @@ async function transaksiTab() {
               { kunci: 'total', label: 'Total', tipe: 'uang' }, { kunci: 'laba', label: 'Laba Kotor', tipe: 'uang' },
               { kunci: 'status', label: 'Status' },
             ], baris: d.data.map((p) => ({ ...p, tipe: p.tipe.toUpperCase(), pembeli: pembeli(p),
-              metode: judul(p.metode_bayar), laba: p.total - p.hpp, status: judul(p.status) })),
-            total: { total: d.data.reduce((s, p) => s + p.total, 0), laba: d.data.reduce((s, p) => s + p.total - p.hpp, 0) } }],
-            catatan: d.total > d.data.length ? `Menampilkan ${d.data.length} dari ${d.total} transaksi.` : undefined,
+              metode: judul(p.metode_bayar), laba: p.status === 'batal' ? null : p.total - p.hpp,
+              status: p.status === 'batal' ? `Batal${p.alasan_batal ? ` (${p.alasan_batal})` : ''}` : judul(p.status) })),
+            total: { total: sah.reduce((s, p) => s + p.total, 0), laba: sah.reduce((s, p) => s + p.total - p.hpp, 0) } }],
+            catatan: [d.total > d.data.length ? `Menampilkan ${d.data.length} dari ${d.total} transaksi.` : '',
+              batal ? 'Transaksi berstatus batal tidak dijumlahkan.' : ''].filter(Boolean).join(' ') || undefined,
           }), { label: 'Cetak' }),
         ]),
       );
@@ -185,11 +200,16 @@ async function transaksiTab() {
   return wadah;
 }
 
-async function lihat(id) {
+async function lihat(id, saatBerubah) {
   const p = await api.get(`/api/penjualan/${id}`);
+  const bisaKoreksi = bolehKoreksiJual() && p.status === 'selesai' && !p.detail.some((d) => d.qty_retur > 0);
   const tutup = modal({
     judul: `Transaksi ${p.nomor}`, lebar: 'lebar',
     isi: el('div', [
+      p.status === 'batal' && el('div.notis.bahaya', [el('div.isi', [
+        el('strong', 'Transaksi dibatalkan'),
+        el('div.kecil', p.alasan_batal || 'Tanpa keterangan'),
+      ])]),
       el('dl.deskripsi.mb16', [
         el('dt', 'Tanggal'), el('dd', tgl(p.tanggal, true)),
         el('dt', 'Pembeli'), el('dd', p.anggota_nama
@@ -221,8 +241,12 @@ async function lihat(id) {
         el('dt', 'HPP'), el('dd', rp(p.hpp)),
         el('dt', 'Laba kotor'), el('dd', el('strong.pos', rp(p.total - p.hpp))),
       ]),
-    ]),
+    ].filter(Boolean)),
     kaki: [
+      bisaKoreksi && el('button.btn', {
+        onclick: () => { tutup(); formUbahPenjualan(p.id, { saatSelesai: saatBerubah }).catch(galat); } }, 'Ubah'),
+      bisaKoreksi && el('button.btn.bahaya', {
+        onclick: () => { tutup(); batalPenjualan(p, saatBerubah); } }, 'Batalkan Transaksi'),
       izin('pos.update') && p.status === 'selesai' && el('button.btn.bahaya', {
         onclick: () => { tutup(); formRetur(p).catch(galat); } }, '↩ Retur'),
       p.detail.some((d) => d.qty_retur > 0) && el('button.btn', {
@@ -230,6 +254,188 @@ async function lihat(id) {
       tombolCetak(() => dokFaktur(p), { label: p.tipe === 'pos' ? 'Cetak Nota' : 'Cetak Faktur' }),
       el('button.btn.utama', { onclick: () => tutup() }, 'Tutup'),
     ].filter(Boolean),
+  });
+}
+
+// ------------------------- Koreksi (ubah & batal) -------------------------
+
+/** Hak mengubah/membatalkan penjualan tersimpan (tidak ikut wildcard pos.* / penjualan.*). */
+export const bolehKoreksiJual = () => izin('pos.koreksi') || izin('penjualan.koreksi');
+
+/** Membatalkan seluruh transaksi penjualan / POS. */
+export function batalPenjualan(p, saatSelesai) {
+  dialogKoreksi({
+    judul: 'Batalkan Transaksi Penjualan',
+    pesan: `Batalkan transaksi ${p.nomor} senilai ${rp(p.total)}?`,
+    rincian: [
+      'Jurnal penjualan (pendapatan, PPN, HPP, persediaan, dan kas/bank/piutang) dibalik; barang kembali ke gudang '
+        + 'pada HPP semula; piutang yang belum dibayar dihapus; potongan simpanan dikembalikan; poin loyalti dibatalkan.',
+      'Transaksi tetap tercatat dengan status batal. Transaksi yang sudah diretur sebagian atau piutangnya sudah '
+        + 'dibayar tidak dapat dibatalkan.',
+    ],
+    tombol: 'Batalkan Transaksi',
+    kirim: (alasan) => api.post(`/api/koreksi/penjualan/${p.id}/batal`, { alasan }),
+    saatBerhasil: async (h) => {
+      toast('Transaksi dibatalkan', 'sukses',
+        `${p.nomor}${h.jurnal_balik?.nomor ? ` · jurnal balik ${h.jurnal_balik.nomor}` : ''}`);
+      await saatSelesai?.();
+    },
+  });
+}
+
+const METODE_JUAL = [
+  { nilai: 'tunai', teks: 'Tunai' }, { nilai: 'qris', teks: 'QRIS' }, { nilai: 'transfer', teks: 'Transfer Bank' },
+  { nilai: 'piutang', teks: 'Piutang (kredit)' }, { nilai: 'potong_simpanan', teks: 'Potong Simpanan Sukarela' },
+];
+
+/**
+ * Formulir ubah penjualan tersimpan. Server membatalkan transaksi lama (jurnal
+ * balik, stok kembali) lalu membuat transaksi pengganti bernomor baru dalam
+ * satu transaksi basis data. `cetak(hasil)` (opsional) menyusun dokumen cetak
+ * pengganti; bawaannya faktur/nota dari GET /api/penjualan/:id.
+ */
+export async function formUbahPenjualan(id, { saatSelesai, cetak, labelCetak } = {}) {
+  const [p, barang, anggota, bank] = await Promise.all([
+    api.get(`/api/penjualan/${id}`),
+    api.get('/api/master/barang', { limit: 500 }),
+    api.get('/api/anggota', { status: 'aktif', limit: 1000 }).catch(() => ({ data: [] })),
+    daftarRekeningBank(),
+  ]);
+  if (p.status !== 'selesai') throw new Error(`Transaksi berstatus "${judul(p.status)}" tidak dapat diubah`);
+  if (p.detail.some((d) => d.qty_retur > 0)) {
+    throw Object.assign(new Error('Sebagian barang pada transaksi ini sudah diretur'),
+      { detail: 'Gunakan retur penjualan untuk sisa barang yang ingin dikoreksi.' });
+  }
+  // Anggota transaksi semula tetap dapat dipilih walau kini tidak aktif.
+  const daftarAnggota = [...anggota.data];
+  if (p.anggota_id && !daftarAnggota.some((a) => a.id === p.anggota_id)) {
+    daftarAnggota.unshift({ id: p.anggota_id, nama: p.anggota_nama, nomor_anggota: p.nomor_anggota });
+  }
+  const items = p.detail.map((d) => ({ barang_id: d.barang_id, qty: d.qty, harga: d.harga, diskon: d.diskon || 0 }));
+  const diskonItemSemula = p.detail.reduce((s, d) => s + (d.diskon || 0), 0);
+  const daftar = el('div');
+  const ringkas = el('div.antara.mt8');
+  const hargaBarang = (b, anggotaId) => (anggotaId && b.harga_anggota > 0 ? b.harga_anggota : b.harga_jual);
+
+  function gambar() {
+    kosongkan(daftar);
+    daftar.append(el('div.kecil.lembut', { gaya: { display: 'grid', gap: '8px', marginBottom: '4px',
+      gridTemplateColumns: 'minmax(0,2.4fr) minmax(0,.9fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.1fr) auto' } },
+    ['Barang', 'Qty', 'Harga', 'Diskon', el('span.kanan', 'Subtotal'), el('span', { gaya: { width: '28px' } })]));
+    items.forEach((it, i) => {
+      daftar.append(el('div', { gaya: { display: 'grid', gap: '8px', marginBottom: '8px', alignItems: 'center',
+        gridTemplateColumns: 'minmax(0,2.4fr) minmax(0,.9fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.1fr) auto' } }, [
+        el('select', { onchange: (e) => {
+          it.barang_id = Number(e.target.value);
+          const b = barang.data.find((x) => x.id === it.barang_id);
+          if (b) { it.harga = hargaBarang(b, form.querySelector('[name=anggota_id]').value); gambar(); }
+        } }, [el('option', { value: '' }, '- pilih barang -'),
+          ...barang.data.map((b) => el('option', { value: b.id, selected: b.id === it.barang_id },
+            `${b.kode} — ${b.nama}`))]),
+        el('input', { type: 'number', class: 'angka', placeholder: 'Qty', min: 0, step: 'any',
+          nilai: it.qty || '', oninput: (e) => { it.qty = Number(e.target.value) || 0; hitung(); } }),
+        el('input', { type: 'number', class: 'angka', placeholder: 'Harga', min: 0,
+          nilai: it.harga ?? '', oninput: (e) => { it.harga = Number(e.target.value) || 0; hitung(); } }),
+        el('input', { type: 'number', class: 'angka', placeholder: 'Diskon', min: 0,
+          nilai: it.diskon || 0, oninput: (e) => { it.diskon = Math.max(0, Number(e.target.value) || 0); hitung(); } }),
+        el('div.kanan.kecil.tebal', { class: 'subtotal-baris' }, rp((it.qty || 0) * (it.harga || 0) - (it.diskon || 0))),
+        el('button.btn.kecil.polos', { title: 'Hapus baris', onclick: () => { items.splice(i, 1); gambar(); } }, '✕'),
+      ]));
+    });
+    hitung();
+  }
+  function hitung() {
+    daftar.querySelectorAll('.subtotal-baris').forEach((n, i) => {
+      const it = items[i];
+      n.textContent = rp((it.qty || 0) * (it.harga || 0) - (it.diskon || 0));
+    });
+    const d = bacaForm(form);
+    const subtotal = items.reduce((s, i) => s + (i.qty || 0) * (i.harga || 0) - (i.diskon || 0), 0);
+    const total = subtotal - (Number(d.diskon) || 0) + (Number(d.pajak) || 0);
+    kosongkan(ringkas).append(
+      el('span.lembut', `${items.length} baris barang · total semula ${rp(p.total)}`),
+      el('span', [el('span.lembut', Number(d.poin_dipakai) > 0 ? 'Perkiraan total (sebelum poin): ' : 'Perkiraan total: '),
+        el('strong', { gaya: { fontSize: '16px' } }, rp(total))]),
+    );
+    return total;
+  }
+
+  const kolomBank = kolomRekeningBank(bank, { label: 'Rekening Bank Tujuan' });
+  const form = el('div');
+  const kotakBayar = kolom('Uang Diterima', input('bayar', { tipe: 'number', min: 0, nilai: p.bayar }), {
+    bantuan: 'Kosongkan bila sama dengan total baru' });
+  const aturMetode = (m) => {
+    kotakBayar.style.display = m === 'tunai' ? '' : 'none';
+    aturKolomBank(kolomBank, ['transfer', 'qris'].includes(m));
+  };
+  form.append(
+    el('div.notis.info', [el('div.isi', [
+      el('strong', 'Perubahan dicatat sebagai pembatalan + transaksi pengganti'),
+      el('div.kecil', `Transaksi ${p.nomor} dibatalkan (jurnal dibalik, barang kembali ke gudang), lalu transaksi `
+        + 'pengganti bernomor baru dibuat beserta jurnalnya. Keduanya tetap tercatat untuk jejak audit.'),
+    ])]),
+    el('div.baris-form.k3', [
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: p.tanggal })),
+      kolom('Anggota', pilih('anggota_id', [
+        { nilai: '', teks: p.customer_nama ? `- ${p.customer_nama} (pelanggan) -` : '- Umum / bukan anggota -' },
+        ...daftarAnggota.map((a) => ({ nilai: a.id, teks: `${a.nomor_anggota || ''} — ${a.nama}` })),
+      ], p.anggota_id || '')),
+      kolom('Metode Bayar', pilih('metode_bayar', METODE_JUAL, p.metode_bayar,
+        { onchange: (e) => aturMetode(e.target.value) })),
+    ]),
+    el('div.tebal.mt16.mb8', 'Rincian Barang'),
+    daftar,
+    el('button.btn.kecil', { onclick: () => { items.push({ qty: 1, diskon: 0 }); gambar(); } }, '+ Tambah Barang'),
+    ringkas,
+    el('div.baris-form.k3.mt16', [
+      kolom('Diskon Nota', input('diskon', { tipe: 'number', min: 0, nilai: Math.max(0, p.diskon - diskonItemSemula),
+        oninput: () => hitung() })),
+      kolom('Pajak (PPN)', input('pajak', { tipe: 'number', min: 0, nilai: p.pajak || 0, oninput: () => hitung() })),
+      kolom('Poin Dipakai', input('poin_dipakai', { tipe: 'number', min: 0, nilai: p.poin_dipakai || 0,
+        oninput: () => hitung() }), { bantuan: 'Khusus anggota' }),
+    ]),
+    kotakBayar,
+    kolomBank,
+    kolom('Alasan Perubahan', el('textarea', { name: 'alasan', rows: 2, maxlength: 300 }), { wajib: true }),
+  );
+  aturMetode(p.metode_bayar);
+  gambar();
+
+  const tutup = modal({
+    judul: `Ubah Transaksi ${p.nomor}`, lebar: 'lebar', isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Kembali'),
+      el('button.btn.utama', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          const d = bacaForm(form);
+          const baris = items.filter((i) => i.barang_id && i.qty > 0)
+            .map((i) => ({ barang_id: i.barang_id, qty: i.qty, harga: i.harga, diskon: i.diskon || 0 }));
+          if (!baris.length) throw new Error('Tambahkan minimal satu barang dengan kuantitas');
+          if (!String(d.alasan || '').trim()) throw new Error('Alasan perubahan wajib diisi');
+          const isian = {
+            alasan: d.alasan.trim(), items: baris, tanggal: d.tanggal || undefined,
+            anggota_id: d.anggota_id ? Number(d.anggota_id) : null, metode_bayar: d.metode_bayar,
+            diskon: Number(d.diskon) || 0, pajak: Number(d.pajak) || 0, poin_dipakai: Number(d.poin_dipakai) || 0,
+            bank_account_id: ['transfer', 'qris'].includes(d.metode_bayar) ? d.bank_account_id || null : null,
+          };
+          if (d.metode_bayar === 'tunai' && d.bayar !== '') isian.bayar = Number(d.bayar);
+          const h = await api.put(`/api/koreksi/penjualan/${p.id}`, isian);
+          const baru = h.pengganti;
+          toast('Transaksi diubah', 'sukses', `${h.dibatalkan} dibatalkan → ${baru.nomor}`);
+          tutup();
+          await saatSelesai?.();
+          tawaranCetak('Transaksi Berhasil Diubah', el('dl.deskripsi', [
+            el('dt', 'Nomor lama'), el('dd', [el('span.mono', h.dibatalkan), ' ', status('batal')]),
+            el('dt', 'Nomor baru'), el('dd', el('strong.mono', baru.nomor)),
+            el('dt', 'Total baru'), el('dd', el('strong', rp(baru.total))),
+            baru.kembali > 0 && el('dt', 'Kembalian'), baru.kembali > 0 && el('dd', rp(baru.kembali)),
+          ].filter(Boolean)), async () => (cetak ? cetak(baru) : dokFaktur(await api.get(`/api/penjualan/${baru.id}`))),
+          { label: labelCetak || (p.tipe === 'pos' ? 'Cetak Nota Pengganti' : 'Cetak Faktur Pengganti') });
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Simpan Perubahan'),
+    ],
   });
 }
 

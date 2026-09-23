@@ -107,10 +107,53 @@ async function cetakDenganTombol(e, ambil) {
   try { await cetakDokumen(await ambil()); } catch (err) { galat(err); } finally { tombol.disabled = false; }
 }
 
-/** Riwayat pembayaran sebuah tagihan dengan tombol cetak bukti per pembayaran. */
-async function riwayatBayar(id) {
+// ------------------------- Koreksi transaksi tersimpan -------------------------
+
+/**
+ * Dialog koreksi (pembatalan) transaksi tersimpan, dipakai bersama modul
+ * pembelian, penjualan, POS, dan persediaan. Menjelaskan akibatnya, meminta
+ * alasan (wajib), lalu memanggil `kirim(alasan)`. Bila server menolak (mis. 409
+ * karena syarat pembatalan belum terpenuhi) pesannya ditampilkan dan dialog
+ * tetap terbuka; bila berhasil dialog ditutup lalu `saatBerhasil(hasil)` dipanggil.
+ */
+export function dialogKoreksi({ judul: jdl, pesan, rincian, tombol = 'Batalkan', kirim, saatBerhasil }) {
+  const form = el('div', [
+    el('div.notis.peringatan', [el('div.isi', [
+      el('strong', pesan),
+      ...[rincian].flat().filter(Boolean).map((r) => el('div.kecil', r)),
+    ])]),
+    kolom('Alasan Koreksi', el('textarea', { name: 'alasan', rows: 3, maxlength: 300 }), {
+      wajib: true, bantuan: 'Dicatat pada jurnal balik dan jejak audit' }),
+  ]);
+  const tutup = modal({
+    judul: jdl, isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Kembali'),
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const t = e.currentTarget;
+        t.disabled = true;
+        try {
+          const alasan = String(bacaForm(form).alasan || '').trim();
+          if (!alasan) throw new Error('Alasan koreksi wajib diisi');
+          const h = await kirim(alasan);
+          tutup();
+          await saatBerhasil?.(h);
+        } catch (err) { galat(err); t.disabled = false; }
+      } }, tombol),
+    ],
+  });
+  return tutup;
+}
+
+/** Hak membatalkan pembayaran utang (kas/pembelian) atau penerimaan piutang (kas/penjualan). */
+const bolehBatalBayar = (jenis) => izin('kas.koreksi')
+  || izin(jenis === 'hutang' ? 'pembelian.koreksi' : 'penjualan.koreksi');
+
+/** Riwayat pembayaran sebuah tagihan dengan tombol cetak bukti (dan batal) per pembayaran. */
+async function riwayatBayar(id, saatBerubah) {
   let h;
   try { h = await api.get(`/api/hutang-piutang/${id}`); } catch (err) { galat(err); return; }
+  const koreksi = bolehBatalBayar(h.jenis);
   const tutup = modal({
     judul: `Riwayat ${h.jenis === 'hutang' ? 'Pembayaran Utang' : 'Penerimaan Piutang'} — ${h.sumber?.nomor || h.referensi}`,
     lebar: 'lebar',
@@ -125,12 +168,38 @@ async function riwayatBayar(id) {
         { judul: 'Tanggal', render: (b) => tgl(b.tanggal) },
         { judul: 'Nomor', render: (b) => el('span.mono.kecil', b.nomor) },
         { judul: 'Nominal', angka: true, render: (b) => rp(b.nominal) },
-        { judul: 'Status', render: (b) => status(b.status) },
-        { judul: '', render: (b) => el('button.btn.kecil', {
-          onclick: (e) => cetakDenganTombol(e, () => dokPembayaran(h, b)) }, 'Cetak Bukti') },
+        { judul: 'Status', render: (b) => status(b.status, b.status === 'void' ? 'Batal' : undefined) },
+        { judul: '', render: (b) => el('div.gap8', [
+          el('button.btn.kecil', {
+            onclick: (e) => cetakDenganTombol(e, () => dokPembayaran(h, b)) }, 'Cetak Bukti'),
+          koreksi && b.status === 'posted' && el('button.btn.kecil.bahaya', {
+            onclick: () => batalBayar(h, b, saatBerubah) }, 'Batalkan'),
+        ].filter(Boolean)) },
       ], h.pembayaran, { kosongTeks: 'Belum ada pembayaran' })]),
     ]),
     kaki: [el('button.btn.utama', { onclick: () => tutup() }, 'Tutup')],
+  });
+}
+
+/** Membatalkan satu pembayaran utang / penerimaan piutang (jurnal pembayarannya dibalik). */
+function batalBayar(h, b, saatBerubah) {
+  const hutang = h.jenis === 'hutang';
+  dialogKoreksi({
+    judul: hutang ? 'Batalkan Pembayaran Utang' : 'Batalkan Penerimaan Piutang',
+    pesan: `Batalkan ${hutang ? 'pembayaran' : 'penerimaan'} ${b.nomor} sebesar ${rp(b.nominal)}?`,
+    rincian: [
+      `Jurnal pembayaran dibalik sehingga ${hutang ? 'kas/bank kembali bertambah dan utang' : 'kas/bank berkurang dan piutang'} `
+        + `kepada ${h.pihak_nama || 'pihak terkait'} kembali terbuka sebesar nominal tersebut.`,
+      'Bukti pembayaran tetap tersimpan dengan status batal.',
+    ],
+    tombol: 'Batalkan Pembayaran',
+    kirim: (alasan) => api.post(`/api/koreksi/pembayaran-hp/${b.id}/batal`, { alasan }),
+    saatBerhasil: async (r) => {
+      toast('Pembayaran dibatalkan', 'sukses',
+        `${b.nomor}${r.jurnal_balik?.nomor ? ` · jurnal balik ${r.jurnal_balik.nomor}` : ''}`);
+      await saatBerubah?.();
+      await riwayatBayar(h.id, saatBerubah);
+    },
   });
 }
 
@@ -244,6 +313,8 @@ async function detail(id) {
       && el('button.btn', { onclick: () => formPO(() => navigasi(location.hash, true), p) }, 'Ubah'),
     izin('pembelian.update') && bisaDiubah(p)
       && el('button.btn.bahaya', { onclick: () => formBatal(p) }, 'Batalkan'),
+    izin('pembelian.koreksi') && ['diterima', 'selesai'].includes(p.status)
+      && el('button.btn.bahaya', { onclick: () => batalPenerimaan(p) }, 'Batalkan Penerimaan'),
     tombolCetak(() => dokPO(p), { label: p.tipe === 'pr' ? 'Cetak PR' : 'Cetak PO' }),
   ].filter(Boolean)));
 
@@ -288,7 +359,8 @@ async function detail(id) {
     wadah.append(panelTabel('Riwayat Penerimaan Barang', tabel([
       { judul: 'Ke', render: (t) => t.urut },
       { judul: 'Tanggal', render: (t) => tgl(t.tanggal) },
-      { judul: 'Jurnal', render: (t) => el('span.mono.kecil', t.jurnal?.nomor || '-') },
+      { judul: 'Jurnal', render: (t) => el('div', [el('span.mono.kecil', t.jurnal?.nomor || '-'),
+        t.jurnal?.status === 'void' && el('div', [status('batal', 'Dibatalkan')])]) },
       { judul: 'Barang', render: (t) => el('span.kecil', t.items.map((i) => `${i.nama} ${desimal(i.qty)} ${i.satuan}`).join(', ')) },
       { judul: 'Nilai', angka: true, render: (t) => rp(t.nilai) },
       { judul: '', render: (t) => el('button.btn.kecil', {
@@ -462,8 +534,9 @@ export async function hutangTab(jenis) {
           { judul: '', render: (h) => el('div.gap8', [
             h.status === 'terbuka' && izin('kas.create')
               && el('button.btn.kecil.utama', { onclick: () => formBayar(h, muat) }, 'Bayar'),
-            h.terbayar > 0 && el('button.btn.kecil', { title: 'Riwayat & cetak bukti pembayaran',
-              onclick: () => riwayatBayar(h.id) }, 'Bukti'),
+            h.terbayar > 0 && el('button.btn.kecil', {
+              title: bolehBatalBayar(jenis) ? 'Riwayat, cetak bukti & pembatalan pembayaran' : 'Riwayat & cetak bukti pembayaran',
+              onclick: () => riwayatBayar(h.id, muat) }, bolehBatalBayar(jenis) ? 'Riwayat' : 'Bukti'),
           ].filter(Boolean)) },
         ], d.data, { kosongTeks: `Tidak ada ${jenis} tercatat` })),
       );
@@ -519,6 +592,28 @@ async function formBayar(h, saatSelesai) {
         } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Bayar'),
     ],
+  });
+}
+
+/** Membatalkan seluruh penerimaan barang sebuah PO (koreksi transaksi tersimpan). */
+function batalPenerimaan(p) {
+  dialogKoreksi({
+    judul: 'Batalkan Penerimaan Barang',
+    pesan: `Batalkan seluruh penerimaan barang atas ${p.nomor}?`,
+    rincian: [
+      'Barang yang pernah diterima dikeluarkan dari gudang senilai saat diterima, dan jurnal penerimaannya '
+        + '(termasuk pembayaran tunai/transfer saat penerimaan) dibalik.',
+      'Utang usaha yang belum dibayar atas dokumen ini dihapus. Bila utangnya sudah dibayar, batalkan '
+        + 'pembayarannya lebih dahulu di tab Utang Usaha.',
+      'Dokumen kembali berstatus "disetujui" sehingga dapat diterima ulang dengan benar atau dibatalkan.',
+    ],
+    tombol: 'Batalkan Penerimaan',
+    kirim: (alasan) => api.post(`/api/koreksi/pembelian/${p.id}/batal-penerimaan`, { alasan }),
+    saatBerhasil: async (h) => {
+      toast('Penerimaan barang dibatalkan', 'sukses',
+        `${p.nomor}${h.jurnal_balik?.length ? ` · jurnal balik ${h.jurnal_balik.map((j) => j.nomor).join(', ')}` : ''}`);
+      await navigasi(location.hash, true);
+    },
   });
 }
 

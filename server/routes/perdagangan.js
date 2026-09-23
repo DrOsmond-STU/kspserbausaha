@@ -40,6 +40,27 @@ router.post('/api/persediaan/penyesuaian', 'persediaan.update', ({ body, ctx }) 
   keterangan: str(body, 'keterangan', { required: false, max: 200 }),
 }, ctx));
 
+/**
+ * Daftar penyesuaian stok manual (terbaru dahulu) beserta penanda apakah
+ * sudah dibatalkan (ada mutasi balik berreferensi "batal:stok:<id>").
+ */
+router.get('/api/persediaan/penyesuaian', 'persediaan.view', ({ query }) => {
+  const w = ["m.jenis IN ('penyesuaian_masuk', 'penyesuaian_keluar')"];
+  const p = [];
+  if (query.dari) { w.push('m.tanggal >= ?'); p.push(query.dari); }
+  if (query.sampai) { w.push('m.tanggal <= ?'); p.push(query.sampai); }
+  if (query.barang_id) { w.push('m.barang_id = ?'); p.push(Number(query.barang_id)); }
+  const limit = Math.min(Number(query.limit) || 100, 500);
+  return {
+    data: all(
+      `SELECT m.*, b.kode, b.nama, b.satuan, g.nama AS gudang_nama,
+              (SELECT j.nomor FROM jurnal j WHERE j.referensi = 'stok:' || m.id ORDER BY j.id LIMIT 1) AS jurnal_nomor,
+              EXISTS(SELECT 1 FROM mutasi_stok x WHERE x.referensi = 'batal:stok:' || m.id) AS dibatalkan
+         FROM mutasi_stok m JOIN barang b ON b.id = m.barang_id JOIN gudang g ON g.id = m.gudang_id
+        WHERE ${w.join(' AND ')} ORDER BY m.tanggal DESC, m.id DESC LIMIT ?`, [...p, limit]),
+  };
+});
+
 /** Bukti penyesuaian stok: satu mutasi penyesuaian beserta jurnalnya (untuk dicetak). */
 router.get('/api/persediaan/penyesuaian/:id', 'persediaan.view', ({ params }) => {
   const m = get(
@@ -53,7 +74,8 @@ router.get('/api/persediaan/penyesuaian/:id', 'persediaan.view', ({ params }) =>
     `SELECT d.coa_kode, c.nama AS akun_nama, d.debit, d.kredit, d.keterangan FROM jurnal_detail d
        JOIN coa c ON c.kode = d.coa_kode WHERE d.jurnal_id = ? ORDER BY d.urut`, [jurnal.id]) : [];
   const nilai = jurnal ? jurnal.total_debit : 0;
-  return { ...m, jurnal: jurnal ? { ...jurnal, detail } : null, nilai, terbilang: terbilang(nilai) };
+  const dibatalkan = scalar('SELECT COUNT(*) FROM mutasi_stok WHERE referensi = ?', [`batal:stok:${m.id}`]) > 0;
+  return { ...m, jurnal: jurnal ? { ...jurnal, detail } : null, nilai, terbilang: terbilang(nilai), dibatalkan };
 });
 
 router.post('/api/persediaan/transfer', 'persediaan.update', ({ body, ctx }) => inv.transferGudang({
@@ -183,6 +205,7 @@ router.get('/api/penjualan', 'penjualan.view', ({ query }) => {
     total: scalar(`SELECT COUNT(*) FROM penjualan j ${where}`, p),
     // Penjualan yang dibatalkan tetap tampil di daftar, tetapi tidak dihitung sebagai omzet
     omzet: scalar(`SELECT COALESCE(SUM(CASE WHEN j.status <> 'batal' THEN j.total ELSE 0 END),0) FROM penjualan j ${where}`, p),
+    jumlah_batal: scalar(`SELECT COUNT(*) FROM penjualan j ${where ? `${where} AND` : 'WHERE'} j.status = 'batal'`, p),
     limit, offset,
   };
 });
