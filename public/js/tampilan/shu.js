@@ -125,13 +125,14 @@ function buatUsulan() {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post('/api/shu/usulan', bacaForm(form));
           toast('Usulan pembagian SHU tersimpan', 'sukses',
             `${h.per_anggota.length} anggota · ${rp(h.shu_bersih)}`);
           tutup(); location.hash = `#/shu/${h.periode_id}`;
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan Usulan'),
     ],
   });
@@ -194,7 +195,14 @@ async function detail(id) {
   return wadah;
 }
 
-function sahkan(p, saatSelesai) {
+async function sahkan(p, saatSelesai) {
+  // RAT yang mengesahkan (opsional); daftar hanya tersedia bagi pemegang izin rat.view
+  let rat = [];
+  if (izin('rat.view')) {
+    try { rat = (await api.get('/api/rat')).data.filter((r) => r.status !== 'batal'); } catch { rat = []; }
+  }
+  const ratCocok = rat.find((r) => r.tahun_buku === p.tahun && r.status === 'selesai')
+    || rat.find((r) => r.tahun_buku === p.tahun);
   const form = el('div', [
     el('div.notis.peringatan', [el('div.isi', [
       el('strong', 'Pengesahan membentuk jurnal'),
@@ -202,43 +210,80 @@ function sahkan(p, saatSelesai) {
         + 'ke dana cadangan serta dana-dana lain sesuai AD/ART.'),
     ])]),
     kolom('Tanggal Pengesahan', input('tanggal', { tipe: 'date', nilai: `${p.tahun}-12-31` })),
+    rat.length ? kolom('Disahkan dalam RAT', pilih('rat_id', [
+      { nilai: '', teks: '- tidak dikaitkan -' },
+      ...rat.map((r) => ({ nilai: r.id, teks: `${r.nomor} · ${r.judul} (${judul(r.status)})` })),
+    ], ratCocok?.id ?? ''), { bantuan: 'RAT yang menjadi dasar pengesahan pembagian SHU ini.' }) : null,
   ]);
   const tutup = modal({
     judul: `Sahkan Pembagian SHU ${p.tahun}`, isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.sukses', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post(`/api/shu/${p.id}/sahkan`, bacaForm(form));
-          toast('SHU berhasil disahkan', 'sukses', `Jurnal ${h.jurnal.nomor}`);
+          toast('SHU berhasil disahkan', 'sukses', h.jurnal?.nomor ? `Jurnal ${h.jurnal.nomor}` : null);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Sahkan'),
     ],
   });
 }
 
-function bagikan(p, saatSelesai) {
+/** Rekening bank aktif; pengguna tanpa akses master mendapat daftar kosong (server memakai akun bank bawaan). */
+async function rekeningBank() {
+  try { return (await api.get('/api/master/bank', { status: 'aktif', limit: 200 })).data || []; } catch { return []; }
+}
+
+async function bagikan(p, saatSelesai) {
+  const bank = await rekeningBank();
+  const bagianBank = el('div', [kolom('Rekening Pembayar', pilih('bank_account_id', [
+    { nilai: '', teks: '- Akun bank bawaan (Parameter Sistem) -' },
+    ...bank.map((b) => ({ nilai: b.id, teks: `${b.nama_bank} · ${b.nomor_rekening} a.n. ${b.atas_nama}` })),
+  ]), { bantuan: bank.length ? 'Kosongkan untuk memakai akun bank bawaan'
+    : 'Belum ada rekening bank terdaftar; dipakai akun bank bawaan' })]);
+  const catatan = {
+    simpanan: 'SHU dikreditkan ke simpanan sukarela anggota — memperkuat permodalan koperasi.',
+    tunai: 'SHU dibayar tunai dari kas koperasi.',
+    transfer: 'SHU ditransfer ke rekening anggota dari rekening bank koperasi.',
+  };
+  const bantuan = el('div.bantuan', catatan.simpanan);
   const form = el('div', [
-    kolom('Metode Pembagian', pilih('metode', [
-      { nilai: 'simpanan', teks: 'Kreditkan ke Simpanan Sukarela' },
-      { nilai: 'tunai', teks: 'Dibayar Tunai' },
-    ]), { bantuan: 'Pembagian ke simpanan sukarela memperkuat permodalan koperasi.' }),
+    el('div.kolom', [
+      el('label', 'Metode Pembagian'),
+      pilih('metode', [
+        { nilai: 'simpanan', teks: 'Kreditkan ke Simpanan Sukarela' },
+        { nilai: 'tunai', teks: 'Dibayar Tunai' },
+        { nilai: 'transfer', teks: 'Transfer Bank' },
+      ], 'simpanan', { onchange: (e) => {
+        bagianBank.hidden = e.target.value !== 'transfer';
+        bantuan.textContent = catatan[e.target.value];
+      } }),
+      bantuan,
+    ]),
+    bagianBank,
     kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() })),
+    el('div.kecil.lembut', `Total ${rp(p.per_anggota.filter((a) => !a.dibayar).reduce((s, a) => s + a.shu_total, 0))} `
+      + 'untuk anggota yang belum dibayar. Jurnal pembagian dibentuk otomatis.'),
   ]);
+  bagianBank.hidden = true;
   const tutup = modal({
     judul: `Bagikan SHU ${p.tahun}`, isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
-          const h = await api.post(`/api/shu/${p.id}/bagikan`, bacaForm(form));
+          const d = bacaForm(form);
+          if (d.metode !== 'transfer') delete d.bank_account_id;
+          const h = await api.post(`/api/shu/${p.id}/bagikan`, d);
           toast('SHU berhasil dibagikan', 'sukses',
             `${h.jumlah_anggota} anggota · total ${rp(h.total)}`);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Bagikan'),
     ],
   });

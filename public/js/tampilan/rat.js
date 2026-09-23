@@ -3,7 +3,7 @@
  */
 import {
   api, el, kpi, panel, panelTabel, tabel, rp, angka, persen, tgl, status, judul, modal,
-  kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah, kosong,
+  kolom, input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah, kosong, konfirmasi,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 
@@ -36,7 +36,7 @@ export async function render(param) {
           { judul: 'Status', render: (r) => status(r.status) },
         ], d.data, { saatKlik: (r) => { location.hash = `#/rat/${r.id}`; },
           kosongTeks: 'Belum ada rapat anggota dijadwalkan' }), [
-          izin('rat.create') && el('button.btn.utama', { onclick: () => formRat(muat) },
+          izin('rat.create') && el('button.btn.utama', { onclick: () => formRat(null, muat) },
             '+ Jadwalkan RAT'),
         ].filter(Boolean)),
       );
@@ -50,6 +50,8 @@ async function detail(id) {
   const r = await api.get(`/api/rat/${id}`);
   const wadah = el('div');
   const segarkan = () => navigasi(location.hash, true);
+  // RAT selesai/batal adalah arsip: hanya dapat dilihat dan dicetak
+  const selesai = ['selesai', 'batal'].includes(r.status);
 
   wadah.append(el('div.gap8.mb16', [
     el('button.btn', { onclick: () => { location.hash = '#/rat'; } }, '← Kembali'),
@@ -64,8 +66,13 @@ async function detail(id) {
     }, 'Kirim Undangan'),
     izin('rat.update') && ['undangan', 'berlangsung'].includes(r.status) && el('button.btn', {
       onclick: () => formHadir(r, segarkan) }, '✋ Catat Kehadiran'),
-    izin('rat.create') && el('button.btn', { onclick: () => formVoting(r, segarkan) }, 'Buat Voting'),
+    izin('rat.create') && !selesai && el('button.btn', { onclick: () => formVoting(r, segarkan) }, 'Buat Voting'),
     el('button.btn', { onclick: () => beritaAcara(id) }, 'Berita Acara'),
+    izin('rat.update') && !selesai && el('button.btn', { onclick: () => formRat(r, segarkan) }, 'Ubah'),
+    izin('rat.update') && !selesai && el('button.btn.utama', {
+      onclick: () => formSelesai(r, segarkan) }, 'Selesaikan RAT'),
+    izin('rat.delete') && r.status === 'rencana' && !r.hadir && el('button.btn.bahaya', {
+      onclick: () => hapusRat(r) }, 'Hapus'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [
@@ -84,6 +91,8 @@ async function detail(id) {
     el('dt', 'Tanggal'), el('dd', `${tgl(r.tanggal, true)} ${r.waktu || ''}`),
     el('dt', 'Tempat'), el('dd', r.tempat || '-'),
     el('dt', 'Status'), el('dd', status(r.status)),
+    r.berita_acara && el('dt', 'Catatan berita acara'),
+    r.berita_acara && el('dd', { gaya: { whiteSpace: 'pre-wrap' } }, r.berita_acara),
   ])));
 
   wadah.append(panelTabel('Agenda Rapat', tabel([
@@ -138,35 +147,87 @@ async function ubahStatusVoting(id, st, saatSelesai) {
   } catch (err) { galat(err); }
 }
 
-function formRat(saatSelesai) {
+/** Formulir jadwal RAT; `data` terisi berarti mengubah data pokok RAT yang ada. */
+function formRat(data, saatSelesai) {
   const tahun = new Date().getFullYear();
   const form = el('div', [
     el('div.baris-form', [
-      kolom('Tahun Buku', input('tahun_buku', { tipe: 'number', nilai: tahun - 1 }), { wajib: true }),
+      kolom('Tahun Buku', input('tahun_buku', { tipe: 'number', nilai: data?.tahun_buku ?? tahun - 1 }),
+        { wajib: true }),
       kolom('Jenis', pilih('jenis', [{ nilai: 'tahunan', teks: 'RAT Tahunan' },
-        { nilai: 'luar_biasa', teks: 'Rapat Anggota Luar Biasa' }])),
+        { nilai: 'luar_biasa', teks: 'Rapat Anggota Luar Biasa' }], data?.jenis)),
     ]),
-    kolom('Judul Rapat', input('judul', { nilai: `Rapat Anggota Tahunan Tahun Buku ${tahun - 1}` }), { wajib: true }),
+    kolom('Judul Rapat', input('judul', {
+      nilai: data?.judul ?? `Rapat Anggota Tahunan Tahun Buku ${tahun - 1}` }), { wajib: true }),
     el('div.baris-form.k3', [
-      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() }), { wajib: true }),
-      kolom('Waktu', input('waktu', { nilai: '09.00 WIB' })),
-      kolom('Syarat Kuorum (%)', input('kuorum_persen', { tipe: 'number', nilai: 50 })),
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: data?.tanggal ?? hariIni() }), { wajib: true }),
+      kolom('Waktu', input('waktu', { nilai: data ? (data.waktu || '') : '09.00 WIB' })),
+      kolom('Syarat Kuorum (%)', input('kuorum_persen', { tipe: 'number', nilai: data?.kuorum_persen ?? 50,
+        min: 1, max: 100 })),
     ]),
-    kolom('Tempat', input('tempat', { nilai: 'Aula Koperasi' })),
-    el('div.kecil.lembut', 'Agenda baku RAT akan dibuat otomatis dan dapat disesuaikan kemudian.'),
+    kolom('Tempat', input('tempat', { nilai: data ? (data.tempat || '') : 'Aula Koperasi' })),
+    el('div.kecil.lembut', data
+      ? 'Perubahan syarat kuorum langsung menghitung ulang status kuorum dari kehadiran yang tercatat.'
+      : 'Agenda baku RAT akan dibuat otomatis dan dapat disesuaikan kemudian.'),
   ]);
   const tutup = modal({
-    judul: 'Jadwalkan Rapat Anggota', isi: form,
+    judul: data ? `Ubah ${data.nomor}` : 'Jadwalkan Rapat Anggota', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
-          await api.post('/api/rat', bacaForm(form));
-          toast('RAT berhasil dijadwalkan', 'sukses');
+          if (data) await api.put(`/api/rat/${data.id}`, bacaForm(form));
+          else await api.post('/api/rat', bacaForm(form));
+          toast(data ? 'Data RAT diperbarui' : 'RAT berhasil dijadwalkan', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
-      } }, 'Jadwalkan'),
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, data ? 'Simpan' : 'Jadwalkan'),
+    ],
+  });
+}
+
+async function hapusRat(r) {
+  if (!await konfirmasi(`Hapus ${r.nomor} — ${r.judul}? Agenda dan voting draf ikut terhapus.`,
+    { judul: 'Hapus Rapat Anggota', ya: 'Hapus', jenis: 'bahaya' })) return;
+  try {
+    await api.del(`/api/rat/${r.id}`);
+    toast('RAT dihapus', 'sukses');
+    location.hash = '#/rat';
+  } catch (err) { galat(err); }
+}
+
+/** Menutup RAT: status menjadi selesai dan catatan berita acara disimpan. */
+function formSelesai(r, saatSelesai) {
+  const votingDibuka = r.voting.filter((v) => v.status === 'dibuka');
+  const form = el('div', [
+    votingDibuka.length ? el('div.notis.bahaya', [el('div.isi', [
+      el('strong', `${votingDibuka.length} voting masih dibuka`),
+      el('div.kecil', 'Tutup seluruh voting terlebih dahulu agar hasilnya tercatat pada berita acara.'),
+    ])]) : null,
+    !r.kuorum_tercapai ? el('div.notis.peringatan', [el('div.isi', [
+      el('strong', 'Kuorum belum tercapai'),
+      el('div.kecil', `Hadir ${r.hadir} dari ${r.total_anggota} anggota (syarat ${persen(r.kuorum_persen)}). `
+        + 'Keputusan rapat tanpa kuorum dapat dipersoalkan keabsahannya.'),
+    ])]) : null,
+    kolom('Catatan Berita Acara', el('textarea', { name: 'berita_acara', rows: 5,
+      placeholder: 'Ringkasan jalannya rapat, keputusan penting, dan catatan pimpinan rapat' },
+    r.berita_acara || ''), { bantuan: 'Setelah diselesaikan, data RAT tidak dapat diubah lagi.' }),
+  ]);
+  const tutup = modal({
+    judul: `Selesaikan ${r.nomor}`, isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Batal'),
+      el('button.btn.utama', { disabled: votingDibuka.length > 0, onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          await api.post(`/api/rat/${r.id}/selesai`, bacaForm(form));
+          toast('RAT dinyatakan selesai', 'sukses');
+          tutup(); saatSelesai?.();
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Selesaikan RAT'),
     ],
   });
 }
@@ -182,7 +243,7 @@ async function formHadir(r, saatSelesai) {
       nilai: p.anggota_id, teks: `${p.nomor_anggota} — ${p.nama}` }))), { wajib: true }),
   ]);
   if (!belum.length) {
-    modal({ judul: 'Catat Kehadiran', isi: kosong('Seluruh anggota sudah tercatat hadir', null, '✓') });
+    modal({ judul: 'Catat Kehadiran', isi: kosong('Seluruh anggota sudah tercatat hadir', null, 'centang') });
     return;
   }
   const tutup = modal({

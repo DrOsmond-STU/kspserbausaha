@@ -35,6 +35,7 @@ const KOLOM_SUSULAN = [
   ['transaksi_simpanan', 'status', "TEXT NOT NULL DEFAULT 'posted'"],
   ['pembelian', 'alasan_batal', 'TEXT'],
   ['anggaran', 'catatan_revisi', 'TEXT'],
+  ['stock_opname', 'alasan_batal', 'TEXT'],
 ];
 
 /** Menjalankan skema (idempoten - seluruh DDL memakai IF NOT EXISTS). */

@@ -22,8 +22,9 @@ export async function render() {
   const bilah = el('div.tab', daftarTab.map((t, i) => el('button', {
     class: i === 0 ? 'aktif' : '',
     onclick: async (e) => {
+      const tombol = e.currentTarget;
       bilah.querySelectorAll('button').forEach((b) => b.classList.remove('aktif'));
-      e.currentTarget.classList.add('aktif');
+      tombol.classList.add('aktif');
       kosongkan(isi).append(memuat());
       kosongkan(isi).append(await t.render());
     },
@@ -128,10 +129,19 @@ async function opnameTab() {
         { judul: 'Gudang', kunci: 'gudang_nama' },
         { judul: 'Item', angka: true, render: (o) => angka(o.jumlah_item) },
         { judul: 'Petugas', render: (o) => el('span.kecil', o.petugas || '-') },
-        { judul: 'Status', render: (o) => status(o.status === 'selesai' ? 'selesai' : 'draft') },
-        { judul: '', render: (o) => (o.status === 'draft' && izin('persediaan.post')
-          ? el('button.btn.kecil.utama', { onclick: () => isiOpname(o.id, muat) }, 'Isi & Selesaikan')
-          : el('button.btn.kecil', { onclick: () => lihatOpname(o.id) }, 'Lihat')) },
+        { judul: 'Status', render: (o) => el('div', [status(o.status),
+          o.status === 'batal' && o.alasan_batal && el('div.kecil.samar', o.alasan_batal)]) },
+        { judul: '', render: (o) => {
+          // Dokumen draft belum mengubah stok/jurnal sehingga masih boleh dibatalkan.
+          const draft = !['selesai', 'batal'].includes(o.status);
+          return el('div.gap8', [
+            draft && izin('persediaan.post')
+              ? el('button.btn.kecil.utama', { onclick: () => isiOpname(o.id, muat) }, 'Isi & Selesaikan')
+              : el('button.btn.kecil', { onclick: () => lihatOpname(o.id) }, 'Lihat'),
+            draft && izin('persediaan.update')
+              && el('button.btn.kecil.bahaya', { onclick: () => batalOpname(o, muat) }, 'Batalkan'),
+          ].filter(Boolean));
+        } },
       ], d.data, { kosongTeks: 'Belum pernah dilakukan stock opname' }), [
         izin('persediaan.create') && el('button.btn.utama', { onclick: () => mulaiOpname(muat) },
           '+ Mulai Stock Opname'),
@@ -154,12 +164,13 @@ async function mulaiOpname(saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post('/api/persediaan/opname', bacaForm(form));
           toast('Dokumen opname dibuat', 'sukses', `${h.nomor} · ${h.jumlah_item} item`);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Buat Dokumen'),
     ],
   });
@@ -193,7 +204,8 @@ async function isiOpname(id, saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post(`/api/persediaan/opname/${id}/selesai`, {
             detail: Object.entries(nilai).map(([k, v]) => ({ id: Number(k), qty_fisik: v })),
@@ -201,7 +213,7 @@ async function isiOpname(id, saatSelesai) {
           toast('Stock opname selesai', 'sukses',
             `Selisih kurang ${rp(h.nilai_kurang)} · lebih ${rp(h.nilai_lebih)}`);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Selesaikan & Sesuaikan Stok'),
     ],
   });
@@ -211,7 +223,12 @@ async function lihatOpname(id) {
   const o = await api.get(`/api/persediaan/opname/${id}`);
   modal({
     judul: `Stock Opname ${o.nomor}`, lebar: 'lebar',
-    isi: el('div.tabel-bungkus', [tabel([
+    isi: el('div', [
+      o.status === 'batal' && el('div.notis.bahaya', [el('div.isi', [
+        el('strong', 'Dokumen dibatalkan'),
+        el('div.kecil', o.alasan_batal || 'Tanpa keterangan'),
+      ])]),
+      el('div.tabel-bungkus', [tabel([
       { judul: 'Kode', render: (d) => el('span.mono.kecil', d.kode) },
       { judul: 'Barang', kunci: 'nama' },
       { judul: 'Sistem', angka: true, render: (d) => desimal(d.qty_sistem) },
@@ -220,40 +237,118 @@ async function lihatOpname(id) {
         desimal(d.selisih)) },
       { judul: 'Nilai Selisih', angka: true, render: (d) => rp(d.nilai_selisih) },
     ], o.detail)]),
+    ].filter(Boolean)),
   });
 }
 
-async function formPenyesuaian() {
-  const [barang, gudang] = await Promise.all([
-    api.get('/api/master/barang', { limit: 500 }), api.get('/api/master/gudang'),
+function batalOpname(o, saatSelesai) {
+  const form = el('div', [
+    el('div.notis.peringatan', [el('div.isi', [
+      el('strong', `Batalkan dokumen ${o.nomor}?`),
+      el('div.kecil', 'Dokumen yang belum diselesaikan belum mengubah stok maupun jurnal. '
+        + 'Setelah dibatalkan, dokumen tidak dapat diisi lagi.'),
+    ])]),
+    kolom('Alasan Pembatalan', input('alasan', { maxlength: 300 }), { wajib: true }),
   ]);
+  const tutup = modal({
+    judul: 'Batalkan Stock Opname', isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Kembali'),
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          await api.post(`/api/persediaan/opname/${o.id}/batal`, bacaForm(form));
+          toast('Stock opname dibatalkan', 'sukses', o.nomor);
+          tutup(); saatSelesai?.();
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Batalkan Dokumen'),
+    ],
+  });
+}
+
+/**
+ * Pilihan akun lawan penyesuaian: seluruh akun postable & aktif dari bagan akun.
+ * Kosong = memakai pemetaan bawaan di Parameter Sistem (dipilih server).
+ */
+async function pilihAkunLawan() {
+  const [coa, setelan] = await Promise.all([
+    api.get('/api/master/coa', { status: 'aktif', limit: 1000 }).catch(() => null),
+    izin('admin.view') ? api.get('/api/admin/settings', { prefix: 'coa.' }).catch(() => null) : null,
+  ]);
+  const akun = (coa?.data || []).filter((a) => a.is_postable && a.status === 'aktif');
+  const namaAkun = (kode) => {
+    if (!kode) return null;
+    const a = akun.find((x) => x.kode === kode);
+    return a ? `${a.kode} ${a.nama}` : kode;
+  };
+  return {
+    akun,
+    bawaanMasuk: namaAkun(setelan?.map?.['coa.pendapatan_lain']),
+    bawaanKeluar: namaAkun(setelan?.map?.['coa.beban_selisih']),
+  };
+}
+
+async function formPenyesuaian() {
+  const [barang, gudang, lawan] = await Promise.all([
+    api.get('/api/master/barang', { limit: 500 }), api.get('/api/master/gudang'), pilihAkunLawan(),
+  ]);
+  const bantuanLawan = el('div.bantuan');
+  const pilihJenis = pilih('jenis', [{ nilai: 'masuk', teks: 'Barang Masuk' },
+    { nilai: 'keluar', teks: 'Barang Keluar' }], 'masuk', { onchange: () => perbarui() });
+  const kolomHarga = kolom('Harga Satuan', input('harga', { tipe: 'number', min: 0 }),
+    { bantuan: 'Kosongkan untuk memakai HPP rata-rata' });
+  const opsiLawan = [{ nilai: '', teks: '- Bawaan (Parameter Sistem) -' },
+    ...lawan.akun.map((a) => ({ nilai: a.kode, teks: `${a.kode} — ${a.nama} (${judul(a.tipe)})` }))];
+
+  function perbarui() {
+    const masuk = pilihJenis.value === 'masuk';
+    kolomHarga.style.display = masuk ? '' : 'none';
+    const bawaan = masuk ? lawan.bawaanMasuk : lawan.bawaanKeluar;
+    bantuanLawan.textContent = (masuk
+      ? 'Jurnal otomatis: D Persediaan, K akun lawan. '
+      : 'Jurnal otomatis: D akun lawan, K Persediaan (senilai HPP rata-rata). ')
+      + `Kosongkan untuk memakai ${masuk ? 'akun pendapatan lain-lain' : 'akun beban selisih persediaan'} `
+      + `pada Parameter Sistem${bawaan ? ` (${bawaan})` : ''}.`;
+  }
+
   const form = el('div', [
     kolom('Barang', pilih('barang_id', barang.data.map((b) => ({
       nilai: b.id, teks: `${b.kode} — ${b.nama} (stok ${desimal(b.stok)})` }))), { wajib: true }),
-    kolom('Gudang', pilih('gudang_id', gudang.data.map((g) => ({ nilai: g.id, teks: g.nama }))), { wajib: true }),
-    el('div.baris-form.k3', [
-      kolom('Jenis', pilih('jenis', [{ nilai: 'masuk', teks: 'Barang Masuk' },
-        { nilai: 'keluar', teks: 'Barang Keluar' }])),
-      kolom('Kuantitas', input('qty', { tipe: 'number', step: 'any' }), { wajib: true,
-        bantuan: 'Isi positif untuk masuk, negatif untuk keluar' }),
-      kolom('Harga Satuan', input('harga', { tipe: 'number', min: 0 }),
-        { bantuan: 'Hanya untuk barang masuk' }),
+    el('div.baris-form', [
+      kolom('Gudang', pilih('gudang_id', gudang.data.map((g) => ({ nilai: g.id, teks: g.nama }))), { wajib: true }),
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() })),
     ]),
+    el('div.baris-form.k3', [
+      kolom('Jenis', pilihJenis),
+      kolom('Kuantitas', input('qty', { tipe: 'number', step: 'any', min: 0 }), { wajib: true,
+        bantuan: 'Selalu isi angka positif; arah mutasi mengikuti jenis' }),
+      kolomHarga,
+    ]),
+    lawan.akun.length
+      ? el('div.kolom', [el('label', 'Akun Lawan'), pilih('akun_lawan', opsiLawan), bantuanLawan])
+      : el('div.notis.info', [el('div.isi', [el('strong', 'Penyesuaian dijurnal otomatis'), bantuanLawan])]),
     kolom('Keterangan', input('keterangan')),
   ]);
+  perbarui();
+
   const tutup = modal({
     judul: 'Penyesuaian Stok', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const d = bacaForm(form);
-          await api.post('/api/persediaan/penyesuaian', {
-            ...d, qty: d.jenis === 'keluar' ? -Math.abs(d.qty) : Math.abs(d.qty) });
-          toast('Stok berhasil disesuaikan', 'sukses');
+          const qty = Math.abs(Number(d.qty));
+          if (!(qty > 0)) throw new Error('Kuantitas harus lebih besar dari nol');
+          const h = await api.post('/api/persediaan/penyesuaian', {
+            ...d, qty, harga: d.jenis === 'masuk' ? d.harga : '', akun_lawan: d.akun_lawan || null });
+          toast('Stok berhasil disesuaikan', 'sukses', h.jurnal
+            ? `Nilai ${rp(h.nilai)} · jurnal ${h.jurnal.nomor}` : 'Tanpa jurnal (nilai nol)');
           tutup(); navigasi(location.hash, true);
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
   });
@@ -282,12 +377,13 @@ async function formTransfer() {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           await api.post('/api/persediaan/transfer', bacaForm(form));
           toast('Transfer stok berhasil', 'sukses');
           tutup(); navigasi(location.hash, true);
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Transfer'),
     ],
   });

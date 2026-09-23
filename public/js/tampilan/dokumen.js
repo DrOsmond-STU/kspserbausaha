@@ -115,6 +115,8 @@ async function lihat(id, saatSelesai) {
             h.valid === false ? 'bahaya' : h.valid ? 'sukses' : 'peringatan', h.pesan);
         } catch (err) { galat(err); }
       } }, 'Verifikasi Integritas'),
+      izin('dokumen.update') && el('button.btn', {
+        onclick: () => { tutup(); formVersi(d, saatSelesai); } }, 'Unggah Versi Baru'),
       izin('dokumen.update') && !d.ttd_elektronik && el('button.btn.sukses', { onclick: async () => {
         if (!await konfirmasi('Tandatangani dokumen ini secara elektronik? Tindakan ini tidak dapat dibatalkan.',
           { ya: 'Tandatangani' })) return;
@@ -129,9 +131,39 @@ async function lihat(id, saatSelesai) {
   });
 }
 
-function formUnggah(saatSelesai) {
+/**
+ * Pemilih berkas yang membaca isi sebagai data URI base64.
+ * Mengembalikan { node, ambil } — ambil() memberi { data, nama, mime } atau null.
+ */
+function pemilihBerkas() {
   let berkas = null;
   const namaBerkas = el('div.kecil.samar');
+  const node = el('div', [
+    kolom('Berkas', el('input', {
+      type: 'file',
+      onchange: (e) => {
+        const f = e.target.files[0];
+        berkas = null;
+        if (!f) { kosongkan(namaBerkas); return; }
+        if (f.size > 8 * 1024 * 1024) {
+          toast('Ukuran berkas maksimal 8 MB', 'peringatan');
+          e.target.value = ''; kosongkan(namaBerkas); return;
+        }
+        const r = new FileReader();
+        r.onload = () => {
+          berkas = { data: r.result, nama: f.name, mime: f.type };
+          kosongkan(namaBerkas).append(`${f.name} · ${(f.size / 1024).toFixed(0)} KB`);
+        };
+        r.readAsDataURL(f);
+      },
+    }), { bantuan: 'Maksimal 8 MB. Sidik jari SHA-256 dihitung otomatis.' }),
+    namaBerkas,
+  ]);
+  return { node, ambil: () => berkas };
+}
+
+function formUnggah(saatSelesai) {
+  const berkas = pemilihBerkas();
   const form = el('div', [
     el('div.baris-form', [
       kolom('Judul Dokumen', input('judul'), { wajib: true }),
@@ -144,41 +176,61 @@ function formUnggah(saatSelesai) {
     kolom('Deskripsi', input('deskripsi')),
     kolom('Tag', input('tag', { placeholder: 'Dipisahkan koma' })),
     kolom('Tanggal Kedaluwarsa', input('tanggal_kadaluarsa', { tipe: 'date' })),
-    kolom('Berkas', el('input', {
-      type: 'file',
-      onchange: (e) => {
-        const f = e.target.files[0];
-        if (!f) { berkas = null; kosongkan(namaBerkas); return; }
-        if (f.size > 8 * 1024 * 1024) {
-          toast('Ukuran berkas maksimal 8 MB', 'peringatan');
-          e.target.value = ''; return;
-        }
-        const r = new FileReader();
-        r.onload = () => {
-          berkas = { data: r.result, nama: f.name, mime: f.type };
-          kosongkan(namaBerkas).append(`${f.name} · ${(f.size / 1024).toFixed(0)} KB`);
-        };
-        r.readAsDataURL(f);
-      },
-    }), { bantuan: 'Maksimal 8 MB. Sidik jari SHA-256 dihitung otomatis.' }),
-    namaBerkas,
+    berkas.node,
   ]);
   const tutup = modal({
     judul: 'Unggah Dokumen', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
+          const b = berkas.ambil();
           await api.post('/api/dokumen', {
             ...bacaForm(form),
-            file_data: berkas?.data || null, file_nama: berkas?.nama || null,
-            file_mime: berkas?.mime || null,
+            file_data: b?.data || null, file_nama: b?.nama || null,
+            file_mime: b?.mime || null,
           });
           toast('Dokumen berhasil diunggah', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Unggah'),
+    ],
+  });
+}
+
+/** Unggah versi baru untuk dokumen yang sudah ada (riwayat versi tetap tersimpan). */
+function formVersi(d, saatSelesai) {
+  const berkas = pemilihBerkas();
+  const form = el('div', [
+    el('div.notis.info', [el('div.isi', [
+      el('strong', `${d.judul} — saat ini v${d.versi}`),
+      el('div.kecil', 'Versi baru berstatus review. '
+        + (d.ttd_elektronik ? 'Tanda tangan elektronik pada versi lama dilepas dan dokumen perlu ditandatangani ulang.'
+          : 'Versi lama tetap tersimpan pada riwayat.')),
+    ])]),
+    berkas.node,
+    kolom('Catatan Perubahan', el('textarea', { name: 'catatan', rows: 3,
+      placeholder: 'Apa yang berubah pada versi ini?' })),
+  ]);
+  const tutup = modal({
+    judul: `Versi Baru — v${d.versi + 1}`, isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Batal'),
+      el('button.btn.utama', { onclick: async (e) => {
+        const b = berkas.ambil();
+        if (!b) { toast('Pilih berkas versi baru terlebih dahulu', 'peringatan'); return; }
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          const h = await api.post(`/api/dokumen/${d.id}/versi`, {
+            ...bacaForm(form), file_data: b.data, file_nama: b.nama, file_mime: b.mime || null,
+          });
+          toast(`Versi v${h.versi} tersimpan`, 'sukses');
+          tutup(); saatSelesai?.();
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Unggah Versi'),
     ],
   });
 }
@@ -200,13 +252,17 @@ async function suratTab() {
         { judul: 'Sifat', render: (s) => status(s.sifat === 'rahasia' || s.sifat === 'segera'
           ? 'peringatan' : 'netral', judul(s.sifat || 'biasa')) },
         { judul: 'Status', render: (s) => status(s.status) },
-        { judul: '', render: (s) => (izin('surat.update') && s.jenis === 'masuk'
-          ? el('button.btn.kecil', { onclick: () => formDisposisi(s, muat) }, 'Disposisi') : '') },
+        { judul: '', render: (s) => el('div.gap8.nowrap', [
+          izin('surat.update') && s.jenis === 'masuk'
+            && el('button.btn.kecil', { onclick: () => formDisposisi(s, muat) }, 'Disposisi'),
+          izin('surat.update') && el('button.btn.kecil', { onclick: () => formSurat(s, muat) }, 'Ubah'),
+          izin('surat.delete') && el('button.btn.kecil.bahaya', { onclick: () => hapusSurat(s, muat) }, 'Hapus'),
+        ].filter(Boolean)) },
       ], d.data, { kosongTeks: 'Belum ada surat tercatat' }), [
         pilih('j', [{ nilai: '', teks: 'Semua surat' }, { nilai: 'masuk', teks: 'Surat Masuk' },
           { nilai: 'keluar', teks: 'Surat Keluar' }], jenis,
         { onchange: (e) => { jenis = e.target.value; muat(); } }),
-        izin('surat.create') && el('button.btn.utama', { onclick: () => formSurat(muat) }, '+ Catat Surat'),
+        izin('surat.create') && el('button.btn.utama', { onclick: () => formSurat(null, muat) }, '+ Catat Surat'),
       ].filter(Boolean)));
     } catch (err) { galat(err); }
   }
@@ -214,38 +270,55 @@ async function suratTab() {
   return wadah;
 }
 
-function formSurat(saatSelesai) {
+/** Formulir surat; `data` terisi berarti mode ubah (status ikut dapat diubah). */
+function formSurat(data, saatSelesai) {
   const form = el('div', [
     el('div.baris-form.k3', [
-      kolom('Nomor Surat', input('nomor'), { wajib: true }),
+      kolom('Nomor Surat', input('nomor', { nilai: data?.nomor || '' }), { wajib: true }),
       kolom('Jenis', pilih('jenis', [{ nilai: 'masuk', teks: 'Surat Masuk' },
-        { nilai: 'keluar', teks: 'Surat Keluar' }]), { wajib: true }),
-      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() }), { wajib: true }),
+        { nilai: 'keluar', teks: 'Surat Keluar' }], data?.jenis), { wajib: true }),
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: data?.tanggal || hariIni() }), { wajib: true }),
     ]),
-    kolom('Perihal', input('perihal'), { wajib: true }),
+    kolom('Perihal', input('perihal', { nilai: data?.perihal || '' }), { wajib: true }),
     el('div.baris-form.k3', [
-      kolom('Dari', input('dari')),
-      kolom('Kepada', input('kepada')),
+      kolom('Dari', input('dari', { nilai: data?.dari || '' })),
+      kolom('Kepada', input('kepada', { nilai: data?.kepada || '' })),
       kolom('Sifat', pilih('sifat', ['biasa', 'penting', 'segera', 'rahasia']
-        .map((s) => ({ nilai: s, teks: judul(s) })))),
+        .map((s) => ({ nilai: s, teks: judul(s) })), data?.sifat)),
     ]),
-    kolom('Isi Ringkas', el('textarea', { name: 'isi' })),
-    kolom('Lampiran', input('lampiran', { placeholder: 'Keterangan lampiran' })),
+    kolom('Isi Ringkas', el('textarea', { name: 'isi' }, data?.isi || '')),
+    el('div.baris-form', [
+      kolom('Lampiran', input('lampiran', { nilai: data?.lampiran || '', placeholder: 'Keterangan lampiran' })),
+      data ? kolom('Status', pilih('status', ['baru', 'diproses', 'selesai', 'arsip']
+        .map((s) => ({ nilai: s, teks: judul(s) })), data.status)) : null,
+    ]),
   ]);
   const tutup = modal({
-    judul: 'Catat Surat', lebar: 'lebar', isi: form,
+    judul: data ? `Ubah Surat — ${data.nomor}` : 'Catat Surat', lebar: 'lebar', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
-          await api.post('/api/surat', bacaForm(form));
-          toast('Surat tercatat', 'sukses');
+          if (data) await api.put(`/api/surat/${data.id}`, bacaForm(form));
+          else await api.post('/api/surat', bacaForm(form));
+          toast(data ? 'Surat diperbarui' : 'Surat tercatat', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
   });
+}
+
+async function hapusSurat(s, saatSelesai) {
+  if (!await konfirmasi(`Hapus surat ${s.nomor} — ${s.perihal}?`,
+    { judul: 'Hapus Surat', ya: 'Hapus', jenis: 'bahaya' })) return;
+  try {
+    await api.del(`/api/surat/${s.id}`);
+    toast('Surat dihapus', 'sukses');
+    saatSelesai?.();
+  } catch (err) { galat(err); }
 }
 
 function formDisposisi(s, saatSelesai) {

@@ -6,11 +6,12 @@ import {
   pilih, bacaForm, toast, galat, kosongkan, kosong, hariIni, status,
 } from '../inti.js';
 import { negara } from '../app.js';
+import { daftarRekeningBank, kolomRekeningBank, aturKolomBank } from './pembelian.js';
 import { ikon } from '../ikon.js';
 
 export async function render() {
-  const [gudang, rekap] = await Promise.all([
-    api.get('/api/master/gudang'), api.get('/api/pos/rekap'),
+  const [gudang, rekap, bank] = await Promise.all([
+    api.get('/api/master/gudang'), api.get('/api/pos/rekap'), daftarRekeningBank(),
   ]);
 
   const keranjang = [];
@@ -164,6 +165,9 @@ export async function render() {
     if (!keranjang.length) { toast('Keranjang masih kosong', 'peringatan'); return; }
     const kembali = el('div.antara', { gaya: { fontSize: '17px', marginTop: '10px' } },
       [el('span.lembut', 'Kembalian'), el('strong#kembali', rp(0))]);
+    // Rekening tujuan untuk transfer/QRIS (opsional; kosong = akun bank di Parameter Sistem)
+    const kolomBank = kolomRekeningBank(bank, { label: 'Rekening Bank Tujuan' });
+    aturKolomBank(kolomBank, false);
     const form = el('div', [
       el('div.antara', { gaya: { fontSize: '21px', marginBottom: '14px' } },
         [el('span.tebal', 'Total'), el('strong', { gaya: { color: 'var(--brand)' } }, rp(h.total))]),
@@ -175,7 +179,9 @@ export async function render() {
       ], 'tunai', { onchange: (e) => {
         const tunai = e.target.value === 'tunai';
         form.querySelector('#kotak-bayar').style.display = tunai ? '' : 'none';
+        aturKolomBank(kolomBank, ['transfer', 'qris'].includes(e.target.value));
       } })),
+      kolomBank,
       el('div#kotak-bayar', [
         kolom('Uang Diterima', input('bayar', { tipe: 'number', min: 0, nilai: h.total,
           oninput: (e) => {
@@ -198,7 +204,8 @@ export async function render() {
       kaki: [
         el('button.btn', { onclick: () => tutup() }, 'Batal'),
         el('button.btn.utama', { onclick: async (e) => {
-          e.currentTarget.disabled = true;
+          const tombol = e.currentTarget;
+          tombol.disabled = true;
           try {
             const d = bacaForm(form);
             const hasil = await api.post('/api/pos/jual', {
@@ -206,6 +213,7 @@ export async function render() {
               items: keranjang.map((i) => ({ barang_id: i.barang_id, qty: i.qty,
                 harga: i.harga, diskon: i.diskon })),
               metode_bayar: d.metode_bayar,
+              bank_account_id: ['transfer', 'qris'].includes(d.metode_bayar) ? d.bank_account_id || null : null,
               bayar: d.metode_bayar === 'tunai' ? d.bayar : h.total,
             });
             tutup();
@@ -214,7 +222,7 @@ export async function render() {
             gambarAnggota(); gambarKeranjang();
             kotakCari.focus();
             tampilkanStruk(hasil);
-          } catch (err) { galat(err); e.currentTarget.disabled = false; }
+          } catch (err) { galat(err); tombol.disabled = false; }
         } }, 'Proses Pembayaran'),
       ],
     });

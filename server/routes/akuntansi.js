@@ -23,8 +23,9 @@ router.get('/api/akuntansi/jurnal', 'akuntansi.view', ({ query }) => {
   const limit = Math.min(Number(query.limit) || 50, 500);
   const offset = Math.max(Number(query.offset) || 0, 0);
   return {
+    // Kolom sumber dapat kosong pada jurnal lama; diturunkan dari referensinya.
     data: all(`SELECT j.* FROM jurnal j ${where} ORDER BY j.tanggal DESC, j.id DESC LIMIT ? OFFSET ?`,
-      [...p, limit, offset]),
+      [...p, limit, offset]).map((j) => ({ ...j, sumber: acc.sumberJurnal(j) })),
     total: scalar(`SELECT COUNT(*) FROM jurnal j ${where}`, p),
     limit, offset,
   };
@@ -34,8 +35,13 @@ router.get('/api/akuntansi/jurnal/:id', 'akuntansi.view', ({ params }) => {
   const id = idParam(params);
   const j = get('SELECT * FROM jurnal WHERE id = ?', [id]);
   if (!j) throw notFound('Jurnal tidak ditemukan');
+  const sumber = acc.sumberJurnal(j);
   return {
     ...j,
+    sumber,
+    // Sama dengan aturan voidJournal(): jurnal sistem dibatalkan lewat dokumen sumbernya.
+    dapat_dibatalkan: j.status === 'posted' && !String(j.referensi || '').startsWith('void:')
+      && (sumber !== 'sistem' || j.tipe === 'penutup'),
     detail: all(
       `SELECT d.*, c.nama AS akun_nama, c.tipe AS akun_tipe FROM jurnal_detail d
          JOIN coa c ON c.kode = d.coa_kode WHERE d.jurnal_id = ? ORDER BY d.urut`, [id]),

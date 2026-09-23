@@ -277,6 +277,47 @@ export function putuskan(id, { setuju, alasan, pokok_disetujui, tenor_disetujui 
   });
 }
 
+/** Status pengajuan yang belum dicairkan (belum ada jurnal) sehingga masih dapat dibatalkan. */
+export const STATUS_BISA_BATAL = ['diajukan', 'survey', 'dianalisis', 'disetujui'];
+
+/**
+ * Membatalkan pengajuan yang belum dicairkan (mis. anggota mengurungkan
+ * niat). Sebelum pencairan belum ada jurnal maupun blokir simpanan, jadi
+ * cukup mengubah status, melepas agunan, dan menutup permintaan persetujuan.
+ */
+export function batalkan(id, { alasan }, ctx) {
+  const p = get('SELECT * FROM pinjaman WHERE id = ?', [id]);
+  if (!p) throw notFound('Pinjaman tidak ditemukan');
+  if (!STATUS_BISA_BATAL.includes(p.status)) {
+    throw conflict(`Pinjaman berstatus "${p.status}" tidak dapat dibatalkan`,
+      'Hanya pengajuan yang belum dicairkan yang dapat dibatalkan. Pinjaman yang sudah cair '
+      + 'diselesaikan melalui pelunasan atau restrukturisasi.');
+  }
+  if (!String(alasan || '').trim()) throw badRequest('Alasan pembatalan wajib diisi');
+  const oleh = ctx?.user?.username || 'sistem';
+
+  return tx(() => {
+    run("UPDATE pinjaman SET status = 'batal', alasan_tolak = ? WHERE id = ?",
+      [`Dibatalkan oleh ${oleh}: ${alasan}`, id]);
+    // Agunan fisik dikembalikan kepada anggota
+    run("UPDATE pinjaman_agunan SET status = 'dikembalikan' WHERE pinjaman_id = ? AND status = 'ditahan'", [id]);
+    // Blokir simpanan agunan baru dipasang saat pencairan (lihat cairkan), jadi
+    // tidak ada saldo yang perlu dilepas. Blokir yang ada pada rekening yang
+    // sama sengaja tidak disentuh karena bisa milik pinjaman lain yang berjalan.
+    // Permintaan persetujuan yang masih berjalan ikut ditutup
+    const appr = all("SELECT id, nomor FROM approval_request WHERE modul = 'pinjaman' AND entitas_id = ? AND status = 'menunggu'", [id]);
+    for (const r of appr) {
+      run("UPDATE approval_request SET status = 'dibatalkan', selesai_at = datetime('now') WHERE id = ?", [r.id]);
+      run("UPDATE approval_step SET status = 'dilewati' WHERE request_id = ? AND status = 'menunggu'", [r.id]);
+    }
+    logAudit(ctx, { aksi: 'void', modul: 'pinjaman', entitas_id: id,
+      keterangan: `Pengajuan ${p.nomor} DIBATALKAN: ${alasan}`
+        + (appr.length ? ` (persetujuan ${appr.map((r) => r.nomor).join(', ')} ditutup)` : ''),
+      before: { status: p.status }, after: { status: 'batal', alasan } });
+    return { ...get('SELECT * FROM pinjaman WHERE id = ?', [id]), approval_ditutup: appr.length };
+  });
+}
+
 /**
  * Pencairan pinjaman.
  *

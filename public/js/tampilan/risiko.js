@@ -3,7 +3,7 @@
  */
 import {
   api, el, kpi, panel, panelTabel, tabel, angka, judul, tgl, status, modal, kolom, input,
-  pilih, bacaForm, toast, galat, memuat, kosongkan, desimal,
+  pilih, bacaForm, toast, galat, memuat, kosongkan, desimal, konfirmasi,
 } from '../inti.js';
 import { izin } from '../app.js';
 
@@ -75,8 +75,12 @@ export async function render() {
             `${r.skor_residu} — ${judul(r.level_residu)}`) },
           { judul: 'Kontrol', render: (r) => judul(r.efektivitas_kontrol || '-') },
           { judul: 'PIC', render: (r) => el('span.kecil', r.pic || '-') },
-          { judul: '', render: (r) => (izin('risiko.update')
-            ? el('button.btn.kecil', { onclick: (e) => { e.stopPropagation(); form(r, muat); } }, 'Ubah') : '') },
+          { judul: '', render: (r) => el('div.gap8.nowrap', [
+            izin('risiko.update') && el('button.btn.kecil', {
+              onclick: (e) => { e.stopPropagation(); form(r, muat); } }, 'Ubah'),
+            izin('risiko.delete') && el('button.btn.kecil.bahaya', {
+              onclick: (e) => { e.stopPropagation(); hapus(r, muat); } }, 'Hapus'),
+          ].filter(Boolean)) },
         ], d.data, { saatKlik: (r) => lihat(r), kosongTeks: 'Belum ada risiko teridentifikasi' }), [
           izin('risiko.create') && el('button.btn.utama', { onclick: () => form(null, muat) },
             '+ Identifikasi Risiko'),
@@ -154,14 +158,26 @@ function form(data, saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           if (data) await api.put(`/api/risiko/${data.id}`, bacaForm(f));
           else await api.post('/api/risiko', bacaForm(f));
           toast('Data risiko tersimpan', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
   });
+}
+
+async function hapus(r, saatSelesai) {
+  if (!await konfirmasi(`Hapus risiko ${r.kode} — ${r.nama} dari risk register? `
+    + 'Bila risiko hanya sudah tidak relevan, pertimbangkan mengubah statusnya.',
+  { judul: 'Hapus Risiko', ya: 'Hapus', jenis: 'bahaya' })) return;
+  try {
+    await api.del(`/api/risiko/${r.id}`);
+    toast('Risiko dihapus', 'sukses');
+    saatSelesai?.();
+  } catch (err) { galat(err); }
 }

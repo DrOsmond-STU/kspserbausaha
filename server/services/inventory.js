@@ -184,6 +184,7 @@ export function selesaikanOpname(opname_id, detail, ctx) {
   const op = get('SELECT * FROM stock_opname WHERE id = ?', [opname_id]);
   if (!op) throw notFound('Dokumen opname tidak ditemukan');
   if (op.status === 'selesai') throw conflict('Stock opname ini sudah diselesaikan');
+  if (op.status === 'batal') throw conflict('Stock opname ini sudah dibatalkan');
 
   return tx(() => {
     let nilaiKurang = 0;
@@ -231,6 +232,26 @@ export function selesaikanOpname(opname_id, detail, ctx) {
       keterangan: `Stock opname ${op.nomor} selesai (kurang Rp ${nilaiKurang.toLocaleString('id-ID')}, lebih Rp ${nilaiLebih.toLocaleString('id-ID')})` });
     return { opname_id, nilai_kurang: nilaiKurang, nilai_lebih: nilaiLebih, jurnal };
   });
+}
+
+/**
+ * Membatalkan dokumen stock opname yang belum diselesaikan. Dokumen draft
+ * belum mengubah stok maupun membentuk jurnal, sehingga cukup ditandai batal.
+ */
+export function batalOpname(opname_id, alasan, ctx) {
+  const op = get('SELECT * FROM stock_opname WHERE id = ?', [opname_id]);
+  if (!op) throw notFound('Dokumen opname tidak ditemukan');
+  if (op.status === 'selesai') {
+    throw conflict('Stock opname yang sudah diselesaikan tidak dapat dibatalkan',
+      'Koreksi selisih memakai penyesuaian stok');
+  }
+  if (op.status === 'batal') throw conflict('Stock opname ini sudah dibatalkan');
+  const ket = String(alasan || '').trim();
+  if (!ket) throw badRequest('Alasan pembatalan wajib diisi');
+  run("UPDATE stock_opname SET status = 'batal', alasan_batal = ? WHERE id = ?", [ket, opname_id]);
+  logAudit(ctx, { aksi: 'void', modul: 'persediaan', entitas_id: opname_id,
+    keterangan: `Stock opname ${op.nomor} dibatalkan: ${ket}` });
+  return { opname_id, nomor: op.nomor, status: 'batal' };
 }
 
 /** Kartu stok (riwayat mutasi) satu barang. */

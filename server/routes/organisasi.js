@@ -231,6 +231,71 @@ router.post('/api/rat', 'rat.create', ({ body, ctx }) => {
   });
 });
 
+/**
+ * Ubah data pokok RAT selama rapat belum selesai/batal. Bila syarat kuorum
+ * berubah, status kuorum dihitung ulang dari kehadiran yang sudah tercatat.
+ */
+router.put('/api/rat/:id', 'rat.update', ({ params, body, ctx }) => {
+  const id = idParam(params);
+  const before = get('SELECT * FROM rat WHERE id = ?', [id]);
+  if (!before) throw notFound('Data RAT tidak ditemukan');
+  if (['selesai', 'batal'].includes(before.status)) {
+    throw conflict(`RAT berstatus ${before.status} tidak dapat diubah lagi`);
+  }
+  const data = {};
+  if (body.tahun_buku !== undefined) data.tahun_buku = num(body, 'tahun_buku', { min: 2000, max: 2200 });
+  if (body.judul !== undefined) data.judul = str(body, 'judul', { max: 200 });
+  // Tanggal kosong diabaikan (bukan diganti hari ini seperti perilaku bawaan date())
+  if (body.tanggal) data.tanggal = date(body, 'tanggal', { label: 'Tanggal pelaksanaan' });
+  if (body.waktu !== undefined) data.waktu = str(body, 'waktu', { required: false, max: 50 }) || null;
+  if (body.tempat !== undefined) data.tempat = str(body, 'tempat', { required: false, max: 200 }) || null;
+  if (body.jenis !== undefined) data.jenis = oneOf(body, 'jenis', ['tahunan', 'luar_biasa']);
+  if (body.kuorum_persen !== undefined) {
+    data.kuorum_persen = num(body, 'kuorum_persen', { min: 1, max: 100, integer: false, label: 'Syarat kuorum' });
+    data.kuorum_tercapai = before.total_anggota > 0
+      && (before.hadir / before.total_anggota * 100) >= data.kuorum_persen ? 1 : 0;
+  }
+  const cols = Object.keys(data);
+  if (!cols.length) throw badRequest('Tidak ada perubahan yang dikirim');
+  run(`UPDATE rat SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
+    [...cols.map((c) => data[c]), id]);
+  logAudit(ctx, { aksi: 'update', modul: 'rat', entitas_id: id,
+    keterangan: `Data RAT ${before.nomor} diperbarui`, before, after: data });
+  return get('SELECT * FROM rat WHERE id = ?', [id]);
+});
+
+/**
+ * Hapus RAT yang masih berstatus rencana dan belum memiliki kehadiran,
+ * suara, maupun keterkaitan dengan pengesahan SHU. RAT yang sudah berjalan
+ * merupakan arsip kelembagaan dan tidak boleh dihapus.
+ */
+router.delete('/api/rat/:id', 'rat.delete', ({ params, ctx }) => {
+  const id = idParam(params);
+  const r = get('SELECT * FROM rat WHERE id = ?', [id]);
+  if (!r) throw notFound('Data RAT tidak ditemukan');
+  if (r.status !== 'rencana') {
+    throw conflict(`RAT berstatus ${r.status} tidak dapat dihapus`,
+      'Hanya RAT yang masih berstatus rencana (undangan belum dikirim) yang dapat dihapus.');
+  }
+  const hadir = scalar('SELECT COUNT(*) FROM rat_peserta WHERE rat_id = ? AND hadir = 1', [id]);
+  const suara = scalar(
+    'SELECT COUNT(*) FROM rat_suara s JOIN rat_voting v ON v.id = s.voting_id WHERE v.rat_id = ?', [id]);
+  if (hadir || suara) throw conflict('RAT yang sudah memiliki kehadiran atau suara tidak dapat dihapus');
+  const shuTerkait = get('SELECT tahun FROM shu_periode WHERE rat_id = ?', [id]);
+  if (shuTerkait) throw conflict(`RAT ini menjadi dasar pengesahan SHU tahun ${shuTerkait.tahun}`);
+  tx(() => {
+    // Urutan penting: voting merujuk agenda tanpa ON DELETE CASCADE
+    run('DELETE FROM rat_suara WHERE voting_id IN (SELECT id FROM rat_voting WHERE rat_id = ?)', [id]);
+    run('DELETE FROM rat_voting WHERE rat_id = ?', [id]);
+    run('DELETE FROM rat_peserta WHERE rat_id = ?', [id]);
+    run('DELETE FROM rat_agenda WHERE rat_id = ?', [id]);
+    run('DELETE FROM rat WHERE id = ?', [id]);
+  });
+  logAudit(ctx, { aksi: 'delete', modul: 'rat', entitas_id: id,
+    keterangan: `RAT ${r.nomor} (${r.judul}) dihapus`, before: r });
+  return { dihapus: true, id };
+});
+
 /** Mengirim undangan ke seluruh anggota aktif. */
 router.post('/api/rat/:id/undangan', 'rat.update', ({ params, ctx }) => {
   const id = idParam(params);
@@ -316,7 +381,9 @@ router.post('/api/rat/voting/:id/status', 'rat.update', ({ params, body, ctx }) 
   return get('SELECT * FROM rat_voting WHERE id = ?', [id]);
 });
 
-router.post('/api/rat/voting/:id/suara', 'rat.view', ({ params, body, ctx }) => {
+// Pencatatan suara oleh panitia atas nama anggota yang hadir adalah aksi tulis
+// sehingga memerlukan rat.update; anggota memilih sendiri lewat /api/portal/voting.
+router.post('/api/rat/voting/:id/suara', 'rat.update', ({ params, body, ctx }) => {
   const id = idParam(params);
   const v = get('SELECT * FROM rat_voting WHERE id = ?', [id]);
   if (!v) throw notFound('Voting tidak ditemukan');
@@ -366,6 +433,11 @@ router.post('/api/rat/:id/selesai', 'rat.update', ({ params, body, ctx }) => {
   const id = idParam(params);
   const r = get('SELECT * FROM rat WHERE id = ?', [id]);
   if (!r) throw notFound('Data RAT tidak ditemukan');
+  if (['selesai', 'batal'].includes(r.status)) throw conflict(`RAT ini sudah berstatus ${r.status}`);
+  const votingTerbuka = scalar("SELECT COUNT(*) FROM rat_voting WHERE rat_id = ? AND status = 'dibuka'", [id]);
+  if (votingTerbuka) {
+    throw conflict('Masih ada voting yang sedang dibuka', 'Tutup seluruh voting sebelum menyelesaikan RAT.');
+  }
   run("UPDATE rat SET status = 'selesai', berita_acara = ? WHERE id = ?", [body.berita_acara || null, id]);
   logAudit(ctx, { aksi: 'update', modul: 'rat', entitas_id: id,
     keterangan: `RAT ${r.nomor} dinyatakan selesai` });

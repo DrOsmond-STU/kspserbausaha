@@ -7,6 +7,41 @@ import {
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 
+/** Status dokumen pembelian yang masih boleh diubah/dibatalkan (belum ada penerimaan). */
+const STATUS_TERBUKA = ['draft', 'diajukan', 'disetujui'];
+const bisaDiubah = (p) => STATUS_TERBUKA.includes(p.status)
+  && !(p.detail || []).some((d) => Number(d.qty_diterima) > 0);
+
+/**
+ * Daftar rekening bank aktif untuk pilihan pembayaran transfer. Pengguna tanpa
+ * hak melihat master bank mendapat daftar kosong (server memakai akun bank bawaan).
+ */
+export async function daftarRekeningBank() {
+  try {
+    const d = await api.get('/api/master/bank', { status: 'aktif', limit: 200 });
+    return d.data || [];
+  } catch { return []; }
+}
+
+/**
+ * Kolom pilihan rekening bank (name="bank_account_id"). Nilai kosong berarti
+ * memakai akun bank pada Parameter Sistem. Mengembalikan null bila tidak ada rekening.
+ */
+export function kolomRekeningBank(bank, { label = 'Rekening Bank', bantuan } = {}) {
+  if (!bank.length) return null;
+  return kolom(label, pilih('bank_account_id', [
+    { nilai: '', teks: '- Akun bank bawaan (Parameter Sistem) -' },
+    ...bank.map((b) => ({ nilai: b.id, teks: `${b.nama_bank} · ${b.nomor_rekening} a.n. ${b.atas_nama}` })),
+  ]), { bantuan: bantuan || 'Kosongkan untuk memakai akun bank bawaan pada Parameter Sistem' });
+}
+
+/** Menampilkan/menyembunyikan kolom rekening bank dan mengosongkannya saat disembunyikan. */
+export function aturKolomBank(kolomBank, tampil) {
+  if (!kolomBank) return;
+  kolomBank.style.display = tampil ? '' : 'none';
+  if (!tampil) kolomBank.querySelector('select').value = '';
+}
+
 export async function render(param) {
   if (param[0]) return detail(Number(param[0]));
 
@@ -20,8 +55,9 @@ export async function render(param) {
   const bilah = el('div.tab', daftarTab.map((t, i) => el('button', {
     class: i === 0 ? 'aktif' : '',
     onclick: async (e) => {
+      const tombol = e.currentTarget;
       bilah.querySelectorAll('button').forEach((b) => b.classList.remove('aktif'));
-      e.currentTarget.classList.add('aktif');
+      tombol.classList.add('aktif');
       kosongkan(isi).append(memuat());
       kosongkan(isi).append(await t.render());
     },
@@ -46,7 +82,8 @@ async function dokumenTab() {
         { judul: 'Gudang', render: (p) => el('span.kecil', p.gudang_nama || '-') },
         { judul: 'Total', angka: true, render: (p) => rp(p.total) },
         { judul: 'Terbayar', angka: true, render: (p) => rp(p.terbayar) },
-        { judul: 'Status', render: (p) => status(p.status) },
+        { judul: 'Status', render: (p) => el('div', [status(p.status),
+          p.status === 'batal' && p.alasan_batal && el('div.kecil.samar', p.alasan_batal)]) },
       ], d.data, { saatKlik: (p) => { location.hash = `#/pembelian/${p.id}`; },
         kosongTeks: 'Belum ada dokumen pembelian' }), [
         pilih('f', ['', 'draft', 'diajukan', 'disetujui', 'diterima', 'selesai', 'batal']
@@ -69,8 +106,19 @@ async function detail(id) {
     el('button.btn', { onclick: () => { location.hash = '#/pembelian'; } }, '← Kembali'),
     izin('pembelian.update') && !['selesai', 'batal'].includes(p.status)
       && el('button.btn.utama', { onclick: () => formTerima(p) }, 'Terima Barang'),
+    izin('pembelian.update') && bisaDiubah(p)
+      && el('button.btn', { onclick: () => formPO(() => navigasi(location.hash, true), p) }, 'Ubah'),
+    izin('pembelian.update') && bisaDiubah(p)
+      && el('button.btn.bahaya', { onclick: () => formBatal(p) }, 'Batalkan'),
     el('button.btn', { onclick: () => window.print() }, 'Cetak'),
   ].filter(Boolean)));
+
+  if (p.status === 'batal') {
+    wadah.append(el('div.notis.bahaya', [el('div.isi', [
+      el('strong', 'Dokumen dibatalkan'),
+      el('div.kecil', p.alasan_batal || 'Tanpa keterangan'),
+    ])]));
+  }
 
   wadah.append(el('div.grid.k4.mb16', [
     kpi('Total Dokumen', rp(p.total)),
@@ -105,12 +153,17 @@ async function detail(id) {
   return wadah;
 }
 
-async function formPO(saatSelesai) {
+/**
+ * Formulir purchase order. Bila `dok` diisi, formulir dipakai untuk mengubah
+ * dokumen yang belum menerima barang (PUT) dengan isian awal dari dokumen tersebut.
+ */
+async function formPO(saatSelesai, dok = null) {
   const [supplier, gudang, barang] = await Promise.all([
     api.get('/api/master/supplier'), api.get('/api/master/gudang'),
     api.get('/api/master/barang', { limit: 500 }),
   ]);
-  const items = [];
+  const items = (dok?.detail || []).map((d) => ({
+    barang_id: d.barang_id, qty: d.qty, harga: d.harga, diskon: d.diskon || 0 }));
   const daftar = el('div');
   const ringkas = el('div.antara.mt8');
 
@@ -132,14 +185,14 @@ async function formPO(saatSelesai) {
           nilai: it.qty || '', oninput: (e) => { it.qty = Number(e.target.value) || 0; hitung(); } }),
         el('input', { type: 'number', class: 'angka', placeholder: 'Harga', min: 0,
           nilai: it.harga || '', oninput: (e) => { it.harga = Number(e.target.value) || 0; hitung(); } }),
-        el('div.kanan.kecil.tebal', rp((it.qty || 0) * (it.harga || 0))),
+        el('div.kanan.kecil.tebal', rp((it.qty || 0) * (it.harga || 0) - (it.diskon || 0))),
         el('button.btn.kecil.polos', { onclick: () => { items.splice(i, 1); gambar(); } }, '✕'),
       ]));
     });
     hitung();
   }
   function hitung() {
-    const total = items.reduce((s, i) => s + (i.qty || 0) * (i.harga || 0), 0);
+    const total = items.reduce((s, i) => s + (i.qty || 0) * (i.harga || 0) - (i.diskon || 0), 0);
     kosongkan(ringkas).append(el('span.lembut', `${items.length} baris barang`),
       el('strong', { gaya: { fontSize: '16px' } }, rp(total)));
   }
@@ -147,37 +200,46 @@ async function formPO(saatSelesai) {
   const form = el('div', [
     el('div.baris-form.k3', [
       kolom('Supplier', pilih('supplier_id', supplier.data.map((s) => ({
-        nilai: s.id, teks: `${s.nama} (termin ${s.termin_hari} hari)` }))), { wajib: true }),
+        nilai: s.id, teks: `${s.nama} (termin ${s.termin_hari} hari)` })), dok?.supplier_id), { wajib: true }),
       kolom('Gudang Penerima', pilih('gudang_id', gudang.data.map((g) => ({
-        nilai: g.id, teks: g.nama }))), { wajib: true }),
-      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() })),
+        nilai: g.id, teks: g.nama })), dok?.gudang_id), { wajib: true }),
+      kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: dok?.tanggal || hariIni() })),
     ]),
+    !dok && kolom('Simpan sebagai', pilih('status', [
+      { nilai: 'draft', teks: 'Draft' }, { nilai: 'diajukan', teks: 'Diajukan untuk persetujuan' }])),
     el('div.tebal.mt16.mb8', 'Rincian Barang'),
     daftar,
     el('button.btn.kecil', { onclick: () => { items.push({}); gambar(); } }, '+ Tambah Barang'),
     ringkas,
-  ]);
+  ].filter(Boolean));
   gambar();
 
   const tutup = modal({
-    judul: 'Purchase Order Baru', lebar: 'lebar', isi: form,
+    judul: dok ? `Ubah Dokumen ${dok.nomor}` : 'Purchase Order Baru', lebar: 'lebar', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
-          const h = await api.post('/api/pembelian', {
-            ...bacaForm(form), tipe: 'po',
-            items: items.filter((i) => i.barang_id && i.qty > 0) });
-          toast('Purchase Order dibuat', 'sukses', `${h.nomor} · ${rp(h.total)}`);
+          const isian = { ...bacaForm(form), items: items.filter((i) => i.barang_id && i.qty > 0) };
+          if (!isian.items.length) throw new Error('Tambahkan minimal satu barang dengan kuantitas');
+          const h = dok
+            ? await api.put(`/api/pembelian/${dok.id}`, isian)
+            : await api.post('/api/pembelian', { ...isian, tipe: 'po' });
+          toast(dok ? 'Dokumen pembelian diperbarui' : 'Purchase Order dibuat', 'sukses',
+            `${h.nomor} · ${rp(h.total)}`);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
-      } }, 'Simpan PO'),
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, dok ? 'Simpan Perubahan' : 'Simpan PO'),
     ],
   });
 }
 
-function formTerima(p) {
+async function formTerima(p) {
+  const bank = await daftarRekeningBank();
+  const kolomBank = kolomRekeningBank(bank, { label: 'Rekening Bank Pembayar' });
+  aturKolomBank(kolomBank, false);
   const form = el('div', [
     el('div.notis.info', [el('div.isi', [
       el('strong', 'Penerimaan barang membentuk jurnal'),
@@ -188,21 +250,26 @@ function formTerima(p) {
       kolom('Tanggal Terima', input('tanggal', { tipe: 'date', nilai: hariIni() })),
       kolom('Pembayaran', pilih('metode_bayar', [
         { nilai: 'hutang', teks: 'Utang (bayar kemudian)' },
-        { nilai: 'tunai', teks: 'Tunai' }, { nilai: 'transfer', teks: 'Transfer Bank' }])),
+        { nilai: 'tunai', teks: 'Tunai' }, { nilai: 'transfer', teks: 'Transfer Bank' }], 'hutang',
+      { onchange: (e) => aturKolomBank(kolomBank, e.target.value === 'transfer') })),
     ]),
+    kolomBank,
     el('div.kecil.lembut', 'Seluruh sisa barang yang belum diterima akan dicatat sebagai diterima.'),
-  ]);
+  ].filter(Boolean));
   const tutup = modal({
     judul: `Penerimaan Barang — ${p.nomor}`, isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
-          const h = await api.post(`/api/pembelian/${p.id}/terima`, bacaForm(form));
+          const d = bacaForm(form);
+          const h = await api.post(`/api/pembelian/${p.id}/terima`, {
+            ...d, bank_account_id: d.metode_bayar === 'transfer' ? d.bank_account_id || null : null });
           toast('Barang diterima', 'sukses', `Nilai ${rp(h.total)} · jurnal ${h.jurnal.nomor}`);
           tutup(); navigasi(location.hash, true);
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Terima Barang'),
     ],
   });
@@ -243,7 +310,10 @@ export async function hutangTab(jenis) {
   return wadah;
 }
 
-function formBayar(h, saatSelesai) {
+async function formBayar(h, saatSelesai) {
+  const bank = await daftarRekeningBank();
+  const kolomBank = kolomRekeningBank(bank);
+  aturKolomBank(kolomBank, false);
   const form = el('div', [
     el('dl.deskripsi.mb16', [
       el('dt', 'Referensi'), el('dd', h.referensi),
@@ -256,20 +326,52 @@ function formBayar(h, saatSelesai) {
       kolom('Nominal Bayar', input('nominal', { tipe: 'number', min: 1, nilai: h.sisa }), { wajib: true }),
     ]),
     kolom('Metode', pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' },
-      { nilai: 'transfer', teks: 'Transfer Bank' }])),
-  ]);
+      { nilai: 'transfer', teks: 'Transfer Bank' }], 'tunai',
+    { onchange: (e) => aturKolomBank(kolomBank, e.target.value === 'transfer') })),
+    kolomBank,
+  ].filter(Boolean));
   const tutup = modal({
     judul: h.jenis === 'hutang' ? 'Pembayaran Utang' : 'Penerimaan Piutang', isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
-          const r = await api.post('/api/hutang-piutang/bayar', { ...bacaForm(form), id: h.id });
-          toast('Pembayaran tercatat', 'sukses', `Sisa ${rp(r.sisa)}`);
+          const d = bacaForm(form);
+          const r = await api.post('/api/hutang-piutang/bayar', {
+            ...d, id: h.id, bank_account_id: d.metode === 'transfer' ? d.bank_account_id || null : null });
+          toast('Pembayaran tercatat', 'sukses',
+            `Sisa ${rp(r.sisa)}${r.jurnal?.nomor ? ` · jurnal ${r.jurnal.nomor}` : ''}`);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Bayar'),
+    ],
+  });
+}
+
+function formBatal(p) {
+  const form = el('div', [
+    el('div.notis.peringatan', [el('div.isi', [
+      el('strong', `Batalkan dokumen ${p.nomor}?`),
+      el('div.kecil', 'Dokumen belum menerima barang sehingga belum ada jurnal maupun mutasi stok. '
+        + 'Dokumen yang dibatalkan tidak dapat diproses lagi.'),
+    ])]),
+    kolom('Alasan Pembatalan', input('alasan', { maxlength: 300 }), { wajib: true }),
+  ]);
+  const tutup = modal({
+    judul: 'Batalkan Dokumen Pembelian', isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Kembali'),
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          await api.post(`/api/pembelian/${p.id}/batal`, bacaForm(form));
+          toast('Dokumen pembelian dibatalkan', 'sukses', p.nomor);
+          tutup(); navigasi(location.hash, true);
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Batalkan Dokumen'),
     ],
   });
 }

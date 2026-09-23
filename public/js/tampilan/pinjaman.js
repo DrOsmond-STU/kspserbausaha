@@ -8,6 +8,10 @@ import {
 import { grafikCincin } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
+import { daftarBank, kolomBank } from './simpanan.js';
+
+/** Status pengajuan yang belum dicairkan sehingga masih dapat dibatalkan. */
+const STATUS_BISA_BATAL = ['diajukan', 'survey', 'dianalisis', 'disetujui'];
 
 const WARNA_KOL = ['#1baf7a', '#eda100', '#eb6834', '#e34948', '#8b1a1a'];
 const kelasKol = (k) => (k === 1 ? 'st-sukses' : k === 2 ? 'st-peringatan' : 'st-bahaya');
@@ -93,7 +97,7 @@ export async function render(param) {
         el('input', { type: 'search', placeholder: 'Cari nomor atau nama anggota…',
           oninput: (e) => { q = e.target.value; clearTimeout(muat.t); muat.t = setTimeout(muat, 320); } }),
         pilih('f', ['', 'diajukan', 'dianalisis', 'disetujui', 'dicairkan', 'lunas', 'ditolak',
-          'restrukturisasi'].map((s) => ({ nilai: s, teks: s ? judul(s) : 'Semua status' })), filter,
+          'batal', 'restrukturisasi'].map((s) => ({ nilai: s, teks: s ? judul(s) : 'Semua status' })), filter,
         { onchange: (e) => { filter = e.target.value; muat(); } }),
         el('button.btn', { onclick: simulasi }, 'Simulasi Angsuran'),
         izin('pinjaman.create') && el('button.btn.utama', { onclick: () => formAjukan(muat) }, '+ Ajukan Pinjaman'),
@@ -129,6 +133,9 @@ async function detail(id) {
   if (izin('pinjaman.approve') && p.status === 'dicairkan') {
     aksi.push(el('button.btn', { onclick: () => formRestruktur(p, segarkan) }, 'Restrukturisasi'));
   }
+  if (izin('pinjaman.update') && STATUS_BISA_BATAL.includes(p.status)) {
+    aksi.push(el('button.btn.bahaya', { onclick: () => formBatal(p, segarkan) }, 'Batalkan Pengajuan'));
+  }
   wadah.append(el('div.gap8.mb16', aksi));
 
   wadah.append(el('div.grid.k4.mb16', [
@@ -158,7 +165,8 @@ async function detail(id) {
       el('dt', 'Status'), el('dd', status(p.status)),
       el('dt', 'Kolektibilitas'), el('dd', el(`span.lencana-status.${kelasKol(p.kolektibilitas)}`,
         `${p.kolektibilitas}. ${p.label_kolektibilitas}`)),
-      p.alasan_tolak && el('dt', 'Alasan ditolak'), p.alasan_tolak && el('dd', p.alasan_tolak),
+      p.alasan_tolak && el('dt', p.status === 'batal' ? 'Alasan dibatalkan' : 'Alasan ditolak'),
+      p.alasan_tolak && el('dd', p.alasan_tolak),
     ].filter(Boolean))),
     panel('Analisis Kredit', el('div', [
       p.skor_kredit !== null ? el('div', [
@@ -305,13 +313,14 @@ async function formAjukan(saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post('/api/pinjaman', bacaForm(form));
           toast('Pengajuan pinjaman tercatat', 'sukses',
             `${h.nomor} · skor ${h.skoring.skor}/100${h.approval ? ' · menunggu persetujuan' : ''}`);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Ajukan'),
     ],
   });
@@ -364,7 +373,9 @@ function formPutusan(p, setuju, saatSelesai) {
   });
 }
 
-function formCairkan(p, saatSelesai) {
+async function formCairkan(p, saatSelesai) {
+  const bank = await daftarBank();
+  const metode = pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' }, { nilai: 'transfer', teks: 'Transfer Bank' }]);
   const form = el('div', [
     el('div.notis.info', [el('div.isi', [
       el('strong', `Pencairan ${rp(p.pokok)}`),
@@ -373,9 +384,9 @@ function formCairkan(p, saatSelesai) {
     ])]),
     el('div.baris-form', [
       kolom('Tanggal Pencairan', input('tanggal', { tipe: 'date', nilai: hariIni() })),
-      kolom('Metode', pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' },
-        { nilai: 'transfer', teks: 'Transfer Bank' }])),
+      kolom('Metode', metode),
     ]),
+    kolomBank(metode, bank),
     el('div.kecil.lembut', 'Jadwal angsuran dihitung ulang berdasarkan tanggal pencairan.'),
   ]);
   const tutup = modal({
@@ -383,19 +394,23 @@ function formCairkan(p, saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post(`/api/pinjaman/${p.id}/cairkan`, bacaForm(form));
           toast('Pinjaman berhasil dicairkan', 'sukses',
             `Diterima ${rp(h.dicairkan)} · jurnal ${h.jurnal.nomor}`);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Cairkan'),
     ],
   });
 }
 
-function formAngsuran(p, saatSelesai) {
+async function formAngsuran(p, saatSelesai) {
+  const bank = await daftarBank();
+  const metode = pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' },
+    { nilai: 'transfer', teks: 'Transfer Bank' }, { nilai: 'potong_gaji', teks: 'Potong Gaji' }]);
   const berikut = p.jadwal.find((j) => j.status !== 'lunas');
   const usulan = berikut ? (berikut.total - berikut.bayar_pokok - berikut.bayar_bunga) + p.denda.total : 0;
   const form = el('div', [
@@ -410,8 +425,7 @@ function formAngsuran(p, saatSelesai) {
       kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() })),
       kolom('Nominal', input('nominal', { tipe: 'number', min: 1, nilai: usulan }), { wajib: true }),
     ]),
-    kolom('Metode', pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' },
-      { nilai: 'transfer', teks: 'Transfer Bank' }, { nilai: 'potong_gaji', teks: 'Potong Gaji' }])),
+    el('div.baris-form', [kolom('Metode', metode), kolomBank(metode, bank)]),
     kolom('Keterangan', input('keterangan')),
   ]);
   const tutup = modal({
@@ -419,20 +433,23 @@ function formAngsuran(p, saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post('/api/pinjaman/angsuran', { ...bacaForm(form), pinjaman_id: p.id });
           toast(h.lunas ? 'Angsuran tercatat — pinjaman LUNAS' : 'Angsuran berhasil dicatat', 'sukses',
             `Pokok ${rp(h.bayar_pokok)} · jasa ${rp(h.bayar_bunga)} · denda ${rp(h.bayar_denda)}`);
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Bayar'),
     ],
   });
 }
 
 async function formPelunasan(p, saatSelesai) {
-  const sim = await api.get(`/api/pinjaman/${p.id}/simulasi-pelunasan`);
+  const [sim, bank] = await Promise.all([
+    api.get(`/api/pinjaman/${p.id}/simulasi-pelunasan`), daftarBank()]);
+  const metode = pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' }, { nilai: 'transfer', teks: 'Transfer Bank' }]);
   const form = el('div', [
     el('dl.deskripsi', [
       el('dt', 'Sisa pokok'), el('dd', rp(sim.sisa_pokok)),
@@ -444,21 +461,22 @@ async function formPelunasan(p, saatSelesai) {
     ]),
     el('div.baris-form.mt16', [
       kolom('Tanggal', input('tanggal', { tipe: 'date', nilai: hariIni() })),
-      kolom('Metode', pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' },
-        { nilai: 'transfer', teks: 'Transfer Bank' }])),
+      kolom('Metode', metode),
     ]),
+    kolomBank(metode, bank),
   ]);
   const tutup = modal({
     judul: `Pelunasan Dipercepat — ${p.nomor}`, isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           await api.post(`/api/pinjaman/${p.id}/pelunasan`, bacaForm(form));
           toast('Pinjaman berhasil dilunasi', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, `Lunasi ${rp(sim.total)}`),
     ],
   });
@@ -483,13 +501,42 @@ function formRestruktur(p, saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post(`/api/pinjaman/${p.id}/restrukturisasi`, bacaForm(form));
           toast('Restrukturisasi berhasil', 'sukses', `Pinjaman baru ${h.nomor} sebesar ${rp(h.pokok)}`);
           tutup(); location.hash = `#/pinjaman/${h.id}`;
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Proses Restrukturisasi'),
+    ],
+  });
+}
+
+/** Membatalkan pengajuan yang belum dicairkan (belum ada jurnal). */
+function formBatal(p, saatSelesai) {
+  const form = el('div', [
+    el('div.notis.peringatan', [el('div.isi', [
+      el('strong', `Pengajuan ${p.nomor} sebesar ${rp(p.pokok)} akan dibatalkan`),
+      el('div.kecil', 'Pinjaman belum dicairkan sehingga tidak ada jurnal yang perlu dibalik. Agunan '
+        + 'dikembalikan dan permintaan persetujuan yang masih berjalan ikut ditutup.'),
+    ])]),
+    kolom('Alasan Pembatalan', el('textarea', { name: 'alasan' }), { wajib: true }),
+  ]);
+  const tutup = modal({
+    judul: `Batalkan Pengajuan — ${p.nomor}`, lebar: 'sempit', isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Tutup'),
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          const h = await api.post(`/api/pinjaman/${p.id}/batal`, bacaForm(form));
+          toast('Pengajuan dibatalkan', 'sukses',
+            h.approval_ditutup ? 'Permintaan persetujuan terkait ikut ditutup' : null);
+          tutup(); saatSelesai?.();
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Batalkan Pengajuan'),
     ],
   });
 }

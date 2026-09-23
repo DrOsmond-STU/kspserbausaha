@@ -3,7 +3,7 @@
  */
 import {
   api, el, kpi, panel, panelTabel, tabel, angka, tgl, status, judul, modal, kolom, input,
-  pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni,
+  pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, konfirmasi,
 } from '../inti.js';
 import { grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
@@ -67,6 +67,10 @@ export async function render() {
             ? tgl(x.tanggal_kadaluarsa) : el('span.samar', 'permanen')) },
           { judul: 'PIC', render: (x) => el('span.kecil', x.pic || '-') },
           { judul: 'Status', render: (x) => status(x.status_terhitung) },
+          { judul: '', render: (x) => el('div.gap8.nowrap', [
+            izin('compliance.update') && el('button.btn.kecil', { onclick: () => form(x, muat) }, 'Ubah'),
+            izin('compliance.delete') && el('button.btn.kecil.bahaya', { onclick: () => hapus(x, muat) }, 'Hapus'),
+          ].filter(Boolean)) },
         ], d.data, { kosongTeks: 'Belum ada register kepatuhan' }), [
           izin('compliance.create') && el('button.btn.utama', { onclick: () => form(null, muat) },
             '+ Tambah Kewajiban'),
@@ -106,14 +110,25 @@ function form(data, saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           if (data) await api.put(`/api/compliance/${data.id}`, bacaForm(f));
           else await api.post('/api/compliance', bacaForm(f));
           toast('Data kepatuhan tersimpan', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
   });
+}
+
+async function hapus(x, saatSelesai) {
+  if (!await konfirmasi(`Hapus kewajiban "${x.nama}" dari register kepatuhan?`,
+    { judul: 'Hapus Kewajiban Kepatuhan', ya: 'Hapus', jenis: 'bahaya' })) return;
+  try {
+    await api.del(`/api/compliance/${x.id}`);
+    toast('Kewajiban kepatuhan dihapus', 'sukses');
+    saatSelesai?.();
+  } catch (err) { galat(err); }
 }

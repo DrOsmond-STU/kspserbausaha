@@ -30,7 +30,7 @@ export async function render() {
 
   const [unit, coa] = await Promise.all([
     api.get('/api/master/unit-usaha').catch(() => ({ data: [] })),
-    api.get('/api/master/coa', { limit: 500 }).catch(() => ({ data: [] })),
+    api.get('/api/master/coa', { limit: 1000 }).catch(() => ({ data: [] })),
   ]);
   let unitId = '';
 
@@ -289,6 +289,7 @@ const GAMBAR = {
   ]),
 
   pajak: (d) => el('div', [
+    ringkasanPpn(d),
     panelTabel('Rekapitulasi Akun Pajak', tabel([
       { judul: 'Kode', render: (r) => el('span.mono.kecil', r.kode) },
       { judul: 'Nama Akun', kunci: 'nama' },
@@ -299,6 +300,47 @@ const GAMBAR = {
     el('div.notis.info', [el('div.isi', [el('strong', 'Catatan perpajakan'), el('div.kecil', d.catatan)])]),
   ]),
 };
+
+/**
+ * PPN keluaran vs masukan. Akunnya ditentukan server dari Parameter Sistem;
+ * salah satunya bisa null bila pemetaannya belum diisi.
+ */
+function ringkasanPpn(d) {
+  const keluaran = d.ppn_keluaran;
+  const masukan = d.ppn_masukan;
+  if (!keluaran && !masukan) {
+    return el('div.notis.peringatan', [el('div.isi', [
+      el('strong', 'Akun PPN belum dipetakan'),
+      el('div.kecil', 'Isi pemetaan akun utang pajak (PPN keluaran) dan PPN masukan pada Parameter Sistem '
+        + 'agar rekap PPN dapat dihitung.'),
+    ])]);
+  }
+  const nilaiK = keluaran?.saldo || 0;
+  const nilaiM = masukan?.saldo || 0;
+  const bersih = nilaiK - nilaiM;
+  const catatanAkun = (x) => (x ? `Akun ${x.kode} · D ${rp(x.debit)} / K ${rp(x.kredit)}` : 'Akun belum dipetakan');
+  return el('div', [
+    el('div.grid.k3.mb16', [
+      kpi('PPN Keluaran', keluaran ? rp(nilaiK) : '-', { catatan: catatanAkun(keluaran) }),
+      kpi('PPN Masukan', masukan ? rp(nilaiM) : '-', { catatan: catatanAkun(masukan) }),
+      kpi(bersih >= 0 ? 'PPN Kurang Bayar' : 'PPN Lebih Bayar', rp(Math.abs(bersih)), {
+        jenis: bersih > 0 ? 'peringatan' : 'sukses',
+        catatan: keluaran && masukan ? 'Keluaran − masukan'
+          : 'Salah satu akun PPN belum dipetakan; dihitung dari akun yang tersedia',
+      }),
+    ]),
+    // Tabel ringkas agar ikut terekspor ke CSV.
+    el('div.panel', [el('div.panel-isi.rapat', [el('div.tabel-bungkus', [el('table.tabel', [
+      el('thead', [el('tr', [el('th', 'Uraian'), el('th', 'Akun'), el('th.angka', 'Jumlah')])]),
+      el('tbody', [
+        el('tr', [el('td', 'PPN Keluaran'), el('td', el('span.mono.kecil', keluaran?.kode || '-')), el('td.angka', rp(nilaiK))]),
+        el('tr', [el('td', 'PPN Masukan'), el('td', el('span.mono.kecil', masukan?.kode || '-')), el('td.angka', rp(nilaiM))]),
+      ]),
+      el('tfoot', [el('tr', [el('td', { colspan: 2 }, bersih >= 0 ? 'PPN kurang bayar' : 'PPN lebih bayar'),
+        el('td.angka', rp(Math.abs(bersih)))])]),
+    ])])])]),
+  ]);
+}
 
 /** Ekspor tabel yang sedang tampil ke berkas CSV. */
 function unduh(jenis, wadah) {

@@ -3,7 +3,7 @@
  */
 import {
   api, el, kpi, panel, panelTabel, tabel, angka, persen, tgl, status, judul, modal, kolom,
-  input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah,
+  input, pilih, bacaForm, toast, galat, memuat, kosongkan, hariIni, bilah, konfirmasi,
 } from '../inti.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
@@ -85,9 +85,15 @@ async function planTab() {
           `${tgl(p.tanggal_mulai)} – ${tgl(p.tanggal_selesai)}`) },
         { judul: 'Temuan', angka: true, render: (p) => `${p.temuan_terbuka} / ${p.jumlah_temuan}` },
         { judul: 'Status', render: (p) => status(p.status) },
+        { judul: '', render: (p) => el('div.gap8.nowrap', [
+          izin('audit.update') && el('button.btn.kecil', {
+            onclick: (e) => { e.stopPropagation(); formPlan(p, muat); } }, 'Ubah'),
+          izin('audit.delete') && el('button.btn.kecil.bahaya', {
+            onclick: (e) => { e.stopPropagation(); hapusPlan(p, muat); } }, 'Hapus'),
+        ].filter(Boolean)) },
       ], d.data, { saatKlik: (p) => { location.hash = `#/audit/${p.id}`; },
         kosongTeks: 'Belum ada rencana audit' }), [
-        izin('audit.create') && el('button.btn.utama', { onclick: () => formPlan(muat) },
+        izin('audit.create') && el('button.btn.utama', { onclick: () => formPlan(null, muat) },
           '+ Buat Rencana Audit'),
       ].filter(Boolean)));
     } catch (err) { galat(err); }
@@ -103,6 +109,11 @@ async function detailPlan(id) {
     el('button.btn', { onclick: () => { location.hash = '#/audit'; } }, '← Kembali'),
     izin('audit.create') && el('button.btn.utama', {
       onclick: () => formTemuan(null, id, () => navigasi(location.hash, true)) }, '+ Tambah Temuan'),
+    izin('audit.update') && el('button.btn', {
+      onclick: () => formPlan(p, () => navigasi(location.hash, true)) }, 'Ubah Rencana'),
+    izin('audit.delete') && el('button.btn.bahaya', {
+      onclick: () => hapusPlan({ ...p, jumlah_temuan: p.temuan.length },
+        () => { location.hash = '#/audit'; }) }, 'Hapus Rencana'),
   ].filter(Boolean)));
 
   wadah.append(panel(p.judul, el('dl.deskripsi', [
@@ -131,8 +142,12 @@ async function detailPlan(id) {
         el('dt', 'PIC'), el('dd', t.pic || '-'),
         el('dt', 'Batas waktu'), el('dd', tgl(t.batas_waktu, true)),
       ]),
-      izin('audit.update') && el('button.btn.kecil.mt16', {
-        onclick: () => formTemuan(t, id, () => navigasi(location.hash, true)) }, 'Ubah / Perbarui CAPA'),
+      el('div.gap8.mt16', [
+        izin('audit.update') && el('button.btn.kecil', {
+          onclick: () => formTemuan(t, id, () => navigasi(location.hash, true)) }, 'Ubah / Perbarui CAPA'),
+        izin('audit.delete') && el('button.btn.kecil.bahaya', {
+          onclick: () => hapusTemuan(t, () => navigasi(location.hash, true)) }, 'Hapus Temuan'),
+      ].filter(Boolean)),
     ])));
   }
   if (!p.temuan.length) wadah.append(panel('Temuan Audit', el('div.kosong', 'Belum ada temuan dicatat')));
@@ -155,8 +170,10 @@ async function temuanTab() {
         { judul: 'PIC', render: (t) => el('span.kecil', t.pic || '-') },
         { judul: 'Batas Waktu', render: (t) => tgl(t.batas_waktu) },
         { judul: 'Status', render: (t) => status(t.status) },
-        { judul: '', render: (t) => (izin('audit.update')
-          ? el('button.btn.kecil', { onclick: () => formTemuan(t, t.plan_id, muat) }, 'Ubah') : '') },
+        { judul: '', render: (t) => el('div.gap8.nowrap', [
+          izin('audit.update') && el('button.btn.kecil', { onclick: () => formTemuan(t, t.plan_id, muat) }, 'Ubah'),
+          izin('audit.delete') && el('button.btn.kecil.bahaya', { onclick: () => hapusTemuan(t, muat) }, 'Hapus'),
+        ].filter(Boolean)) },
       ], d.data, { kosongTeks: 'Belum ada temuan audit' }), [
         izin('audit.create') && el('button.btn.utama', { onclick: () => formTemuan(null, null, muat) },
           '+ Tambah Temuan'),
@@ -167,38 +184,68 @@ async function temuanTab() {
   return wadah;
 }
 
-function formPlan(saatSelesai) {
+/** Formulir rencana audit; `data` terisi berarti mode ubah. */
+function formPlan(data, saatSelesai) {
   const f = el('div', [
     el('div.baris-form', [
-      kolom('Judul Audit', input('judul'), { wajib: true }),
-      kolom('Tahun', input('tahun', { tipe: 'number', nilai: new Date().getFullYear() }), { wajib: true }),
+      kolom('Judul Audit', input('judul', { nilai: data?.judul || '' }), { wajib: true }),
+      kolom('Tahun', input('tahun', { tipe: 'number', nilai: data?.tahun || new Date().getFullYear() }),
+        { wajib: true }),
     ]),
     el('div.baris-form.k3', [
-      kolom('Objek Audit', input('objek', { placeholder: 'contoh: Unit Simpan Pinjam' })),
-      kolom('Auditor', input('auditor')),
+      kolom('Objek Audit', input('objek', { nilai: data?.objek || '', placeholder: 'contoh: Unit Simpan Pinjam' })),
+      kolom('Auditor', input('auditor', { nilai: data?.auditor || '' })),
       kolom('Status', pilih('status', ['rencana', 'berjalan', 'selesai']
-        .map((s) => ({ nilai: s, teks: judul(s) })))),
+        .map((s) => ({ nilai: s, teks: judul(s) })), data?.status)),
     ]),
     el('div.baris-form', [
-      kolom('Tanggal Mulai', input('tanggal_mulai', { tipe: 'date', nilai: hariIni() })),
-      kolom('Tanggal Selesai', input('tanggal_selesai', { tipe: 'date' })),
+      kolom('Tanggal Mulai', input('tanggal_mulai', { tipe: 'date',
+        nilai: data ? (data.tanggal_mulai || '') : hariIni() })),
+      kolom('Tanggal Selesai', input('tanggal_selesai', { tipe: 'date', nilai: data?.tanggal_selesai || '' })),
     ]),
-    kolom('Ruang Lingkup', el('textarea', { name: 'ruang_lingkup' })),
+    kolom('Ruang Lingkup', el('textarea', { name: 'ruang_lingkup' }, data?.ruang_lingkup || '')),
   ]);
   const tutup = modal({
-    judul: 'Rencana Audit Internal', lebar: 'lebar', isi: f,
+    judul: data ? `Ubah Rencana Audit ${data.nomor}` : 'Rencana Audit Internal', lebar: 'lebar', isi: f,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
-          await api.post('/api/audit/plan', bacaForm(f));
+          if (data) await api.put(`/api/audit/plan/${data.id}`, bacaForm(f));
+          else await api.post('/api/audit/plan', bacaForm(f));
           toast('Rencana audit tersimpan', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
   });
+}
+
+async function hapusPlan(p, saatSelesai) {
+  if (p.jumlah_temuan) {
+    toast('Rencana audit tidak dapat dihapus', 'peringatan',
+      `Sudah ada ${p.jumlah_temuan} temuan pada rencana ini. Hapus temuannya terlebih dahulu.`);
+    return;
+  }
+  if (!await konfirmasi(`Hapus rencana audit ${p.nomor} — ${p.judul}?`,
+    { judul: 'Hapus Rencana Audit', ya: 'Hapus', jenis: 'bahaya' })) return;
+  try {
+    await api.del(`/api/audit/plan/${p.id}`);
+    toast('Rencana audit dihapus', 'sukses');
+    saatSelesai?.();
+  } catch (err) { galat(err); }
+}
+
+async function hapusTemuan(t, saatSelesai) {
+  if (!await konfirmasi(`Hapus temuan "${t.judul}" beserta rencana CAPA-nya? Tindakan ini tercatat di log audit.`,
+    { judul: 'Hapus Temuan Audit', ya: 'Hapus', jenis: 'bahaya' })) return;
+  try {
+    await api.del(`/api/audit/temuan/${t.id}`);
+    toast('Temuan audit dihapus', 'sukses');
+    saatSelesai?.();
+  } catch (err) { galat(err); }
 }
 
 function formTemuan(data, planId, saatSelesai) {
@@ -231,13 +278,14 @@ function formTemuan(data, planId, saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           if (data) await api.put(`/api/audit/temuan/${data.id}`, bacaForm(f));
           else await api.post('/api/audit/temuan', bacaForm(f));
           toast('Temuan audit tersimpan', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
   });

@@ -78,6 +78,9 @@ router.post('/api/persediaan/opname', 'persediaan.create', ({ body, ctx }) => in
 router.post('/api/persediaan/opname/:id/selesai', 'persediaan.post', ({ params, body, ctx }) =>
   inv.selesaikanOpname(idParam(params), body.detail || [], ctx));
 
+router.post('/api/persediaan/opname/:id/batal', 'persediaan.update', ({ params, body, ctx }) =>
+  inv.batalOpname(idParam(params), str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' }), ctx));
+
 // ------------------------------- POS --------------------------------
 
 /** Pencarian barang cepat untuk kasir (barcode / nama / kode). */
@@ -159,11 +162,16 @@ router.get('/api/penjualan/:id', 'penjualan.view', ({ params }) => {
        LEFT JOIN customer c ON c.id = j.customer_id LEFT JOIN gudang g ON g.id = j.gudang_id
       WHERE j.id = ?`, [id]);
   if (!j) throw notFound('Transaksi penjualan tidak ditemukan');
+  // qty_retur: jumlah yang sudah diretur (dari mutasi stok retur) agar antarmuka
+  // dapat menampilkan sisa yang masih boleh diretur.
   return {
     ...j,
     detail: all(
-      `SELECT d.*, b.kode, b.nama, b.satuan FROM penjualan_detail d
-         JOIN barang b ON b.id = d.barang_id WHERE d.penjualan_id = ?`, [id]),
+      `SELECT d.*, b.kode, b.nama, b.satuan,
+              COALESCE((SELECT SUM(m.qty) FROM mutasi_stok m WHERE m.referensi = ?
+                          AND m.jenis = 'retur_masuk' AND m.barang_id = d.barang_id), 0) AS qty_retur
+         FROM penjualan_detail d
+         JOIN barang b ON b.id = d.barang_id WHERE d.penjualan_id = ?`, [`retur:${id}`, id]),
   };
 });
 

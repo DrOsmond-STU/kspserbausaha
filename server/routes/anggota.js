@@ -282,6 +282,28 @@ router.post('/api/anggota/:id/ahli-waris', 'anggota.update', ({ params, body, ct
   return get('SELECT * FROM anggota_ahli_waris WHERE id = ?', [lastInsertRowid]);
 });
 
+router.put('/api/anggota/ahli-waris/:id', 'anggota.update', ({ params, body, ctx }) => {
+  const id = idParam(params);
+  const before = get('SELECT * FROM anggota_ahli_waris WHERE id = ?', [id]);
+  if (!before) throw notFound('Ahli waris tidak ditemukan');
+  const nama = str(body, 'nama', { max: 120, label: 'Nama ahli waris' });
+  const persen = num(body, 'persentase', { required: false, min: 0, max: 100, integer: false }) || 100;
+  // Total dihitung tanpa baris yang sedang diubah
+  const totalLain = scalar(
+    'SELECT COALESCE(SUM(persentase),0) FROM anggota_ahli_waris WHERE anggota_id = ? AND id <> ?',
+    [before.anggota_id, id]);
+  if (totalLain + persen > 100) {
+    throw badRequest(`Total persentase ahli waris melebihi 100% (ahli waris lain ${totalLain}%)`);
+  }
+  run(`UPDATE anggota_ahli_waris SET nama = ?, nik = ?, hubungan = ?, telepon = ?, alamat = ?, persentase = ?
+        WHERE id = ?`,
+  [nama, body.nik || null, body.hubungan || null, body.telepon || null, body.alamat || null, persen, id]);
+  const after = get('SELECT * FROM anggota_ahli_waris WHERE id = ?', [id]);
+  logAudit(ctx, { aksi: 'update', modul: 'anggota', entitas_id: before.anggota_id,
+    keterangan: `Ahli waris "${nama}" diperbarui`, before, after });
+  return after;
+});
+
 router.delete('/api/anggota/ahli-waris/:id', 'anggota.update', ({ params, ctx }) => {
   const id = idParam(params);
   const w = get('SELECT * FROM anggota_ahli_waris WHERE id = ?', [id]);

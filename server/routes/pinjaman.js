@@ -129,6 +129,13 @@ router.post('/api/pinjaman/:id/putuskan', 'pinjaman.approve', ({ params, body, c
   ctx,
 ));
 
+/** Membatalkan pengajuan yang belum dicairkan (tanpa jurnal). */
+router.post('/api/pinjaman/:id/batal', 'pinjaman.update', ({ params, body, ctx }) => svc.batalkan(
+  idParam(params),
+  { alasan: str(body, 'alasan', { max: 500, label: 'Alasan pembatalan' }) },
+  ctx,
+));
+
 router.post('/api/pinjaman/:id/cairkan', 'pinjaman.post', ({ params, body, ctx }) => svc.cairkan(
   idParam(params),
   {

@@ -8,7 +8,7 @@ import { crud, mountCrud } from '../lib/crud.js';
 import { logAudit } from '../lib/audit.js';
 import { idParam, num, str, date, oneOf, today } from '../lib/util.js';
 import * as approval from '../services/approval.js';
-import { ROLES } from '../lib/rbac.js';
+import { ROLES, ROLE_CODES } from '../lib/rbac.js';
 
 const router = createRouter();
 
@@ -88,18 +88,26 @@ router.post('/api/dokumen/:id/versi', 'dokumen.update', ({ params, body, ctx }) 
   if (!d) throw notFound('Dokumen tidak ditemukan');
   if (!body.file_data) throw badRequest('Berkas versi baru wajib dilampirkan');
   const buf = Buffer.from(String(body.file_data).split(',').pop(), 'base64');
+  if (buf.length > 8 * 1024 * 1024) throw badRequest('Ukuran berkas maksimal 8 MB');
   const hash = crypto.createHash('sha256').update(buf).digest('hex');
   if (hash === d.hash_sha256) throw conflict('Berkas identik dengan versi terakhir');
   const versiBaru = d.versi + 1;
+  const mime = body.file_mime || null;
+  const isi = mime && mime.startsWith('text/') ? buf.toString('utf8').slice(0, 20_000) : null;
+  // Tanda tangan elektronik terikat pada hash versi lama, sehingga dilepas:
+  // versi baru harus ditinjau dan ditandatangani ulang.
   run(`UPDATE dokumen SET versi = ?, file_path = ?, hash_sha256 = ?, file_ukuran = ?,
-         file_nama = COALESCE(?, file_nama), status = 'review' WHERE id = ?`,
-  [versiBaru, body.file_data, hash, buf.length, body.file_nama || null, id]);
+         file_nama = COALESCE(?, file_nama), file_mime = COALESCE(?, file_mime),
+         isi_teks = COALESCE(?, isi_teks), ttd_elektronik = NULL, ttd_oleh = NULL, ttd_pada = NULL,
+         status = 'review' WHERE id = ?`,
+  [versiBaru, body.file_data, hash, buf.length, body.file_nama || null, mime, isi, id]);
   run(`INSERT INTO dokumen_versi(dokumen_id, versi, file_path, hash_sha256, catatan, oleh)
        VALUES(?,?,?,?,?,?)`,
   [id, versiBaru, body.file_data, hash, body.catatan || null, ctx?.user?.username || 'sistem']);
   logAudit(ctx, { aksi: 'update', modul: 'dokumen', entitas_id: id,
     keterangan: `Dokumen "${d.judul}" diperbarui ke versi ${versiBaru}`,
-    before: { versi: d.versi, hash: d.hash_sha256 }, after: { versi: versiBaru, hash } });
+    before: { versi: d.versi, hash: d.hash_sha256, ttd_oleh: d.ttd_oleh, ttd_pada: d.ttd_pada },
+    after: { versi: versiBaru, hash } });
   return { id, versi: versiBaru, hash_sha256: hash };
 });
 
@@ -156,6 +164,16 @@ mountCrud(router, '/api/surat', 'surat', crud({
   required: ['nomor', 'jenis', 'tanggal', 'perihal'],
   search: ['nomor', 'perihal', 'dari', 'kepada'], orderBy: 'tanggal DESC', label: 'perihal',
   filters: ['jenis', 'sifat'],
+  // Saat diubah, kolom wajib tidak boleh dikosongkan dan nilai pilihan harus sah
+  validate: (data) => {
+    for (const k of ['nomor', 'jenis', 'tanggal', 'perihal']) {
+      if (k in data && data[k] === null) throw badRequest(`Kolom "${k}" wajib diisi`);
+    }
+    if (data.jenis !== undefined) oneOf(data, 'jenis', ['masuk', 'keluar'], { label: 'Jenis surat' });
+    if (data.sifat) oneOf(data, 'sifat', ['biasa', 'penting', 'segera', 'rahasia'], { label: 'Sifat surat' });
+    if (data.status) oneOf(data, 'status', ['baru', 'diproses', 'selesai', 'arsip'], { label: 'Status surat' });
+    if (data.tanggal) date(data, 'tanggal');
+  },
 }));
 
 router.post('/api/surat/:id/disposisi', 'surat.update', ({ params, body, ctx }) => {
@@ -211,12 +229,57 @@ router.post('/api/approval/:id/delegasi', 'approval.view', ({ params, body, ctx 
 
 router.post('/api/approval/eskalasi', 'approval.view', ({ ctx }) => approval.eskalasi(ctx));
 
+/**
+ * Normalisasi tahapan alur: menerima senarai atau teks JSON, memeriksa setiap
+ * tahap, dan mengembalikan teks JSON yang tersimpan di kolom approval_flow.tahapan.
+ */
+function normalTahapan(nilai) {
+  let t = nilai;
+  if (typeof t === 'string') {
+    try { t = JSON.parse(t); } catch { throw badRequest('Format tahapan tidak valid (harus JSON)'); }
+  }
+  if (!Array.isArray(t) || !t.length) throw badRequest('Alur persetujuan minimal memiliki satu tahapan');
+  const hasil = t.map((x, i) => {
+    const urut = Number(x?.urut ?? i + 1);
+    const sla = Number(x?.sla_hari ?? 3);
+    if (!Number.isInteger(urut) || urut < 1) throw badRequest(`Urutan tahap ke-${i + 1} tidak valid`);
+    if (!Number.isInteger(sla) || sla < 1 || sla > 365) {
+      throw badRequest(`SLA tahap ke-${i + 1} harus 1-365 hari`);
+    }
+    // Peran anggota tidak dapat memutus persetujuan (hanya mengakses portal)
+    if (!ROLE_CODES.includes(x?.role) || x.role === 'anggota') {
+      throw badRequest(`Peran penyetuju tahap ke-${i + 1} tidak dikenal: ${x?.role ?? '-'}`);
+    }
+    const tipe = x.tipe || 'berjenjang';
+    if (!['berjenjang', 'parallel'].includes(tipe)) {
+      throw badRequest(`Tipe tahap ke-${i + 1} harus berjenjang atau parallel`);
+    }
+    return { urut, role: x.role, tipe, sla_hari: sla };
+  }).sort((a, b) => a.urut - b.urut);
+  if (hasil[0].urut !== 1) throw badRequest('Tahapan harus dimulai dari urutan 1');
+  return JSON.stringify(hasil);
+}
+
 /** Konfigurasi alur persetujuan. */
 mountCrud(router, '/api/approval-flow', 'approval', crud({
   table: 'approval_flow', modul: 'approval',
   fields: ['modul', 'nama', 'batas_min', 'batas_max', 'tahapan', 'status'],
   required: ['modul', 'nama', 'tahapan'], search: ['modul', 'nama'], orderBy: 'modul ASC',
   filters: ['modul'],
+  validate: (data) => {
+    for (const k of ['modul', 'nama', 'tahapan']) {
+      if (k in data && data[k] === null) throw badRequest(`Kolom "${k}" wajib diisi`);
+    }
+    if (data.tahapan !== undefined) data.tahapan = normalTahapan(data.tahapan);
+    for (const k of ['batas_min', 'batas_max']) {
+      if (data[k] === undefined) continue;
+      data[k] = num(data, k, { required: false, min: 0 });
+    }
+    if (data.batas_min !== undefined && data.batas_max && data.batas_max < data.batas_min) {
+      throw badRequest('Batas atas harus lebih besar dari batas bawah (0 = tak terbatas)');
+    }
+    if (data.status) oneOf(data, 'status', ['aktif', 'nonaktif'], { label: 'Status' });
+  },
 }), { readPerm: 'approval.view', writePerm: 'admin.update' });
 
 export default router;

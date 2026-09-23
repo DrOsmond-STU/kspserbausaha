@@ -215,27 +215,82 @@ router.get('/api/anggaran/:id', 'anggaran.view', ({ params }) => {
   return { ...a, detail, total: detail.reduce((s, r) => s + r.nominal, 0) };
 });
 
-router.post('/api/anggaran', 'anggaran.create', ({ body, ctx }) => {
+/** Membaca & memvalidasi header + rincian anggaran (dipakai saat menyusun dan merevisi). */
+function bacaAnggaran(body) {
   const tahun = num(body, 'tahun', { min: 2000, max: 2200 });
   const nama = str(body, 'nama', { max: 150, label: 'Nama anggaran' });
   const detail = body.detail || [];
   if (!Array.isArray(detail) || !detail.length) throw badRequest('Rincian anggaran minimal 1 baris');
+  for (const d of detail) {
+    if (!get('SELECT kode FROM coa WHERE kode = ?', [d.coa_kode])) {
+      throw badRequest(`Akun ${d.coa_kode} tidak terdaftar dalam bagan akun`);
+    }
+  }
+  return {
+    tahun, nama, detail,
+    unit_usaha_id: body.unit_usaha_id || null, cabang_id: body.cabang_id || null,
+    keterangan: body.keterangan || null,
+  };
+}
 
+function simpanRincian(id, detail) {
+  for (const d of detail) {
+    run(`INSERT INTO anggaran_detail(anggaran_id, coa_kode, bulan, nominal, keterangan)
+         VALUES(?,?,?,?,?)`,
+    [id, d.coa_kode, Number(d.bulan) || 0, rupiah(d.nominal), d.keterangan || null]);
+  }
+}
+
+/** Anggaran hanya dapat diubah/dihapus selama belum diajukan/disetujui. */
+function anggaranDapatDiubah(id, aksi) {
+  const a = get('SELECT * FROM anggaran WHERE id = ?', [id]);
+  if (!a) throw notFound('Anggaran tidak ditemukan');
+  if (!['draft', 'ditolak'].includes(a.status)) {
+    throw conflict(`Anggaran berstatus "${a.status}" tidak dapat ${aksi}`,
+      'Hanya anggaran berstatus draft atau ditolak yang dapat diubah maupun dihapus.');
+  }
+  return a;
+}
+
+router.post('/api/anggaran', 'anggaran.create', ({ body, ctx }) => {
+  const d = bacaAnggaran(body);
   return tx(() => {
     const { lastInsertRowid: id } = run(
       `INSERT INTO anggaran(tahun, nama, unit_usaha_id, cabang_id, keterangan) VALUES(?,?,?,?,?)`,
-      [tahun, nama, body.unit_usaha_id || null, body.cabang_id || null, body.keterangan || null]);
-    for (const d of detail) {
-      if (!get('SELECT kode FROM coa WHERE kode = ?', [d.coa_kode])) {
-        throw badRequest(`Akun ${d.coa_kode} tidak terdaftar dalam bagan akun`);
-      }
-      run(`INSERT INTO anggaran_detail(anggaran_id, coa_kode, bulan, nominal, keterangan)
-           VALUES(?,?,?,?,?)`,
-      [id, d.coa_kode, Number(d.bulan) || 0, rupiah(d.nominal), d.keterangan || null]);
-    }
+      [d.tahun, d.nama, d.unit_usaha_id, d.cabang_id, d.keterangan]);
+    simpanRincian(id, d.detail);
     logAudit(ctx, { aksi: 'create', modul: 'anggaran', entitas_id: id,
-      keterangan: `RKAP ${tahun}: ${nama} (${detail.length} baris)` });
+      keterangan: `RKAP ${d.tahun}: ${d.nama} (${d.detail.length} baris)` });
     return get('SELECT * FROM anggaran WHERE id = ?', [id]);
+  });
+});
+
+/** Revisi anggaran draft/ditolak: header dan rincian diganti seluruhnya, status kembali draft. */
+router.put('/api/anggaran/:id', 'anggaran.update', ({ params, body, ctx }) => {
+  const id = idParam(params);
+  const lama = anggaranDapatDiubah(id, 'diubah');
+  const d = bacaAnggaran(body);
+  return tx(() => {
+    run(`UPDATE anggaran SET tahun = ?, nama = ?, unit_usaha_id = ?, cabang_id = ?, keterangan = ?,
+           status = 'draft' WHERE id = ?`,
+    [d.tahun, d.nama, d.unit_usaha_id, d.cabang_id, d.keterangan, id]);
+    run('DELETE FROM anggaran_detail WHERE anggaran_id = ?', [id]);
+    simpanRincian(id, d.detail);
+    logAudit(ctx, { aksi: 'update', modul: 'anggaran', entitas_id: id,
+      keterangan: `RKAP ${d.tahun}: ${d.nama} direvisi (${d.detail.length} baris)`, before: lama });
+    return get('SELECT * FROM anggaran WHERE id = ?', [id]);
+  });
+});
+
+router.delete('/api/anggaran/:id', 'anggaran.delete', ({ params, ctx }) => {
+  const id = idParam(params);
+  const lama = anggaranDapatDiubah(id, 'dihapus');
+  return tx(() => {
+    run('DELETE FROM anggaran_detail WHERE anggaran_id = ?', [id]);
+    run('DELETE FROM anggaran WHERE id = ?', [id]);
+    logAudit(ctx, { aksi: 'delete', modul: 'anggaran', entitas_id: id,
+      keterangan: `RKAP ${lama.tahun} "${lama.nama}" dihapus`, before: lama });
+    return { dihapus: true, id };
   });
 });
 
@@ -248,6 +303,21 @@ router.post('/api/anggaran/:id/setujui', 'anggaran.approve', ({ params, ctx }) =
        WHERE id = ?`, [ctx?.user?.username || 'sistem', id]);
   logAudit(ctx, { aksi: 'approve', modul: 'anggaran', entitas_id: id,
     keterangan: `RKAP ${a.tahun} "${a.nama}" disetujui` });
+  return get('SELECT * FROM anggaran WHERE id = ?', [id]);
+});
+
+/** Menolak anggaran beserta catatan revisi; penyusun dapat memperbaikinya lalu menyimpan ulang. */
+router.post('/api/anggaran/:id/tolak', 'anggaran.approve', ({ params, body, ctx }) => {
+  const id = idParam(params);
+  const catatan = str(body, 'catatan', { max: 500, label: 'Catatan revisi' });
+  const a = get('SELECT * FROM anggaran WHERE id = ?', [id]);
+  if (!a) throw notFound('Anggaran tidak ditemukan');
+  if (a.status === 'disetujui') throw conflict('Anggaran yang sudah disetujui tidak dapat ditolak');
+  if (a.status === 'ditolak') throw conflict('Anggaran ini sudah ditolak');
+  run(`UPDATE anggaran SET status = 'ditolak', catatan_revisi = ?, disetujui_oleh = NULL,
+         disetujui_pada = NULL WHERE id = ?`, [catatan, id]);
+  logAudit(ctx, { aksi: 'approve', modul: 'anggaran', entitas_id: id,
+    keterangan: `RKAP ${a.tahun} "${a.nama}" DITOLAK: ${catatan}` });
   return get('SELECT * FROM anggaran WHERE id = ?', [id]);
 });
 

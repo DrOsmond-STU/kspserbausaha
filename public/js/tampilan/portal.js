@@ -24,7 +24,8 @@ export async function render() {
     class: i === 0 ? 'aktif' : '',
     onclick: async (e) => {
       bilah.querySelectorAll('button').forEach((b) => b.classList.remove('aktif'));
-      e.currentTarget.classList.add('aktif');
+      const tombol = e.currentTarget;
+      tombol.classList.add('aktif');
       kosongkan(isi).append(memuat());
       try { kosongkan(isi).append(await t.render()); } catch (err) { galat(err); }
     },
@@ -240,12 +241,13 @@ async function ajukan() {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post('/api/portal/pinjaman', bacaForm(f));
           toast('Pengajuan terkirim', 'sukses', `Nomor ${h.nomor} — menunggu verifikasi pengurus`);
           tutup();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Kirim Pengajuan'),
     ],
   });
@@ -392,12 +394,13 @@ function formTiket(saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           await api.post('/api/portal/tiket', bacaForm(f));
           toast('Tiket terkirim', 'sukses', 'Pengurus akan menanggapi secepatnya');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Kirim'),
     ],
   });

@@ -8,6 +8,7 @@ import {
 import { grafikBatang, grafikPeringkat } from '../grafik.js';
 import { izin, navigasi } from '../app.js';
 import { ikon } from '../ikon.js';
+import { daftarBank, kolomBank } from './simpanan.js';
 
 const STATUS = ['', 'calon', 'aktif', 'nonaktif', 'keluar', 'meninggal', 'ditolak'];
 
@@ -82,17 +83,25 @@ export async function render(param) {
 async function detail(id) {
   const a = await api.get(`/api/anggota/${id}`);
   const wadah = el('div');
+  const segarkan = () => navigasi(location.hash, true);
+  const sudahKeluar = ['keluar', 'meninggal'].includes(a.status);
 
   wadah.append(el('div.gap8.mb16', [
     el('button.btn', { onclick: () => { location.hash = '#/anggota'; } }, '← Kembali'),
-    izin('anggota.update') && !['keluar', 'meninggal'].includes(a.status)
-      && el('button.btn', { onclick: () => formAnggota(a, () => navigasi(location.hash, true)) }, 'Ubah Data'),
+    izin('anggota.update') && !sudahKeluar
+      && el('button.btn', { onclick: () => formAnggota(a, segarkan) }, 'Ubah Data'),
     izin('anggota.approve') && a.status === 'calon'
       && el('button.btn.sukses', { onclick: () => setujui(a) }, '✓ Setujui Keanggotaan'),
     izin('anggota.approve') && a.status === 'calon'
       && el('button.btn.bahaya', { onclick: () => tolak(a) }, '✕ Tolak'),
     izin('anggota.update') && a.status === 'aktif'
-      && el('button.btn', { onclick: () => keluarAnggota(a) }, 'Proses Keluar'),
+      && el('button.btn', { onclick: () => ubahKeaktifan(a, false) }, 'Nonaktifkan'),
+    izin('anggota.update') && a.status === 'nonaktif'
+      && el('button.btn.sukses', { onclick: () => ubahKeaktifan(a, true) }, 'Aktifkan Kembali'),
+    izin('anggota.update') && ['aktif', 'nonaktif'].includes(a.status)
+      && el('button.btn.bahaya', { onclick: () => keluarAnggota(a) }, 'Proses Keluar'),
+    !['calon', 'ditolak'].includes(a.status)
+      && el('button.btn', { onclick: () => kartuAnggota(a).catch(galat) }, 'Kartu Anggota'),
   ].filter(Boolean)));
 
   wadah.append(el('div.grid.k4.mb16', [
@@ -137,7 +146,8 @@ async function detail(id) {
     { judul: 'Dibuka', render: (r) => tgl(r.tanggal_buka) },
     { judul: 'Saldo', angka: true, render: (r) => el('strong', rp(r.saldo)) },
     { judul: 'Status', render: (r) => status(r.status) },
-  ], a.simpanan.rekening, { kosongTeks: 'Belum memiliki rekening simpanan' })));
+  ], a.simpanan.rekening, { kosongTeks: 'Belum memiliki rekening simpanan',
+    saatKlik: izin('simpanan.view') ? (r) => { location.hash = `#/simpanan/${r.id}`; } : null })));
 
   wadah.append(panelTabel('Riwayat Pinjaman', tabel([
     { judul: 'Nomor', render: (r) => el('a.mono', { href: `#/pinjaman/${r.id}` }, r.nomor) },
@@ -163,11 +173,19 @@ async function detail(id) {
 
   wadah.append(el('div.grid.k2', [
     panelTabel('Ahli Waris', tabel([
-      { judul: 'Nama', kunci: 'nama' },
+      { judul: 'Nama', render: (r) => el('div', [
+        el('div', r.nama), r.nik && el('div.kecil.samar.mono', r.nik)]) },
       { judul: 'Hubungan', render: (r) => judul(r.hubungan || '-') },
       { judul: 'Telepon', render: (r) => r.telepon || '-' },
       { judul: 'Bagian', angka: true, render: (r) => persen(r.persentase) },
-    ], a.ahli_waris, { kosongTeks: 'Belum ada ahli waris terdaftar' })),
+      izin('anggota.update') && { judul: '', render: (r) => el('div.gap8', [
+        el('button.btn.kecil', { onclick: () => formAhliWaris(a, r, segarkan) }, 'Ubah'),
+        el('button.btn.kecil.bahaya', { onclick: () => hapusAhliWaris(r, segarkan) }, 'Hapus'),
+      ]) },
+    ].filter(Boolean), a.ahli_waris, { kosongTeks: 'Belum ada ahli waris terdaftar' }), [
+      izin('anggota.update') && el('button.btn.kecil', {
+        onclick: () => formAhliWaris(a, null, segarkan) }, '+ Tambah Ahli Waris'),
+    ].filter(Boolean)),
     panelTabel('Riwayat Perubahan', tabel([
       { judul: 'Tanggal', render: (r) => tgl(r.created_at) },
       { judul: 'Perubahan', render: (r) => (r.status_baru
@@ -281,32 +299,220 @@ async function tolak(a) {
 }
 
 async function keluarAnggota(a) {
+  const bank = await daftarBank();
+  const rekeningBuka = (a.simpanan?.rekening || []).filter((r) => r.status !== 'tutup');
+  const saldo = rekeningBuka.reduce((t, r) => t + r.saldo, 0);
+  const diblokir = rekeningBuka.reduce((t, r) => t + (r.saldo_blokir || 0), 0);
+
+  const centang = input('kembalikan_simpanan', { tipe: 'checkbox', checked: true });
+  const metode = pilih('metode', [{ nilai: 'tunai', teks: 'Tunai' }, { nilai: 'transfer', teks: 'Transfer Bank' }]);
+  const bagianPengembalian = el('div.baris-form', [kolom('Metode Pengembalian', metode), kolomBank(metode, bank)]);
+  const aturPengembalian = () => { bagianPengembalian.style.display = centang.checked ? '' : 'none'; };
+  centang.addEventListener('change', aturPengembalian);
+
   const form = el('div', [
     el('div.notis.peringatan', [el('div.isi', [
       el('strong', 'Perhatian'),
       el('div.kecil', 'Anggota tidak dapat keluar bila masih memiliki pinjaman berjalan. '
-        + 'Simpanan pokok & wajib dikembalikan melalui modul Simpanan setelah proses ini.'),
+        + `Saldo simpanan saat ini ${rp(saldo)} pada ${rekeningBuka.length} rekening`
+        + `${diblokir > 0 ? ` (termasuk ${rp(diblokir)} yang diblokir)` : ''}.`),
     ])]),
-    kolom('Alasan Keluar', pilih('alasan_keluar', [
-      { nilai: 'mengundurkan_diri', teks: 'Mengundurkan diri' },
-      { nilai: 'meninggal', teks: 'Meninggal dunia' },
-      { nilai: 'diberhentikan', teks: 'Diberhentikan' },
-    ]), { wajib: true }),
-    kolom('Tanggal Keluar', input('tanggal_keluar', { tipe: 'date',
-      nilai: new Date().toISOString().slice(0, 10) })),
+    el('div.baris-form', [
+      kolom('Alasan Keluar', pilih('alasan_keluar', [
+        { nilai: 'mengundurkan_diri', teks: 'Mengundurkan diri' },
+        { nilai: 'meninggal', teks: 'Meninggal dunia' },
+        { nilai: 'diberhentikan', teks: 'Diberhentikan' },
+      ]), { wajib: true }),
+      kolom('Tanggal Keluar', input('tanggal_keluar', { tipe: 'date',
+        nilai: new Date().toISOString().slice(0, 10) })),
+    ]),
     kolom('Keterangan', input('keterangan')),
+    el('label.kecil', { gaya: { display: 'flex', gap: '8px', alignItems: 'center', margin: '4px 0 12px' } }, [
+      centang, 'Kembalikan seluruh simpanan sekarang (pokok, wajib & sukarela; dijurnal otomatis)',
+    ]),
+    bagianPengembalian,
+    el('div.kecil.lembut', 'Bila tidak dicentang, simpanan dikembalikan kemudian melalui menu Simpanan → Tutup Rekening.'),
   ]);
+  aturPengembalian();
+
   const tutup = modal({
     judul: `Proses Keluar — ${a.nama}`, isi: form,
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
-      el('button.btn.bahaya', { onclick: async () => {
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post(`/api/anggota/${a.id}/keluar`, bacaForm(form));
-          toast('Anggota diproses keluar', 'sukses', h.catatan);
-          tutup(); navigasi(location.hash, true);
-        } catch (err) { galat(err); }
+          tutup();
+          if (h.pengembalian?.length) ringkasanPengembalian(a, h, () => navigasi(location.hash, true));
+          else { toast('Anggota diproses keluar', 'sukses', h.catatan); navigasi(location.hash, true); }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Proses Keluar'),
+    ],
+  });
+}
+
+/** Rincian pengembalian simpanan per rekening setelah anggota keluar. */
+function ringkasanPengembalian(a, h, saatTutup) {
+  const peta = new Map((a.simpanan?.rekening || []).map((r) => [r.id, r]));
+  const total = h.pengembalian.reduce((t, p) => t + (p.dikembalikan || 0), 0);
+  const tutup = modal({
+    judul: 'Pengembalian Simpanan', saatTutup,
+    isi: el('div', [
+      el('div.notis.sukses', [el('div.isi', [
+        el('strong', `${a.nama} telah ${h.status === 'meninggal' ? 'dicatat meninggal' : 'keluar'}`),
+        el('div.kecil', h.catatan || ''),
+      ])]),
+      el('div.tabel-bungkus', [tabel([
+        { judul: 'Rekening', render: (p) => el('span.mono', peta.get(p.rekening_id)?.nomor_rekening || `#${p.rekening_id}`) },
+        { judul: 'Produk', render: (p) => peta.get(p.rekening_id)?.produk_nama || '-' },
+        { judul: 'Dikembalikan', kunci: 'dikembalikan', angka: true, render: (p) => el('strong', rp(p.dikembalikan)) },
+        { judul: 'Jurnal', render: (p) => (p.jurnal ? el('span.mono.kecil', p.jurnal.nomor) : el('span.samar', '-')) },
+      ], h.pengembalian, { kaki: { dikembalikan: el('strong', rp(total)) } })]),
+    ]),
+    kaki: [el('button.btn.utama', { onclick: () => tutup() }, 'Selesai')],
+  });
+}
+
+async function ubahKeaktifan(a, aktifkan) {
+  const form = el('div', [
+    el('p', aktifkan
+      ? `Mengaktifkan kembali ${a.nama} sebagai anggota aktif.`
+      : `Menonaktifkan ${a.nama}. Anggota nonaktif tetap tercatat dan dapat diaktifkan kembali.`),
+    kolom('Alasan', input('alasan', { placeholder: 'Opsional' })),
+  ]);
+  const tutup = modal({
+    judul: aktifkan ? 'Aktifkan Kembali Anggota' : 'Nonaktifkan Anggota', lebar: 'sempit', isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Batal'),
+      el(`button.btn.${aktifkan ? 'sukses' : 'bahaya'}`, { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          await api.post(`/api/anggota/${a.id}/nonaktif`, { ...bacaForm(form), aktifkan });
+          toast(aktifkan ? 'Anggota diaktifkan kembali' : 'Anggota dinonaktifkan', 'sukses');
+          tutup(); navigasi(location.hash, true);
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, aktifkan ? 'Aktifkan' : 'Nonaktifkan'),
+    ],
+  });
+}
+
+// ----------------------------- Ahli waris -----------------------------
+
+function formAhliWaris(a, w, saatSelesai) {
+  const totalLain = (a.ahli_waris || []).filter((x) => x.id !== w?.id)
+    .reduce((t, x) => t + Number(x.persentase || 0), 0);
+  // Data lama bisa berisi "Anak" (huruf besar) atau nilai bebas; tetap dipertahankan
+  const opsiHubungan = [{ nilai: '', teks: '- pilih -' },
+    ...['suami', 'istri', 'anak', 'orang_tua', 'saudara', 'lainnya'].map((h) => ({ nilai: h, teks: judul(h) }))];
+  const cocok = opsiHubungan.find((o) => o.nilai && o.nilai === String(w?.hubungan || '').toLowerCase().replace(/\s+/g, '_'));
+  if (w?.hubungan && !cocok) opsiHubungan.push({ nilai: w.hubungan, teks: w.hubungan });
+  const hubunganTerpilih = cocok ? cocok.nilai : (w?.hubungan || '');
+  const form = el('div', [
+    el('div.baris-form', [
+      kolom('Nama Ahli Waris', input('nama', { nilai: w?.nama || '' }), { wajib: true }),
+      kolom('NIK', input('nik', { nilai: w?.nik || '', maxlength: 16, inputmode: 'numeric' })),
+    ]),
+    el('div.baris-form.k3', [
+      kolom('Hubungan', pilih('hubungan', opsiHubungan, hubunganTerpilih)),
+      kolom('Telepon', input('telepon', { nilai: w?.telepon || '' })),
+      kolom('Bagian (%)', input('persentase', { tipe: 'number', min: 0, max: 100, step: '0.01',
+        nilai: w ? w.persentase : Math.max(0, 100 - totalLain) }),
+      { bantuan: `Ahli waris lain ${persen(totalLain)}; total maksimal 100%` }),
+    ]),
+    kolom('Alamat', input('alamat', { nilai: w?.alamat || '' })),
+  ]);
+  const tutup = modal({
+    judul: w ? `Ubah Ahli Waris — ${w.nama}` : `Tambah Ahli Waris — ${a.nama}`, isi: form,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Batal'),
+      el('button.btn.utama', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          const d = bacaForm(form);
+          if (w) await api.put(`/api/anggota/ahli-waris/${w.id}`, d);
+          else await api.post(`/api/anggota/${a.id}/ahli-waris`, d);
+          toast(w ? 'Ahli waris diperbarui' : 'Ahli waris ditambahkan', 'sukses');
+          tutup(); saatSelesai?.();
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Simpan'),
+    ],
+  });
+}
+
+async function hapusAhliWaris(w, saatSelesai) {
+  if (!await konfirmasi(`Hapus ahli waris "${w.nama}"?`, { judul: 'Hapus Ahli Waris', ya: 'Hapus', jenis: 'bahaya' })) return;
+  try {
+    await api.del(`/api/anggota/ahli-waris/${w.id}`);
+    toast('Ahli waris dihapus', 'sukses');
+    saatSelesai?.();
+  } catch (err) { galat(err); }
+}
+
+// ---------------------------- Kartu anggota ----------------------------
+
+/** Membentuk kartu anggota (dipakai untuk pratinjau maupun jendela cetak). */
+function bentukKartu(k, doc = document) {
+  const buat = (tag, gaya, anak = []) => {
+    const n = doc.createElement(tag);
+    Object.assign(n.style, gaya);
+    for (const c of [].concat(anak)) if (c !== null && c !== undefined) n.append(c);
+    return n;
+  };
+  const baris = (label, nilai) => buat('div', { display: 'flex', gap: '8px', fontSize: '12px', margin: '2px 0' }, [
+    buat('span', { opacity: '.75', minWidth: '92px' }, label), buat('strong', {}, String(nilai ?? '-')),
+  ]);
+  let foto = null;
+  if (k.foto && /^(data:image\/|https?:\/\/|\/)/.test(k.foto)) {
+    foto = doc.createElement('img');
+    foto.src = k.foto;
+    foto.alt = k.nama;
+    Object.assign(foto.style, { width: '72px', height: '90px', objectFit: 'cover', borderRadius: '6px',
+      border: '2px solid rgba(255,255,255,.6)' });
+  }
+  return buat('div', {
+    width: '85.6mm', minHeight: '54mm', boxSizing: 'border-box', padding: '12px 14px', borderRadius: '10px',
+    background: 'linear-gradient(135deg,#0f5132,#1baf7a)', color: '#fff', fontFamily: 'system-ui, sans-serif',
+    display: 'flex', flexDirection: 'column', gap: '6px', printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact',
+  }, [
+    buat('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }, [
+      buat('strong', { fontSize: '13px', letterSpacing: '.3px' }, k.koperasi),
+      buat('span', { fontSize: '10px', opacity: '.85' }, 'KARTU ANGGOTA'),
+    ]),
+    buat('div', { display: 'flex', gap: '12px', alignItems: 'center', flex: '1' }, [
+      foto,
+      buat('div', { flex: '1' }, [
+        buat('div', { fontSize: '16px', fontWeight: '700', marginBottom: '4px' }, k.nama),
+        baris('No. Anggota', k.nomor_anggota),
+        baris('NIK', k.nik),
+        baris('Bergabung', tgl(k.tanggal_gabung, true)),
+        baris('Status', judul(k.status)),
+      ]),
+    ]),
+    buat('div', { fontFamily: 'ui-monospace, monospace', fontSize: '10px', background: 'rgba(255,255,255,.15)',
+      padding: '3px 6px', borderRadius: '4px', alignSelf: 'flex-start' }, k.qr),
+  ]);
+}
+
+async function kartuAnggota(a) {
+  const k = await api.get(`/api/anggota/${a.id}/kartu`);
+  const cetak = () => {
+    const w = window.open('', '_blank', 'width=520,height=420');
+    if (!w) { toast('Jendela cetak diblokir peramban', 'peringatan', 'Izinkan pop-up untuk situs ini lalu coba lagi.'); return; }
+    w.document.title = `Kartu Anggota ${k.nomor_anggota}`;
+    w.document.body.style.margin = '12mm';
+    w.document.body.append(bentukKartu(k, w.document));
+    w.focus();
+    setTimeout(() => { w.print(); }, 150);
+  };
+  const tutup = modal({
+    judul: `Kartu Anggota — ${k.nama}`, isi: el('div', { gaya: { display: 'flex', justifyContent: 'center' } }, [bentukKartu(k)]),
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Tutup'),
+      el('button.btn.utama', { onclick: cetak }, 'Cetak Kartu'),
     ],
   });
 }

@@ -2,7 +2,7 @@
  * Modul 20 (Compliance), 21 (Internal Audit), 22 (Enterprise Risk Management),
  * dan 23 (CRM Anggota) - pilar Good Cooperative Governance.
  */
-import { createRouter, notFound, badRequest } from '../lib/http.js';
+import { createRouter, notFound, badRequest, conflict } from '../lib/http.js';
 import { all, get, run, scalar, nextNumber, tx } from '../db.js';
 import { crud, mountCrud } from '../lib/crud.js';
 import { logAudit, notify } from '../lib/audit.js';
@@ -85,7 +85,10 @@ router.put('/api/audit/plan/:id', 'audit.update', ({ params, body, ctx }) => {
   if (!before) throw notFound('Rencana audit tidak ditemukan');
   const fields = ['judul', 'objek', 'auditor', 'tanggal_mulai', 'tanggal_selesai', 'ruang_lingkup', 'status'];
   const data = {};
-  for (const f of fields) if (body[f] !== undefined) data[f] = body[f];
+  for (const f of fields) if (body[f] !== undefined) data[f] = body[f] === '' ? null : body[f];
+  if (body.judul !== undefined) data.judul = str(body, 'judul', { max: 200 });
+  if (body.tahun !== undefined) data.tahun = num(body, 'tahun', { min: 2000, max: 2200 });
+  if (data.status !== undefined) data.status = oneOf(body, 'status', ['rencana', 'berjalan', 'selesai']);
   const cols = Object.keys(data);
   if (!cols.length) throw badRequest('Tidak ada perubahan yang dikirim');
   run(`UPDATE audit_plan SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
@@ -93,6 +96,22 @@ router.put('/api/audit/plan/:id', 'audit.update', ({ params, body, ctx }) => {
   logAudit(ctx, { aksi: 'update', modul: 'audit', entitas_id: id,
     keterangan: `Rencana audit ${before.nomor} diperbarui`, before, after: data });
   return get('SELECT * FROM audit_plan WHERE id = ?', [id]);
+});
+
+/** Hapus rencana audit; ditolak bila sudah ada temuan (jejak audit harus utuh). */
+router.delete('/api/audit/plan/:id', 'audit.delete', ({ params, ctx }) => {
+  const id = idParam(params);
+  const before = get('SELECT * FROM audit_plan WHERE id = ?', [id]);
+  if (!before) throw notFound('Rencana audit tidak ditemukan');
+  const temuan = scalar('SELECT COUNT(*) FROM audit_temuan WHERE plan_id = ?', [id]);
+  if (temuan) {
+    throw conflict(`Rencana audit ${before.nomor} sudah memiliki ${temuan} temuan`,
+      'Hapus atau pindahkan temuannya terlebih dahulu, atau ubah status rencana menjadi selesai.');
+  }
+  run('DELETE FROM audit_plan WHERE id = ?', [id]);
+  logAudit(ctx, { aksi: 'delete', modul: 'audit', entitas_id: id,
+    keterangan: `Rencana audit ${before.nomor}: ${before.judul} dihapus`, before });
+  return { dihapus: true, id };
 });
 
 mountCrud(router, '/api/audit/temuan', 'audit', crud({
