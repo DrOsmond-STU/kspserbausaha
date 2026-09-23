@@ -184,3 +184,28 @@ describe('Persuratan & dokumen', () => {
     assert.match(detail.isi.isi_teks, /versi dua/);
   });
 });
+
+describe('Hak akses CRM', () => {
+  test('pengawas (hanya-baca) tidak dapat membuat atau membalas tiket; petugas simpanan dapat', async () => {
+    await panggil('POST', '/api/admin/users', {
+      username: 'pengawas.crm', nama: 'Pengawas CRM', role: 'pengawas', password: 'Rahasia!2026uji' });
+    await panggil('POST', '/api/admin/users', {
+      username: 'simpanan.crm', nama: 'Petugas Simpanan CRM', role: 'petugas_simpanan', password: 'Rahasia!2026uji' });
+    const kukiPengawas = await masuk('pengawas.crm', 'Rahasia!2026uji');
+    const kukiPetugas = await masuk('simpanan.crm', 'Rahasia!2026uji');
+
+    const ditolak = await panggil('POST', '/api/crm/tiket', { judul: 'Coba pengawas' }, kukiPengawas);
+    assert.equal(ditolak.status, 403);
+    assert.match(ditolak.isi.detail || '', /crm\.update/);
+    assert.ok((await panggil('GET', '/api/crm/tiket', undefined, kukiPengawas)).status < 300,
+      'pengawas tetap dapat melihat tiket');
+
+    const tiket = await panggil('POST', '/api/crm/tiket', { judul: 'Pertanyaan saldo' }, kukiPetugas);
+    assert.ok(tiket.status < 300, 'petugas simpanan tetap dapat mencatat tiket');
+    const balasPengawas = await panggil('POST', `/api/crm/tiket/${tiket.isi.id}/balas`, { isi: 'x' }, kukiPengawas);
+    assert.equal(balasPengawas.status, 403);
+    const balas = await panggil('POST', `/api/crm/tiket/${tiket.isi.id}/balas`, { isi: 'Sudah dicek' }, kukiPetugas);
+    assert.ok(balas.status < 300);
+    assert.equal((await panggil('POST', '/api/crm/survey', { skor: 9 }, kukiPengawas)).status, 403);
+  });
+});

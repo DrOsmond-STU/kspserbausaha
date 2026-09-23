@@ -252,7 +252,7 @@ router.get('/api/crm/tiket/:id', 'crm.view', ({ params }) => {
   return { ...t, balasan: all('SELECT * FROM tiket_balasan WHERE tiket_id = ? ORDER BY created_at', [id]) };
 });
 
-router.post('/api/crm/tiket', 'crm.view', ({ body, ctx }) => {
+router.post('/api/crm/tiket', 'crm.update', ({ body, ctx }) => {
   const judul = str(body, 'judul', { max: 200, label: 'Judul tiket' });
   const nomor = nextNumber('TKT', today());
   const { lastInsertRowid: id } = run(
@@ -270,7 +270,7 @@ router.post('/api/crm/tiket', 'crm.view', ({ body, ctx }) => {
   return get('SELECT * FROM tiket WHERE id = ?', [id]);
 });
 
-router.post('/api/crm/tiket/:id/balas', 'crm.view', ({ params, body, ctx }) => {
+router.post('/api/crm/tiket/:id/balas', 'crm.update', ({ params, body, ctx }) => {
   const id = idParam(params);
   const t = get('SELECT * FROM tiket WHERE id = ?', [id]);
   if (!t) throw notFound('Tiket tidak ditemukan');
@@ -333,7 +333,7 @@ router.get('/api/crm/broadcast', 'crm.view', () =>
   ({ data: all('SELECT * FROM broadcast ORDER BY created_at DESC LIMIT 100') }));
 
 /** Survey kepuasan anggota & Net Promoter Score. */
-router.post('/api/crm/survey', 'crm.view', ({ body, ctx }) => {
+router.post('/api/crm/survey', 'crm.update', ({ body, ctx }) => {
   const { lastInsertRowid: id } = run(
     `INSERT INTO survey_kepuasan(anggota_id, periode, skor_layanan, skor_produk, skor_petugas, nps, saran)
      VALUES(?,?,?,?,?,?,?)`,

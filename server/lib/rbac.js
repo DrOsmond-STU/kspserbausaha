@@ -68,7 +68,7 @@ export const ROLES = {
     permissions: [
       'dashboard.view', 'simpanan.*', 'anggota.view', 'anggota.create',
       'anggota.update', 'master.view', 'laporan.view', 'kas.view', 'crm.view',
-      'approval.view',
+      'crm.update', 'approval.view',
     ],
   },
   petugas_pinjaman: {

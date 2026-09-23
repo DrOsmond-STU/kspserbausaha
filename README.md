@@ -221,7 +221,7 @@ antarmuka hanya menyembunyikan menu, bukan menjadi pengaman.
 | Pengawas | **Hanya-baca**: audit, laporan keuangan, kepatuhan |
 | Manajer Unit Usaha | Operasional unit, persediaan, POS, pembelian |
 | Bendahara | Kas, bank, akuntansi, anggaran, aset, rekonsiliasi |
-| Petugas Simpanan | Pengelolaan simpanan anggota |
+| Petugas Simpanan | Pengelolaan simpanan anggota, pencatatan tiket layanan anggota |
 | Petugas Pinjaman | Pengajuan, analisis, pencairan, penagihan |
 | Kasir Toko | POS, penerimaan pembayaran, retur |
 | Staf Gudang | Persediaan, mutasi stok, stock opname |
@@ -275,7 +275,7 @@ tersebut yang masih hidup.
 npm test
 ```
 
-104 uji otomatis mencakup: penolakan jurnal tidak seimbang, penyaringan periode
+105 uji otomatis mencakup: penolakan jurnal tidak seimbang, penyaringan periode
 laporan, persamaan akuntansi (aset = kewajiban + ekuitas), kesamaan total arus
 kas dengan mutasi kas sesungguhnya, netralisasi jurnal balik, penguncian periode,
 keterbacaan hasil usaha sesudah tutup buku tahunan, ketepatan amortisasi

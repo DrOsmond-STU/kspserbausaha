@@ -62,7 +62,7 @@ async function tiketTab() {
           pilih('f', ['', 'baru', 'diproses', 'menunggu', 'selesai', 'ditutup']
             .map((s) => ({ nilai: s, teks: s ? judul(s) : 'Semua status' })), filter,
           { onchange: (e) => { filter = e.target.value; muat(); } }),
-          izin('crm.view') && el('button.btn.utama', { onclick: () => formTiket(muat) }, '+ Buat Tiket'),
+          izin('crm.update') && el('button.btn.utama', { onclick: () => formTiket(muat) }, '+ Buat Tiket'),
         ].filter(Boolean)),
       );
     } catch (err) { galat(err); }
@@ -103,7 +103,7 @@ async function buka(id, saatSelesai) {
       t.isi ? el('div.notis.info', [el('div.isi', [el('strong', 'Isi tiket'), el('div', t.isi)])]) : null,
       el('div.tebal.mb8', 'Percakapan'),
       balasan,
-      kolom('Balasan', isiBalas),
+      izin('crm.update') ? kolom('Balasan', isiBalas) : null,
     ]),
     kaki: [
       izin('crm.update') && !['selesai', 'ditutup'].includes(t.status) && el('button.btn.sukses', {
@@ -114,7 +114,7 @@ async function buka(id, saatSelesai) {
           } catch (err) { galat(err); }
         },
       }, '✓ Selesaikan'),
-      el('button.btn.utama', { onclick: async () => {
+      izin('crm.update') && el('button.btn.utama', { onclick: async () => {
         if (!isiBalas.value.trim()) { toast('Isi balasan tidak boleh kosong', 'peringatan'); return; }
         try {
           await api.post(`/api/crm/tiket/${id}/balas`, { isi: isiBalas.value });
