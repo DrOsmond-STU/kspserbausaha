@@ -189,7 +189,10 @@ export function modal({ judul: jdl, isi, kaki = [], lebar = '', saatTutup }) {
 export function konfirmasi(pesan, { judul: jdl = 'Konfirmasi', ya = 'Ya, lanjutkan', jenis = 'utama' } = {}) {
   return new Promise((resolve) => {
     let tutup;
-    const selesai = (v) => { tutup?.(); resolve(v); };
+    // resolve lebih dulu: tutup() memicu saatTutup → resolve(false), dan
+    // Promise hanya menerima nilai pertama - urutan terbalik membuat tombol
+    // "Ya" tidak pernah berpengaruh.
+    const selesai = (v) => { resolve(v); tutup?.(); };
     tutup = modal({
       judul: jdl, lebar: 'sempit',
       isi: el('div', pesan),
