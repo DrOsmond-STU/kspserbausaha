@@ -1,8 +1,8 @@
 /* =====================================================================
    ECMS - Enterprise Cooperative Management System
-   Sistem desain: identitas HIJAU koperasi — gradasi hijau hutan ke zamrud
+   Sistem desain: mengikuti KG SafeGuard — gradasi biru tua ke biru cerah
    pada bilah sisi, pita judul (hero), dan tombol utama; permukaan netral
-   bernuansa hijau; tipografi Plus Jakarta Sans (judul), IBM Plex Sans (isi),
+   bernuansa biru; tipografi Plus Jakarta Sans (judul), IBM Plex Sans (isi),
    dan IBM Plex Mono (angka); mode terang & gelap.
 
    Prinsip yang dipegang di seluruh berkas ini:
@@ -15,69 +15,64 @@
    ===================================================================== */
 
 :root {
-  /* -- tangga hijau merek (900 paling gelap) -- */
-  --hijau-900:#03301f; --hijau-800:#064a31; --hijau-700:#0a6443; --hijau-600:#0e7c52;
-  --hijau-500:#159560; --hijau-400:#45bb85; --hijau-300:#9adbb9; --hijau-100:#d8f1e3;
-  --hijau-050:#eef9f3;
+  /* -- tangga biru merek (900 paling gelap), mengikuti token KG SafeGuard -- */
+  --biru-900:#04234f; --biru-800:#073a7e; --biru-700:#0b4da2; --biru-600:#1268c4;
+  --biru-500:#1a7bd4; --biru-400:#4fa3e6; --biru-300:#8cc7f2; --biru-100:#dcebfa;
+  --biru-050:#f0f7fe;
 
   /* -- gradasi: pita judul & bilah sisi, lalu tombol aksi -- */
-  --grad-hero-dari:#0a6f4c; --grad-hero-ke:#1aa36d;
-  --grad-aksi-dari:#0d7a52; --grad-aksi-ke:#1aa36d;
+  --grad-hero-dari:#062b63; --grad-hero-ke:#1a7bd4;
+  --grad-aksi-dari:#1268c4; --grad-aksi-ke:#34a8e0;
 
   /* -- nama lama tetap dipakai sebagian tampilan; dipetakan ke tangga baru -- */
-  --merek-1:var(--grad-hero-dari); --merek-2:var(--hijau-600); --merek-3:var(--hijau-500);
-  --aksen:#d9661b; --aksen-lembut:#fdeee1;
+  --merek-1:var(--grad-hero-dari); --merek-2:var(--biru-600); --merek-3:var(--biru-500);
+  --aksen:#c2540c; --aksen-lembut:#fdeee1;
 
   /* -- permukaan & tinta -- */
-  --bg:#f0f5f2;            /* latar halaman */
+  --bg:#f1f5fb;            /* latar halaman */
   --bg-panel:#ffffff;      /* kartu, panel, modal */
-  --bg-subtle:#f5f9f7;     /* isian baca-saja, kotak keterangan */
-  --bg-hover:#eaf4ee;      /* sorot baris & tombol */
-  --bg-kepala:#e2ece6;     /* kaki tabel, bilah kemajuan, lencana netral */
-  /* kepala tabel & kepala panel: gradasi hijau muda, bukan blok warna rata */
-  --kepala-tabel-bg:linear-gradient(90deg, #d4f0e1 0%, #e4f6ec 50%, #f1faf5 100%);
-  --kepala-tabel-teks:#0a6443;
-  --kepala-panel-bg:linear-gradient(90deg, #eaf8f0 0%, #ffffff 65%);
-  --border:#dbe7e0;
-  --border-kuat:#b7cfc2;
-  --teks:#0a1f16;
-  --teks-isi:#25423a;      /* isi sel tabel & paragraf */
-  --teks-lembut:#46635a;
-  --teks-samar:#5a7468;
-  --brand:#0a6443;         /* teks & tautan bernuansa merek (kontras AA) */
-  --brand-terang:#159560;
-  --brand-lembut:#d8f1e3;
-  --brand-tepi:#45bb85;
+  --bg-subtle:#f6f9fd;     /* isian baca-saja, kotak keterangan */
+  --bg-hover:#f0f7fe;      /* sorot baris & tombol */
+  --bg-kepala:#e3ebf6;     /* kaki tabel, bilah kemajuan, lencana netral */
+  /* kepala tabel (abu kebiruan, huruf kapital kecil) & kepala panel */
+  --kepala-tabel-bg:var(--bg-kepala);
+  --kepala-tabel-teks:#526883;
+  --kepala-panel-bg:var(--bg-panel);
+  --border:#dce6f2;
+  --border-kuat:#b9cce4;
+  --teks:#0b1b2e;
+  --teks-isi:#27405c;      /* isi sel tabel & paragraf */
+  --teks-lembut:#526883;
+  --teks-samar:#62788f;
+  --brand:#0b4da2;         /* teks & tautan bernuansa merek (kontras AA) */
+  --brand-terang:#1a7bd4;
+  --brand-lembut:#dcebfa;
+  --brand-tepi:#4fa3e6;
 
-  --sukses:#137a4d; --sukses-bg:#e3f5eb;
-  --peringatan:#9a5608; --peringatan-bg:#fdf0dc;
-  --bahaya:#b3122a; --bahaya-bg:#fde8ea;
-  --info:#1b5fb4; --info-bg:#e6f0fc;
+  --sukses:#1c7f5a; --sukses-bg:#e2f4ec;
+  --peringatan:#8a6400; --peringatan-bg:#fdf3d9;
+  --bahaya:#b00d21; --bahaya-bg:#fde8ea;
+  --info:#0b4da2; --info-bg:#e6f0fc;
 
   /* -- pita judul (hero) -- */
-  /* Gradasi hijau cerah bergerak dari zamrud ke hijau daun, ditambah satu
-     lapis cahaya di kanan atas supaya pita tidak terlihat sebagai blok pekat.
-     Ujung paling terang (#1aa36d) masih memberi kontras >= 3:1 untuk angka
-     besar berwarna putih. */
-  --hero-bg:radial-gradient(900px 320px at 88% -30%, rgba(255,255,255,.20), transparent 62%),
-            linear-gradient(118deg, var(--grad-hero-dari) 0%, #0f8a5c 46%, var(--grad-hero-ke) 100%);
+  /* Gradasi biru tua ke biru cerah, sama dengan pita judul KG SafeGuard. */
+  --hero-bg:linear-gradient(135deg, var(--grad-hero-dari), var(--grad-hero-ke));
   --hero-teks:#ffffff;
-  --hero-lembut:#effbf4;
-  --hero-samar:#d2f3e1;
+  --hero-lembut:#b9dbf6;
+  --hero-samar:#8cc7f2;
 
-  /* Bilah sisi bergradasi hijau dari atas ke bawah, senada dengan pita judul
-     sehingga keduanya tampak menyatu seperti satu bidang warna. */
-  --nav-bg:radial-gradient(420px 260px at 0% 0%, rgba(255,255,255,.10), transparent 70%),
-           linear-gradient(172deg, #0a6a49 0%, #0d7d55 50%, #129063 100%);
-  --nav-teks:#e6f8ee;
+  /* Bilah sisi memakai gradasi yang sama dengan pita judul sehingga keduanya
+     tampak menyatu seperti satu bidang warna. */
+  --nav-bg:linear-gradient(160deg, var(--grad-hero-dari), var(--grad-hero-ke));
+  --nav-teks:#dcebfa;
   --nav-teks-kuat:#ffffff;
-  --nav-samar:#c2ecd6;
-  --nav-garis:rgba(255,255,255,.18);
+  --nav-samar:#8cc7f2;
+  --nav-garis:rgba(255,255,255,.16);
   --nav-aktif:#ffffff;
-  --nav-aktif-teks:#0a6443;
+  --nav-aktif-teks:#0b4da2;
 
   /* -- palet grafik (dibaca grafik.js lewat getComputedStyle) -- */
-  --seri-1:#11875a; --seri-2:#e0702a; --seri-3:#2a78d6; --seri-4:#c98f00;
+  --seri-1:#1a7bd4; --seri-2:#e0702a; --seri-3:#1c9a6c; --seri-4:#c98f00;
   --grafik-isi:.18;
 
   --radius-xl:20px;
@@ -86,17 +81,17 @@
   --radius-xs:6px;
   --radius-pil:999px;
 
-  --bayang-xs:0 1px 2px rgba(3,48,31,.08), 0 2px 6px rgba(3,48,31,.08);
-  --bayang:0 1px 2px rgba(3,48,31,.06), 0 8px 20px rgba(3,48,31,.07);
-  --bayang-md:0 2px 4px rgba(3,48,31,.10), 0 6px 14px rgba(3,48,31,.14);
-  --bayang-lg:0 6px 12px rgba(3,48,31,.12), 0 18px 40px rgba(3,48,31,.20);
-  --bayang-modal:0 24px 60px rgba(3,48,31,.28);
-  --bayang-tekan:inset 0 2px 4px rgba(3,48,31,.22);
-  --bayang-glow:0 8px 20px rgba(21,149,96,.34);
+  --bayang-xs:0 1px 2px rgba(4,35,79,.08), 0 2px 6px rgba(4,35,79,.10);
+  --bayang:0 1px 2px rgba(4,35,79,.06), 0 8px 20px rgba(4,35,79,.07);
+  --bayang-md:0 2px 4px rgba(4,35,79,.10), 0 6px 14px rgba(4,35,79,.14);
+  --bayang-lg:0 6px 12px rgba(4,35,79,.12), 0 14px 28px rgba(4,35,79,.18);
+  --bayang-modal:0 24px 60px rgba(4,35,79,.28);
+  --bayang-tekan:inset 0 2px 4px rgba(4,35,79,.22);
+  --bayang-glow:0 8px 20px rgba(26,123,212,.38);
   --cincin:0 0 0 3px color-mix(in srgb, var(--brand-terang) 24%, transparent);
-  --tirai:rgba(3,32,21,.62);
+  --tirai:rgba(4,35,79,.65);
 
-  --toast-bg:#03301f; --toast-teks:#ffffff; --toast-lembut:#bfe7d2;
+  --toast-bg:#04234f; --toast-teks:#ffffff; --toast-lembut:#b9dbf6;
 
   --sidebar-w:268px;
   --gerak:cubic-bezier(.22,1,.36,1);
@@ -117,27 +112,27 @@
    sistem, sekali untuk pilihan manual pengguna. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-tema="terang"]) {
-    --hijau-900:#0a3a28; --hijau-800:#0d5638; --hijau-700:#137049; --hijau-600:#1b8a5c;
-    --hijau-500:#2fae78; --hijau-400:#5cc996; --hijau-300:#9ce0bd; --hijau-100:#123526; --hijau-050:#0c2019;
-    --grad-hero-dari:#063826; --grad-hero-ke:#0f7a55;
-    --grad-aksi-dari:#0c6a49; --grad-aksi-ke:#15936b;
-    --aksen:#fb923c; --aksen-lembut:#3a2210;
-    --bg:#06120d; --bg-panel:#0b1a14; --bg-subtle:#0d1f18; --bg-hover:#11271e; --bg-kepala:#10231b;
-    --kepala-tabel-bg:linear-gradient(90deg, #103a29 0%, #0f2c20 55%, #0d2119 100%); --kepala-tabel-teks:#8fe0bb;
-    --kepala-panel-bg:linear-gradient(90deg, #0f2a1f 0%, #0b1a14 65%);
-    --border:#1a2e25; --border-kuat:#2c4a3c;
-    --teks:#e8f5ee; --teks-isi:#c7ddd1; --teks-lembut:#9dbaab; --teks-samar:#86a495;
-    --brand:#5fd6a2; --brand-terang:#7fe0b5; --brand-lembut:#123526; --brand-tepi:#2fae78;
+    --biru-900:#0a2f63; --biru-800:#0c4a92; --biru-700:#1565b8; --biru-600:#2b82d6;
+    --biru-500:#4a9be4; --biru-400:#74baee; --biru-300:#a6d6f7; --biru-100:#14324d; --biru-050:#0f2537;
+    --grad-hero-dari:#041b3f; --grad-hero-ke:#0b4da2;
+    --grad-aksi-dari:#1565b8; --grad-aksi-ke:#2f97ce;
+    --aksen:#ffa057; --aksen-lembut:#3c2210;
+    --bg:#071220; --bg-panel:#0b1724; --bg-subtle:#0e1b2a; --bg-hover:#0f2537; --bg-kepala:#12212f;
+    --kepala-tabel-bg:var(--bg-kepala); --kepala-tabel-teks:#93a9c0;
+    --kepala-panel-bg:var(--bg-panel);
+    --border:#1d2e3f; --border-kuat:#2f4762;
+    --teks:#eaf2fb; --teks-isi:#c3d6e8; --teks-lembut:#93a9c0; --teks-samar:#7a90a8;
+    --brand:#74baee; --brand-terang:#a6d6f7; --brand-lembut:#14324d; --brand-tepi:#2b82d6;
     --sukses:#52c99a; --sukses-bg:#0f3126;
     --peringatan:#f2c14e; --peringatan-bg:#3a2f0f;
     --bahaya:#ff7a85; --bahaya-bg:#3b1216;
     --info:#74baee; --info-bg:#12283f;
-    --hero-bg:radial-gradient(900px 320px at 88% -30%, rgba(255,255,255,.10), transparent 62%), linear-gradient(118deg, #063826 0%, #0a583c 46%, #0f7a55 100%);
-    --hero-lembut:#c3e6d3; --hero-samar:#86d2ab;
-    --nav-bg:linear-gradient(172deg, #05301f 0%, #07442d 50%, #0b5c3f 100%);
-    --nav-teks:#b9e2cc; --nav-samar:#7fcaa3; --nav-garis:rgba(255,255,255,.10);
-    --nav-aktif:#e8f5ee; --nav-aktif-teks:#0a5a3c;
-    --seri-1:#34b27c; --seri-2:#e8834a; --seri-3:#4c93e6; --seri-4:#d6a21a;
+    --hero-bg:linear-gradient(135deg, var(--grad-hero-dari), var(--grad-hero-ke));
+    --hero-lembut:#a6d6f7; --hero-samar:#74baee;
+    --nav-bg:linear-gradient(160deg, var(--grad-hero-dari), var(--grad-hero-ke));
+    --nav-teks:#c3d6e8; --nav-samar:#74baee; --nav-garis:rgba(255,255,255,.10);
+    --nav-aktif:#eaf2fb; --nav-aktif-teks:#0b4da2;
+    --seri-1:#4a9be4; --seri-2:#e8834a; --seri-3:#52c99a; --seri-4:#d6a21a;
     --grafik-isi:.22;
     --bayang-xs:0 1px 2px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.42);
     --bayang:0 1px 2px rgba(0,0,0,.5), 0 8px 20px rgba(0,0,0,.38);
@@ -145,33 +140,33 @@
     --bayang-lg:0 6px 12px rgba(0,0,0,.55), 0 18px 40px rgba(0,0,0,.6);
     --bayang-modal:0 24px 60px rgba(0,0,0,.66);
     --bayang-tekan:inset 0 2px 4px rgba(0,0,0,.6);
-    --bayang-glow:0 8px 20px rgba(21,149,96,.4);
-    --tirai:rgba(0,8,4,.78);
-    --toast-bg:#133d2b; --toast-teks:#f0faf4; --toast-lembut:#b4dcc6;
+    --bayang-glow:0 8px 20px rgba(26,123,212,.45);
+    --tirai:rgba(0,6,12,.78);
+    --toast-bg:#0c4a92; --toast-teks:#f2f8ff; --toast-lembut:#a6d6f7;
   }
 }
 :root[data-tema="gelap"] {
-  --hijau-900:#0a3a28; --hijau-800:#0d5638; --hijau-700:#137049; --hijau-600:#1b8a5c;
-  --hijau-500:#2fae78; --hijau-400:#5cc996; --hijau-300:#9ce0bd; --hijau-100:#123526; --hijau-050:#0c2019;
-  --grad-hero-dari:#063826; --grad-hero-ke:#0f7a55;
-  --grad-aksi-dari:#0c6a49; --grad-aksi-ke:#15936b;
-  --aksen:#fb923c; --aksen-lembut:#3a2210;
-  --bg:#06120d; --bg-panel:#0b1a14; --bg-subtle:#0d1f18; --bg-hover:#11271e; --bg-kepala:#10231b;
-    --kepala-tabel-bg:linear-gradient(90deg, #103a29 0%, #0f2c20 55%, #0d2119 100%); --kepala-tabel-teks:#8fe0bb;
-    --kepala-panel-bg:linear-gradient(90deg, #0f2a1f 0%, #0b1a14 65%);
-  --border:#1a2e25; --border-kuat:#2c4a3c;
-  --teks:#e8f5ee; --teks-isi:#c7ddd1; --teks-lembut:#9dbaab; --teks-samar:#86a495;
-  --brand:#5fd6a2; --brand-terang:#7fe0b5; --brand-lembut:#123526; --brand-tepi:#2fae78;
+  --biru-900:#0a2f63; --biru-800:#0c4a92; --biru-700:#1565b8; --biru-600:#2b82d6;
+  --biru-500:#4a9be4; --biru-400:#74baee; --biru-300:#a6d6f7; --biru-100:#14324d; --biru-050:#0f2537;
+  --grad-hero-dari:#041b3f; --grad-hero-ke:#0b4da2;
+  --grad-aksi-dari:#1565b8; --grad-aksi-ke:#2f97ce;
+  --aksen:#ffa057; --aksen-lembut:#3c2210;
+  --bg:#071220; --bg-panel:#0b1724; --bg-subtle:#0e1b2a; --bg-hover:#0f2537; --bg-kepala:#12212f;
+    --kepala-tabel-bg:var(--bg-kepala); --kepala-tabel-teks:#93a9c0;
+    --kepala-panel-bg:var(--bg-panel);
+  --border:#1d2e3f; --border-kuat:#2f4762;
+  --teks:#eaf2fb; --teks-isi:#c3d6e8; --teks-lembut:#93a9c0; --teks-samar:#7a90a8;
+  --brand:#74baee; --brand-terang:#a6d6f7; --brand-lembut:#14324d; --brand-tepi:#2b82d6;
   --sukses:#52c99a; --sukses-bg:#0f3126;
   --peringatan:#f2c14e; --peringatan-bg:#3a2f0f;
   --bahaya:#ff7a85; --bahaya-bg:#3b1216;
   --info:#74baee; --info-bg:#12283f;
-  --hero-bg:radial-gradient(900px 320px at 88% -30%, rgba(255,255,255,.10), transparent 62%), linear-gradient(118deg, #063826 0%, #0a583c 46%, #0f7a55 100%);
-  --hero-lembut:#c3e6d3; --hero-samar:#86d2ab;
-  --nav-bg:linear-gradient(172deg, #05301f 0%, #07442d 50%, #0b5c3f 100%);
-  --nav-teks:#b9e2cc; --nav-samar:#7fcaa3; --nav-garis:rgba(255,255,255,.10);
-  --nav-aktif:#e8f5ee; --nav-aktif-teks:#0a5a3c;
-  --seri-1:#34b27c; --seri-2:#e8834a; --seri-3:#4c93e6; --seri-4:#d6a21a;
+  --hero-bg:linear-gradient(135deg, var(--grad-hero-dari), var(--grad-hero-ke));
+  --hero-lembut:#a6d6f7; --hero-samar:#74baee;
+  --nav-bg:linear-gradient(160deg, var(--grad-hero-dari), var(--grad-hero-ke));
+  --nav-teks:#c3d6e8; --nav-samar:#74baee; --nav-garis:rgba(255,255,255,.10);
+  --nav-aktif:#eaf2fb; --nav-aktif-teks:#0b4da2;
+  --seri-1:#4a9be4; --seri-2:#e8834a; --seri-3:#52c99a; --seri-4:#d6a21a;
   --grafik-isi:.22;
   --bayang-xs:0 1px 2px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.42);
   --bayang:0 1px 2px rgba(0,0,0,.5), 0 8px 20px rgba(0,0,0,.38);
@@ -179,9 +174,9 @@
   --bayang-lg:0 6px 12px rgba(0,0,0,.55), 0 18px 40px rgba(0,0,0,.6);
   --bayang-modal:0 24px 60px rgba(0,0,0,.66);
   --bayang-tekan:inset 0 2px 4px rgba(0,0,0,.6);
-  --bayang-glow:0 8px 20px rgba(21,149,96,.4);
-  --tirai:rgba(0,8,4,.78);
-  --toast-bg:#133d2b; --toast-teks:#f0faf4; --toast-lembut:#b4dcc6;
+  --bayang-glow:0 8px 20px rgba(26,123,212,.45);
+  --tirai:rgba(0,6,12,.78);
+  --toast-bg:#0c4a92; --toast-teks:#f2f8ff; --toast-lembut:#a6d6f7;
 }
 
 *, *::before, *::after { box-sizing:border-box; }
@@ -265,7 +260,7 @@ table { border-collapse:collapse; width:100%; }
 .masuk-merek::before {
   content:''; position:absolute; border-radius:50%; z-index:-1;
   width:640px; height:640px; bottom:-300px; right:-220px;
-  background:radial-gradient(circle, rgba(154,219,185,.22), transparent 66%);
+  background:radial-gradient(circle, rgba(140,199,242,.22), transparent 66%);
 }
 /* Pola ubin dekoratif di pojok kanan atas. */
 .masuk-pola { position:absolute; right:-36px; top:48px; width:320px; height:140px;
@@ -318,7 +313,7 @@ table { border-collapse:collapse; width:100%; }
   font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--teks-lembut);
 }
 .kredensial code {
-  font-family:var(--mono); font-size:12px; color:var(--brand); background:var(--hijau-050);
+  font-family:var(--mono); font-size:12px; color:var(--brand); background:var(--biru-050);
   padding:1px 6px; border-radius:4px;
 }
 
@@ -394,7 +389,7 @@ table { border-collapse:collapse; width:100%; }
 .avatar {
   width:34px; height:34px; border-radius:50%; flex:none; display:grid; place-items:center;
   font-size:12.5px; font-weight:700; letter-spacing:.02em;
-  color:var(--hijau-900); background:#6fd3a2;
+  color:var(--biru-900); background:var(--biru-400);
 }
 .kartu-pengguna .nama {
   font-size:13px; font-weight:600; color:var(--nav-teks-kuat);
@@ -410,7 +405,7 @@ table { border-collapse:collapse; width:100%; }
 .konten { display:flex; flex-direction:column; min-width:0; }
 
 /* ---- Pita judul (hero) ----
-   Judul halaman tampil di atas gradasi hijau. Isi halaman yang diawali kartu
+   Judul halaman tampil di atas gradasi biru. Isi halaman yang diawali kartu
    ditarik ke atas (kelas .tumpang pada #halaman) sehingga kartu pertama
    menumpang di tepi bawah pita, seperti dasbor korporat. */
 .topbar {
@@ -593,13 +588,10 @@ table.tabel th {
   font-weight:700; font-size:11px; line-height:14px; text-transform:uppercase; letter-spacing:.09em;
   white-space:nowrap;
 }
-/* Gradasi dipasang pada thead, bukan tiap sel, supaya mengalir utuh dari
-   kolom pertama sampai terakhir tanpa belang per kolom. */
+/* Latar kepala dipasang pada thead, bukan tiap sel, supaya tetap utuh bila
+   kelak diberi gradasi. */
 table.tabel thead { background:var(--kepala-tabel-bg); position:sticky; top:0; z-index:1; }
-table.tabel thead th {
-  background:transparent; color:var(--kepala-tabel-teks);
-  border-bottom:1px solid color-mix(in srgb, var(--brand-tepi) 45%, transparent);
-}
+table.tabel thead th { background:transparent; color:var(--kepala-tabel-teks); }
 table.tabel td {
   padding:12px 16px; border-bottom:1px solid var(--border); vertical-align:middle; line-height:1.45;
   transition:background var(--cepat);
@@ -610,7 +602,7 @@ table.tabel tbody tr:last-child td { border-bottom:0; }
 table.tabel .angka { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 table.tabel td.angka { font-family:var(--mono); font-size:13px; font-weight:500; }
 table.tabel td .mono { font-weight:500; }
-/* Nomor dokumen/kode di kolom pertama tampil hijau seperti tautan rujukan. */
+/* Nomor dokumen/kode di kolom pertama tampil biru seperti tautan rujukan. */
 table.tabel td:first-child .mono { color:var(--brand); }
 table.tabel td .mono.lembut, table.tabel td .mono.samar { color:var(--teks-lembut); }
 table.tabel tfoot td {
@@ -651,9 +643,9 @@ table.tabel .induk td { font-weight:700; background:var(--bg-subtle); color:var(
 .btn.bahaya:hover:not(:disabled) { background:color-mix(in srgb, var(--bahaya) 86%, #000); border-color:transparent; }
 .btn.sukses { background:var(--sukses); border-color:transparent; color:#fff; }
 .btn.sukses:hover:not(:disabled) { background:color-mix(in srgb, var(--sukses) 86%, #000); border-color:transparent; }
-:root[data-tema="gelap"] .btn.bahaya, :root[data-tema="gelap"] .btn.sukses { color:#0b1a14; }
+:root[data-tema="gelap"] .btn.bahaya, :root[data-tema="gelap"] .btn.sukses { color:#0b1724; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-tema="terang"]) .btn.bahaya, :root:not([data-tema="terang"]) .btn.sukses { color:#0b1a14; }
+  :root:not([data-tema="terang"]) .btn.bahaya, :root:not([data-tema="terang"]) .btn.sukses { color:#0b1724; }
 }
 .btn.kecil { padding:4px 11px; min-height:30px; font-size:12px; border-radius:var(--radius-xs); }
 .btn.polos { border-color:transparent; background:transparent; box-shadow:none; }
@@ -731,7 +723,7 @@ input.angka { text-align:right; font-variant-numeric:tabular-nums; font-family:v
   max-width:min(400px, calc(100vw - 40px));
 }
 .toast {
-  background:var(--toast-bg); color:var(--toast-teks); border-left:4px solid var(--hijau-300);
+  background:var(--toast-bg); color:var(--toast-teks); border-left:4px solid var(--biru-300);
   border-radius:var(--radius-sm); box-shadow:var(--bayang-modal); padding:12px 16px; font-size:13.5px;
   animation:geserKanan .26s var(--gerak);
 }
@@ -777,7 +769,7 @@ input.angka { text-align:right; font-variant-numeric:tabular-nums; font-family:v
 
 /* -------------------------------- Tab -------------------------------- */
 
-/* Deret pil: pilihan aktif diberi latar hijau lembut dan tepi hijau. */
+/* Deret pil: pilihan aktif diberi latar biru lembut dan tepi biru. */
 .tab {
   display:flex; gap:8px; overflow-x:auto; padding:0 0 14px; scrollbar-width:none;
 }
@@ -813,7 +805,7 @@ input.angka { text-align:right; font-variant-numeric:tabular-nums; font-family:v
 .bilah { height:8px; background:var(--bg-kepala); border-radius:var(--radius-pil); overflow:hidden; min-width:60px; }
 .bilah > i {
   display:block; height:100%; border-radius:var(--radius-pil);
-  background:linear-gradient(90deg, var(--hijau-600), var(--hijau-400));
+  background:linear-gradient(90deg, var(--biru-600), var(--biru-400));
   transition:width .5s var(--gerak);
 }
 .bilah.bahaya > i { background:var(--bahaya); }

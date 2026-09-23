@@ -16,13 +16,13 @@ const token = (nama, cadangan) => {
 };
 
 export const SERI = () => [
-  token('--seri-1', '#11875a'), token('--seri-2', '#e0702a'),
-  token('--seri-3', '#2a78d6'), token('--seri-4', '#c98f00'),
+  token('--seri-1', '#1a7bd4'), token('--seri-2', '#e0702a'),
+  token('--seri-3', '#1c9a6c'), token('--seri-4', '#c98f00'),
 ];
 
 const tinta = () => ({
-  teks: token('--teks', '#0a1f16'), lembut: token('--teks-lembut', '#46635a'),
-  grid: token('--border', '#dbe7e0'), permukaan: token('--bg-panel', '#ffffff'),
+  teks: token('--teks', '#0b1b2e'), lembut: token('--teks-lembut', '#526883'),
+  grid: token('--border', '#dce6f2'), permukaan: token('--bg-panel', '#ffffff'),
   isi: Number(token('--grafik-isi', '.18')) || 0.18,
 });
 

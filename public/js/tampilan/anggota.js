@@ -517,7 +517,7 @@ function bentukKartu(k, c, doc = document) {
     ]))) : null;
   return buat('div', {
     width: '85.6mm', minHeight: '54mm', boxSizing: 'border-box', padding: '12px 14px', borderRadius: '10px',
-    background: 'linear-gradient(135deg,#0f5132,#1baf7a)', color: '#fff', fontFamily: 'system-ui, sans-serif',
+    background: 'linear-gradient(135deg,#062b63,#1a7bd4)', color: '#fff', fontFamily: 'system-ui, sans-serif',
     display: 'flex', flexDirection: 'column', gap: '6px', printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact',
   }, [
     buat('div', { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }, [
