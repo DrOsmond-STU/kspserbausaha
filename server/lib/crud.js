@@ -18,11 +18,14 @@ import { logAudit } from './audit.js';
  * @param {string} [opt.selectSql]  SELECT kustom (mis. dengan JOIN); harus memuat alias t
  * @param {string[]} [opt.unique]   kolom yang harus unik
  * @param {(row:object)=>object} [opt.transform]
+ * @param {(data:object, before:object|null)=>void} [opt.validate] validasi tambahan sebelum simpan
+ * @param {(before:object)=>void} [opt.beforeRemove] pemeriksaan sebelum hapus
  */
 export function crud(opt) {
   const {
     table, modul, fields, required = [], search = [], orderBy = 'id DESC',
     label = 'nama', selectSql = null, unique = [], transform = null, filters = [],
+    validate = null, beforeRemove = null,
   } = opt;
 
   const pick = (body) => {
@@ -76,6 +79,7 @@ export function crud(opt) {
         }
       }
       cekUnik(data);
+      if (validate) validate(data, null);
       const cols = Object.keys(data);
       if (!cols.length) throw badRequest('Tidak ada data yang dikirim');
       const { lastInsertRowid: id } = run(
@@ -95,6 +99,7 @@ export function crud(opt) {
       const cols = Object.keys(data);
       if (!cols.length) throw badRequest('Tidak ada perubahan yang dikirim');
       cekUnik(data, id);
+      if (validate) validate(data, before);
       run(`UPDATE ${table} SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
         [...cols.map((c) => data[c]), id]);
       const after = get(`SELECT * FROM ${table} WHERE id = ?`, [id]);
@@ -106,6 +111,7 @@ export function crud(opt) {
     remove(id, ctx) {
       const before = get(`SELECT * FROM ${table} WHERE id = ?`, [id]);
       if (!before) throw notFound(`Data pada ${modul} tidak ditemukan`);
+      if (beforeRemove) beforeRemove(before);
       try {
         run(`DELETE FROM ${table} WHERE id = ?`, [id]);
       } catch (e) {

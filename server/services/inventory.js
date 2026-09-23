@@ -11,6 +11,24 @@ import { logAudit, notify } from '../lib/audit.js';
 import { postJournal, AKUN } from './accounting.js';
 import { rupiah, today } from '../lib/util.js';
 
+/**
+ * Akun persediaan, penjualan, dan HPP sebuah barang. Akun yang diisi pada
+ * master barang diutamakan; bila kosong memakai pemetaan di Parameter Sistem.
+ */
+export function akunBarang(barang) {
+  return {
+    persediaan: barang?.coa_persediaan || AKUN.persediaan(),
+    penjualan: barang?.coa_penjualan || AKUN.penjualan(),
+    hpp: barang?.coa_hpp || AKUN.hpp(),
+  };
+}
+
+/** Menambah nominal ke peta akun → nilai (untuk menyusun baris jurnal per akun). */
+export function tambahNilai(peta, kode, nilai) {
+  if (nilai) peta.set(kode, (peta.get(kode) || 0) + nilai);
+  return peta;
+}
+
 /** Stok barang pada satu gudang (0 bila belum pernah ada mutasi). */
 export function stokBarang(barang_id, gudang_id) {
   return scalar('SELECT COALESCE(qty,0) FROM stok WHERE barang_id = ? AND gudang_id = ?',
@@ -75,6 +93,48 @@ export function mutasi({ barang_id, gudang_id, tanggal, jenis, qty, harga = 0, b
   return { id, stok_sebelum: stokLama, stok_sesudah: stokBaru, hpp };
 }
 
+/**
+ * Penyesuaian stok manual (barang ditemukan / rusak / hilang / saldo awal).
+ * Setiap penyesuaian langsung dijurnal agar nilai persediaan di buku besar
+ * selalu sama dengan kartu stok:
+ *   masuk   D Persediaan         K Akun lawan (bawaan: Pendapatan lain-lain)
+ *   keluar  D Akun lawan (bawaan: Beban selisih)   K Persediaan
+ */
+export function penyesuaianStok({ barang_id, gudang_id, tanggal, jenis = 'masuk', qty, harga, akun_lawan, keterangan }, ctx) {
+  const barang = get('SELECT * FROM barang WHERE id = ?', [barang_id]);
+  if (!barang) throw notFound('Barang tidak ditemukan');
+  const q = Math.abs(Number(qty));
+  if (!(q > 0)) throw badRequest('Kuantitas penyesuaian harus lebih besar dari nol');
+  if (!['masuk', 'keluar'].includes(jenis)) throw badRequest('Jenis penyesuaian harus masuk atau keluar');
+  const tgl = tanggal || today();
+  const masuk = jenis === 'masuk';
+  const hargaSatuan = masuk ? rupiah(harga || barang.harga_beli) : barang.harga_beli;
+  if (masuk && hargaSatuan <= 0) throw badRequest('Harga satuan wajib diisi untuk barang yang belum memiliki HPP');
+  const lawan = akun_lawan || (masuk ? AKUN.pendapatan_lain() : AKUN.beban_selisih());
+
+  return tx(() => {
+    const m = mutasi({ barang_id, gudang_id, tanggal: tgl, jenis: masuk ? 'penyesuaian_masuk' : 'penyesuaian_keluar',
+      qty: masuk ? q : -q, harga: masuk ? hargaSatuan : 0,
+      referensi: 'penyesuaian', keterangan }, ctx);
+    const nilai = rupiah(q * hargaSatuan);
+    let jurnal = null;
+    if (nilai > 0) {
+      const akunSediaan = akunBarang(barang).persediaan;
+      const ket = `Penyesuaian stok ${barang.kode} ${masuk ? '+' : '-'}${q} ${barang.satuan}`;
+      jurnal = postJournal({
+        tanggal: tgl, tipe: 'penyesuaian', referensi: `stok:${m.id}`,
+        keterangan: keterangan ? `${ket} - ${keterangan}` : ket,
+        lines: masuk
+          ? [{ coa_kode: akunSediaan, debit: nilai }, { coa_kode: lawan, kredit: nilai }]
+          : [{ coa_kode: lawan, debit: nilai }, { coa_kode: akunSediaan, kredit: nilai }],
+      }, ctx);
+    }
+    logAudit(ctx, { aksi: 'create', modul: 'persediaan', entitas_id: barang_id,
+      keterangan: `Penyesuaian stok ${barang.kode} ${masuk ? 'masuk' : 'keluar'} ${q} senilai Rp ${nilai.toLocaleString('id-ID')}` });
+    return { ...m, nilai, jurnal };
+  });
+}
+
 /** Transfer stok antar gudang (tanpa jurnal karena nilai persediaan tidak berubah). */
 export function transferGudang({ barang_id, dari_gudang_id, ke_gudang_id, qty, tanggal, keterangan }, ctx) {
   if (dari_gudang_id === ke_gudang_id) throw badRequest('Gudang asal dan tujuan tidak boleh sama');
@@ -128,13 +188,14 @@ export function selesaikanOpname(opname_id, detail, ctx) {
   return tx(() => {
     let nilaiKurang = 0;
     let nilaiLebih = 0;
+    const perAkun = new Map();
     for (const d of detail || []) {
       const row = get('SELECT * FROM stock_opname_detail WHERE id = ? AND opname_id = ?', [d.id, opname_id]);
       if (!row) continue;
       const fisik = Number(d.qty_fisik);
       if (!Number.isFinite(fisik) || fisik < 0) throw badRequest('Kuantitas fisik tidak valid');
       const selisih = fisik - row.qty_sistem;
-      const barang = get('SELECT harga_beli FROM barang WHERE id = ?', [row.barang_id]);
+      const barang = get('SELECT * FROM barang WHERE id = ?', [row.barang_id]);
       const nilai = rupiah(selisih * (barang?.harga_beli || 0));
       run(`UPDATE stock_opname_detail SET qty_fisik = ?, selisih = ?, nilai_selisih = ?, keterangan = ?
              WHERE id = ?`, [fisik, selisih, nilai, d.keterangan || null, row.id]);
@@ -142,26 +203,28 @@ export function selesaikanOpname(opname_id, detail, ctx) {
         mutasi({ barang_id: row.barang_id, gudang_id: op.gudang_id, tanggal: op.tanggal, jenis: 'opname',
           qty: selisih, referensi: `opname:${opname_id}`, keterangan: 'Penyesuaian stock opname' }, ctx);
         if (nilai < 0) nilaiKurang += -nilai; else nilaiLebih += nilai;
+        tambahNilai(perAkun, akunBarang(barang).persediaan, nilai);
       }
     }
 
+    // Selisih dibukukan per akun persediaan barang: selisih lebih menambah
+    // persediaan (K pendapatan lain), selisih kurang menguranginya (D beban selisih).
     let jurnal = null;
-    if (nilaiKurang > 0 || nilaiLebih > 0) {
-      const lines = [];
-      const selisihBersih = nilaiLebih - nilaiKurang;
-      if (selisihBersih > 0) {
-        lines.push({ coa_kode: AKUN.persediaan(), debit: selisihBersih, keterangan: 'Selisih lebih opname' });
-        lines.push({ coa_kode: AKUN.pendapatan_lain(), kredit: selisihBersih, keterangan: 'Selisih lebih persediaan' });
-      } else if (selisihBersih < 0) {
-        lines.push({ coa_kode: AKUN.beban_selisih(), debit: -selisihBersih, keterangan: 'Selisih kurang persediaan' });
-        lines.push({ coa_kode: AKUN.persediaan(), kredit: -selisihBersih, keterangan: 'Selisih kurang opname' });
+    const lines = [];
+    for (const [kode, nilai] of perAkun) {
+      if (nilai > 0) {
+        lines.push({ coa_kode: kode, debit: nilai, keterangan: 'Selisih lebih opname' });
+        lines.push({ coa_kode: AKUN.pendapatan_lain(), kredit: nilai, keterangan: 'Selisih lebih persediaan' });
+      } else if (nilai < 0) {
+        lines.push({ coa_kode: AKUN.beban_selisih(), debit: -nilai, keterangan: 'Selisih kurang persediaan' });
+        lines.push({ coa_kode: kode, kredit: -nilai, keterangan: 'Selisih kurang opname' });
       }
-      if (lines.length) {
-        jurnal = postJournal({
-          tanggal: op.tanggal, tipe: 'penyesuaian', referensi: `opname:${opname_id}`,
-          keterangan: `Penyesuaian stock opname ${op.nomor}`, lines,
-        }, ctx);
-      }
+    }
+    if (lines.length) {
+      jurnal = postJournal({
+        tanggal: op.tanggal, tipe: 'penyesuaian', referensi: `opname:${opname_id}`,
+        keterangan: `Penyesuaian stock opname ${op.nomor}`, lines,
+      }, ctx);
     }
     run("UPDATE stock_opname SET status = 'selesai', jurnal_id = ? WHERE id = ?", [jurnal?.id || null, opname_id]);
     logAudit(ctx, { aksi: 'post', modul: 'persediaan', entitas_id: opname_id,

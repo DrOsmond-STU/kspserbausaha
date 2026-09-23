@@ -8,7 +8,7 @@
 import { all, get, run, scalar, nextNumber, tx } from '../db.js';
 import { badRequest, notFound, conflict } from '../lib/http.js';
 import { logAudit } from '../lib/audit.js';
-import { postJournal, AKUN } from './accounting.js';
+import { postJournal, voidJournal, AKUN, akunKasMetode } from './accounting.js';
 import { addMonths, diffDays, rupiah, today } from '../lib/util.js';
 
 /** Membuka rekening simpanan baru. */
@@ -95,10 +95,7 @@ export function setoran({ rekening_id, tanggal, nominal, keterangan, metode = 't
   const tgl = tanggal || today();
 
   return tx(() => {
-    const akunKas = metode === 'transfer'
-      ? (bank_account_id ? get('SELECT coa_kode FROM bank_account WHERE id = ?', [bank_account_id])?.coa_kode : AKUN.bank())
-      : AKUN.kas();
-    if (!akunKas) throw badRequest('Rekening bank tujuan tidak ditemukan');
+    const akunKas = akunKasMetode(metode, metode === 'transfer' ? bank_account_id : null);
 
     const jurnal = postJournal({
       tanggal: tgl, tipe: 'simpanan', referensi: `simpanan:${rekening_id}`,
@@ -143,9 +140,7 @@ export function penarikan({ rekening_id, tanggal, nominal, keterangan, metode = 
   const tgl = tanggal || today();
 
   return tx(() => {
-    const akunKas = metode === 'transfer'
-      ? (bank_account_id ? get('SELECT coa_kode FROM bank_account WHERE id = ?', [bank_account_id])?.coa_kode : AKUN.bank())
-      : AKUN.kas();
+    const akunKas = akunKasMetode(metode, metode === 'transfer' ? bank_account_id : null);
     const jurnal = postJournal({
       tanggal: tgl, tipe: 'simpanan', referensi: `simpanan:${rekening_id}`,
       keterangan: `Penarikan ${rek.produk_nama} - ${rek.anggota_nama}`,
@@ -242,6 +237,81 @@ export function posBungaBulanan({ periode, tanggal }, ctx) {
     logAudit(ctx, { aksi: 'post', modul: 'simpanan', entitas_id: periode,
       keterangan: `Jasa simpanan ${periode}: ${detail.length} rekening, total Rp ${total.toLocaleString('id-ID')}` });
     return { periode, jumlah_rekening: detail.length, total_bunga: total, jurnal };
+  });
+}
+
+/**
+ * Membatalkan transaksi setoran / penarikan yang salah input.
+ * Transaksi asli tetap tersimpan (status "batal"); saldo dikoreksi lewat
+ * mutasi "koreksi" dan jurnalnya dibalik - jejak audit tetap utuh.
+ */
+export function batalTransaksi(transaksi_id, alasan, ctx) {
+  const t = get('SELECT * FROM transaksi_simpanan WHERE id = ?', [transaksi_id]);
+  if (!t) throw notFound('Transaksi simpanan tidak ditemukan');
+  if (t.status === 'batal') throw conflict('Transaksi ini sudah dibatalkan');
+  if (!['setoran', 'penarikan'].includes(t.jenis)) {
+    throw conflict(`Transaksi jenis "${t.jenis}" tidak dapat dibatalkan dari sini`,
+      'Jasa simpanan, pindah buku, dan pembayaran belanja dibatalkan melalui modul asalnya.');
+  }
+  if (!t.jurnal_id) throw conflict('Transaksi ini tidak memiliki jurnal sehingga tidak dapat dibatalkan otomatis');
+  const lain = scalar('SELECT COUNT(*) FROM transaksi_simpanan WHERE jurnal_id = ? AND id <> ?', [t.jurnal_id, t.id]);
+  if (lain > 0) throw conflict('Jurnal transaksi ini dipakai bersama transaksi lain sehingga tidak dapat dibatalkan sendiri');
+  if (!String(alasan || '').trim()) throw badRequest('Alasan pembatalan wajib diisi');
+  const rek = ambilRekening(t.rekening_id);
+  if (t.jenis === 'setoran' && rek.saldo - rek.saldo_blokir < t.kredit) {
+    throw conflict('Saldo rekening tidak mencukupi untuk membatalkan setoran ini',
+      `Saldo tersedia Rp ${(rek.saldo - rek.saldo_blokir).toLocaleString('id-ID')}`);
+  }
+
+  return tx(() => {
+    const jurnal = voidJournal(t.jurnal_id, `Pembatalan ${t.nomor}: ${alasan}`, ctx, { sistem: true });
+    const mut = catatMutasi({ rek, tanggal: today(), jenis: 'koreksi', debit: t.kredit, kredit: t.debit,
+      keterangan: `Koreksi pembatalan ${t.nomor}: ${alasan}`, metode: t.metode, jurnal_id: jurnal.id }, ctx);
+    run("UPDATE transaksi_simpanan SET status = 'batal' WHERE id = ?", [t.id]);
+    logAudit(ctx, { aksi: 'void', modul: 'simpanan', entitas_id: t.id,
+      keterangan: `Transaksi ${t.nomor} dibatalkan: ${alasan}`, before: t });
+    return { ...mut, jurnal };
+  });
+}
+
+/**
+ * Menutup rekening simpanan: saldo dikembalikan kepada anggota (tunai/bank)
+ * dan dijurnal otomatis, lalu rekening berstatus "tutup". Simpanan pokok &
+ * wajib hanya dapat ditutup bila anggota sudah keluar (UU 25/1992 Pasal 41).
+ */
+export function tutupRekening(rekening_id, { tanggal, metode = 'tunai', bank_account_id, keterangan } = {}, ctx) {
+  const rek = ambilRekening(rekening_id);
+  if (rek.status === 'tutup') throw conflict('Rekening ini sudah ditutup');
+  if (['pokok', 'wajib'].includes(rek.jenis) && !['keluar', 'meninggal'].includes(rek.anggota_status)) {
+    throw conflict(`Simpanan ${rek.jenis} hanya dapat dikembalikan ketika anggota keluar dari koperasi`);
+  }
+  if (rek.saldo_blokir > 0) throw conflict('Sebagian saldo masih diblokir sebagai agunan pinjaman');
+  if (rek.saldo < 0) throw conflict('Saldo rekening negatif; lakukan koreksi terlebih dahulu');
+  const tgl = tanggal || today();
+
+  return tx(() => {
+    let jurnal = null;
+    if (rek.saldo > 0) {
+      jurnal = postJournal({
+        tanggal: tgl, tipe: 'simpanan', referensi: `simpanan:${rek.id}`,
+        keterangan: `Pengembalian ${rek.produk_nama} ${rek.nomor_rekening} - ${rek.anggota_nama} (tutup rekening)`,
+        cabang_id: rek.cabang_id,
+        lines: [
+          { coa_kode: rek.coa_kode, debit: rek.saldo, anggota_id: rek.anggota_id,
+            keterangan: `Pengembalian ${rek.nomor_rekening}` },
+          { coa_kode: akunKasMetode(metode, bank_account_id), kredit: rek.saldo,
+            keterangan: `Pengembalian simpanan ${rek.anggota_nama}` },
+        ],
+      }, ctx);
+      catatMutasi({ rek, tanggal: tgl, jenis: 'penarikan', debit: rek.saldo,
+        keterangan: keterangan || 'Pengembalian saldo - penutupan rekening', metode, bank_account_id,
+        jurnal_id: jurnal.id }, ctx);
+    }
+    run("UPDATE rekening_simpanan SET status = 'tutup' WHERE id = ?", [rek.id]);
+    logAudit(ctx, { aksi: 'update', modul: 'simpanan', entitas_id: rek.id,
+      keterangan: `Rekening ${rek.nomor_rekening} ditutup, saldo Rp ${rek.saldo.toLocaleString('id-ID')} dikembalikan`,
+      before: { status: rek.status, saldo: rek.saldo } });
+    return { rekening_id: rek.id, dikembalikan: rek.saldo, jurnal };
   });
 }
 

@@ -117,7 +117,7 @@ describe('Integritas laporan', () => {
 describe('Pembatalan jurnal', () => {
   test('membuat jurnal balik dan tidak menghapus jurnal asli', () => {
     const j = acc.postJournal({
-      tanggal: '2026-05-10', keterangan: 'akan dibatalkan',
+      tanggal: '2026-05-10', keterangan: 'akan dibatalkan', sumber: 'manual',
       lines: [{ coa_kode: '1-1101', debit: 1_500_000 }, { coa_kode: '4-1101', kredit: 1_500_000 }],
     });
     const sebelum = acc.labaRugi({ dari: '2026-05-01', sampai: '2026-05-31' }).total_pendapatan;
@@ -135,11 +135,22 @@ describe('Pembatalan jurnal', () => {
 
   test('menolak pembatalan ganda', () => {
     const j = acc.postJournal({
-      tanggal: '2026-05-12', keterangan: 'batal dua kali',
+      tanggal: '2026-05-12', keterangan: 'batal dua kali', sumber: 'manual',
       lines: [{ coa_kode: '1-1101', debit: 100_000 }, { coa_kode: '4-1101', kredit: 100_000 }],
     });
     acc.voidJournal(j.id, 'pertama');
     assert.throws(() => acc.voidJournal(j.id, 'kedua'), /sudah dibatalkan/i);
+  });
+
+  test('jurnal otomatis modul tidak dapat dibatalkan langsung dari buku besar', () => {
+    const j = acc.postJournal({
+      tanggal: '2026-05-13', keterangan: 'setoran simpanan', tipe: 'simpanan', referensi: 'simpanan:1',
+      lines: [{ coa_kode: '1-1101', debit: 100_000 }, { coa_kode: '2-1201', kredit: 100_000 }],
+    });
+    assert.throws(() => acc.voidJournal(j.id, 'coba'), /dibentuk otomatis/i);
+    // Dokumen sumbernya sendiri tetap dapat membatalkan.
+    acc.voidJournal(j.id, 'dari dokumen sumber', null, { sistem: true });
+    assert.equal(get('SELECT status FROM jurnal WHERE id = ?', [j.id]).status, 'void');
   });
 });
 

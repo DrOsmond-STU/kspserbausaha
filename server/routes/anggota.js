@@ -7,7 +7,7 @@ import { createRouter, badRequest, notFound, conflict } from '../lib/http.js';
 import { all, get, run, scalar, tx, nextNumber } from '../db.js';
 import { logAudit } from '../lib/audit.js';
 import { str, num, oneOf, date, idParam, today } from '../lib/util.js';
-import { ringkasanAnggota } from '../services/savings.js';
+import { ringkasanAnggota, tutupRekening } from '../services/savings.js';
 import { riwayatAnggota as riwayatShu } from '../services/shu.js';
 
 const router = createRouter();
@@ -205,11 +205,28 @@ router.post('/api/anggota/:id/keluar', 'anggota.update', ({ params, body, ctx })
   }
   const saldo = scalar(
     "SELECT COALESCE(SUM(saldo),0) FROM rekening_simpanan WHERE anggota_id = ? AND status <> 'tutup'", [id]);
+  // Bawaan: seluruh simpanan (termasuk pokok & wajib) langsung dikembalikan
+  // dan dijurnal otomatis. Kirim kembalikan_simpanan=false bila pengembalian
+  // akan dilakukan kemudian lewat menu Simpanan → Tutup Rekening.
+  const kembalikan = body.kembalikan_simpanan !== false && body.kembalikan_simpanan !== 0
+    && body.kembalikan_simpanan !== '0';
+  const metode = oneOf(body, 'metode', ['tunai', 'transfer'], { required: false, dflt: 'tunai' });
 
   return tx(() => {
     const statusBaru = alasan === 'meninggal' ? 'meninggal' : 'keluar';
     run(`UPDATE anggota SET status = ?, tanggal_keluar = ?, alasan_keluar = ?,
            updated_at = datetime('now') WHERE id = ?`, [statusBaru, tanggal, alasan, id]);
+    const pengembalian = [];
+    if (kembalikan) {
+      const rekening = all("SELECT id FROM rekening_simpanan WHERE anggota_id = ? AND status <> 'tutup'", [id]);
+      for (const r of rekening) {
+        run("UPDATE rekening_simpanan SET saldo_blokir = 0 WHERE id = ?", [r.id]);
+        pengembalian.push(tutupRekening(r.id, {
+          tanggal, metode, bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
+          keterangan: `Pengembalian simpanan - anggota ${statusBaru}`,
+        }, ctx));
+      }
+    }
     run(`INSERT INTO anggota_riwayat(anggota_id, jenis, keterangan, status_lama, status_baru, oleh)
          VALUES(?,'status',?,?,?,?)`,
     [id, body.keterangan || `Keluar: ${alasan}`, a.status, statusBaru, ctx?.user?.username || 'sistem']);
@@ -220,9 +237,10 @@ router.post('/api/anggota/:id/keluar', 'anggota.update', ({ params, body, ctx })
     return {
       ...get('SELECT * FROM anggota WHERE id = ?', [id]),
       saldo_simpanan_dikembalikan: saldo,
-      catatan: saldo > 0
-        ? 'Lakukan penarikan simpanan melalui modul Simpanan untuk mengembalikan hak anggota.'
-        : 'Tidak ada saldo simpanan yang perlu dikembalikan.',
+      pengembalian,
+      catatan: saldo <= 0 ? 'Tidak ada saldo simpanan yang perlu dikembalikan.'
+        : kembalikan ? `Simpanan Rp ${saldo.toLocaleString('id-ID')} dikembalikan dan dijurnal otomatis.`
+          : 'Kembalikan simpanan melalui menu Simpanan → Tutup Rekening.',
     };
   });
 });

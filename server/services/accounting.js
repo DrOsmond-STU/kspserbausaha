@@ -5,37 +5,127 @@
  * buku besar selalu menjadi sumber kebenaran tunggal (single source of truth).
  */
 import { all, get, run, scalar, nextNumber, tx, setting } from '../db.js';
-import { AppError, badRequest, notFound, conflict } from '../lib/http.js';
+import { badRequest, notFound, conflict } from '../lib/http.js';
 import { logAudit } from '../lib/audit.js';
 import { rupiah, yearOf, monthOf, endOfMonth } from '../lib/util.js';
 
-/** Akun default yang dipakai lintas modul; dapat diubah lewat modul Administrator. */
-export const AKUN = {
-  kas: () => setting('coa.kas', '1-1101'),
-  bank: () => setting('coa.bank', '1-1201'),
-  piutang_usaha: () => setting('coa.piutang_usaha', '1-1301'),
-  piutang_pinjaman: () => setting('coa.piutang_pinjaman', '1-1310'),
-  cadangan_kerugian: () => setting('coa.cadangan_kerugian', '1-1319'),
-  persediaan: () => setting('coa.persediaan', '1-1401'),
-  hutang_usaha: () => setting('coa.hutang_usaha', '2-1101'),
-  hutang_pajak: () => setting('coa.hutang_pajak', '2-1301'),
-  shu_dibagikan: () => setting('coa.shu_dibagikan', '2-1401'),
-  simpanan_pokok: () => setting('coa.simpanan_pokok', '3-1101'),
-  simpanan_wajib: () => setting('coa.simpanan_wajib', '3-1102'),
-  cadangan: () => setting('coa.cadangan', '3-1201'),
-  shu_berjalan: () => setting('coa.shu_berjalan', '3-1301'),
-  shu_ditahan: () => setting('coa.shu_ditahan', '3-1302'),
-  penjualan: () => setting('coa.penjualan', '4-1101'),
-  pendapatan_bunga: () => setting('coa.pendapatan_bunga', '4-1201'),
-  pendapatan_admin: () => setting('coa.pendapatan_admin', '4-1202'),
-  pendapatan_denda: () => setting('coa.pendapatan_denda', '4-1203'),
-  pendapatan_lain: () => setting('coa.pendapatan_lain', '4-1301'),
-  hpp: () => setting('coa.hpp', '5-1101'),
-  beban_bunga_simpanan: () => setting('coa.beban_bunga_simpanan', '5-2101'),
-  beban_penyusutan: () => setting('coa.beban_penyusutan', '5-2301'),
-  beban_selisih: () => setting('coa.beban_selisih', '5-2901'),
-  beban_lain: () => setting('coa.beban_lain', '5-2902'),
-};
+/**
+ * Pemetaan akun yang dipakai jurnal otomatis lintas modul.
+ *
+ * Tidak ada kode akun yang ditanam di dalam kode program: setiap jurnal
+ * otomatis membaca akun dari pengaturan `coa.<kunci>` yang diubah melalui
+ * Administrator → Parameter Sistem → Pemetaan Akun. Bila pemetaan belum
+ * diisi, transaksi ditolak dengan pesan yang jelas alih-alih diam-diam
+ * memposting ke akun tebakan.
+ *
+ * `tipe` adalah tipe akun yang sah untuk pemetaan tersebut dan dipakai untuk
+ * memvalidasi isian pengaturan.
+ */
+export const PEMETAAN_AKUN = [
+  { kunci: 'kas', label: 'Kas (penerimaan & pembayaran tunai)', tipe: 'aset' },
+  { kunci: 'bank', label: 'Bank (transfer / QRIS bila rekening tidak dipilih)', tipe: 'aset' },
+  { kunci: 'piutang_usaha', label: 'Piutang usaha (penjualan kredit)', tipe: 'aset' },
+  { kunci: 'piutang_pinjaman', label: 'Piutang pinjaman anggota (bila produk tidak menentukan)', tipe: 'aset' },
+  { kunci: 'cadangan_kerugian', label: 'Cadangan kerugian piutang', tipe: 'aset' },
+  { kunci: 'persediaan', label: 'Persediaan barang dagang (bila barang tidak menentukan)', tipe: 'aset' },
+  { kunci: 'ppn_masukan', label: 'PPN masukan (pajak pembelian)', tipe: 'aset' },
+  { kunci: 'aset_tetap', label: 'Aset tetap (bila aset tidak menentukan)', tipe: 'aset' },
+  { kunci: 'akumulasi_penyusutan', label: 'Akumulasi penyusutan aset tetap', tipe: 'aset' },
+  { kunci: 'hutang_usaha', label: 'Utang usaha (pembelian kredit)', tipe: 'kewajiban' },
+  { kunci: 'hutang_pajak', label: 'Utang pajak / PPN keluaran', tipe: 'kewajiban' },
+  { kunci: 'shu_dibagikan', label: 'SHU yang akan dibagikan (jasa modal & jasa usaha)', tipe: 'kewajiban' },
+  { kunci: 'dana_pengurus', label: 'Dana pengurus & pengawas', tipe: 'kewajiban' },
+  { kunci: 'dana_karyawan', label: 'Dana kesejahteraan karyawan', tipe: 'kewajiban' },
+  { kunci: 'dana_pendidikan', label: 'Dana pendidikan', tipe: 'kewajiban' },
+  { kunci: 'dana_sosial', label: 'Dana sosial', tipe: 'kewajiban' },
+  { kunci: 'dana_pembangunan', label: 'Dana pembangunan daerah kerja', tipe: 'kewajiban' },
+  { kunci: 'simpanan_pokok', label: 'Simpanan pokok', tipe: 'ekuitas' },
+  { kunci: 'simpanan_wajib', label: 'Simpanan wajib', tipe: 'ekuitas' },
+  { kunci: 'cadangan', label: 'Dana cadangan', tipe: 'ekuitas' },
+  { kunci: 'shu_berjalan', label: 'SHU tahun berjalan (tujuan jurnal penutup)', tipe: 'ekuitas' },
+  { kunci: 'shu_ditahan', label: 'SHU tahun lalu yang ditahan', tipe: 'ekuitas' },
+  { kunci: 'penjualan', label: 'Penjualan (bila barang tidak menentukan)', tipe: 'pendapatan' },
+  { kunci: 'pendapatan_bunga', label: 'Pendapatan jasa pinjaman (bila produk tidak menentukan)', tipe: 'pendapatan' },
+  { kunci: 'pendapatan_admin', label: 'Pendapatan administrasi & provisi (bila produk tidak menentukan)', tipe: 'pendapatan' },
+  { kunci: 'pendapatan_denda', label: 'Pendapatan denda (bila produk tidak menentukan)', tipe: 'pendapatan' },
+  { kunci: 'pendapatan_lain', label: 'Pendapatan lain-lain (selisih lebih, laba pelepasan aset)', tipe: 'pendapatan' },
+  { kunci: 'hpp', label: 'Harga pokok penjualan (bila barang tidak menentukan)', tipe: 'beban' },
+  { kunci: 'beban_bunga_simpanan', label: 'Beban jasa simpanan (bila produk tidak menentukan)', tipe: 'beban' },
+  { kunci: 'beban_penyusutan', label: 'Beban penyusutan (bila aset tidak menentukan)', tipe: 'beban' },
+  { kunci: 'beban_pemeliharaan', label: 'Beban pemeliharaan aset', tipe: 'beban' },
+  { kunci: 'beban_selisih', label: 'Beban selisih kas & persediaan', tipe: 'beban' },
+  { kunci: 'beban_lain', label: 'Beban lain-lain (rugi pelepasan aset)', tipe: 'beban' },
+];
+
+function akunDariPengaturan({ kunci, label }) {
+  const kode = String(setting(`coa.${kunci}`, '') || '').trim();
+  if (!kode) {
+    throw badRequest(`Pemetaan akun "${label}" belum diatur`,
+      `Isi pengaturan coa.${kunci} melalui Administrator → Parameter Sistem → Pemetaan Akun.`);
+  }
+  return kode;
+}
+
+/** Akun hasil pemetaan, mis. AKUN.kas() → kode akun kas yang sedang berlaku. */
+export const AKUN = Object.fromEntries(PEMETAAN_AKUN.map((p) => [p.kunci, () => akunDariPengaturan(p)]));
+
+/**
+ * Kelompok akun untuk penyajian laporan (HPP, aset lancar, arus kas, CALK).
+ * Nilainya awalan kode akun, dipisah koma, dan diubah lewat Parameter Sistem
+ * sehingga susunan laporan mengikuti bagan akun yang dipakai koperasi.
+ */
+export const KELOMPOK_AKUN = [
+  { kunci: 'hpp', label: 'Harga pokok penjualan (laba rugi)' },
+  { kunci: 'aset_lancar', label: 'Aset lancar (rasio likuiditas)' },
+  { kunci: 'kewajiban_lancar', label: 'Kewajiban jangka pendek (rasio likuiditas)' },
+  { kunci: 'piutang', label: 'Piutang (CALK)' },
+  { kunci: 'persediaan', label: 'Persediaan (CALK)' },
+  { kunci: 'aset_tetap', label: 'Aset tetap (CALK)' },
+  { kunci: 'arus_investasi', label: 'Arus kas investasi (akun lawan)' },
+  { kunci: 'arus_pendanaan', label: 'Arus kas pendanaan (akun lawan, selain ekuitas)' },
+  { kunci: 'pajak', label: 'Akun pajak (rekap pajak)' },
+];
+
+/** Daftar awalan kode akun untuk satu kelompok laporan. */
+export function awalanKelompok(kunci) {
+  return String(setting(`kelompok.${kunci}`, '') || '')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+}
+
+/** Apakah kode akun termasuk kelompok laporan tertentu. */
+export function termasukKelompok(kode, kunci) {
+  return awalanKelompok(kunci).some((a) => kode === a || kode.startsWith(a));
+}
+
+/** Kode seluruh akun kas & setara kas (ditandai is_kas / is_bank pada bagan akun). */
+export function akunKasBank() {
+  return all('SELECT kode FROM coa WHERE is_kas = 1 OR is_bank = 1').map((r) => r.kode);
+}
+
+/** Memastikan kode akun adalah akun kas/bank yang dapat dijurnal. */
+export function assertAkunKas(kode, label = 'Akun kas/bank') {
+  const a = get('SELECT kode, nama, is_kas, is_bank FROM coa WHERE kode = ?', [kode]);
+  if (!a) throw badRequest(`${label} ${kode} tidak terdaftar dalam bagan akun`);
+  if (!a.is_kas && !a.is_bank) {
+    throw badRequest(`${label} ${kode} - ${a.nama} bukan akun kas/bank`,
+      'Tandai akun sebagai kas atau bank pada Master Data → Bagan Akun bila memang demikian.');
+  }
+  return a;
+}
+
+/**
+ * Akun kas/bank penerima atau pembayar sebuah transaksi.
+ * Urutan: rekening bank terpilih → metode transfer/QRIS → kas.
+ */
+export function akunKasMetode(metode, bank_account_id = null) {
+  if (bank_account_id) {
+    const b = get('SELECT coa_kode, status FROM bank_account WHERE id = ?', [bank_account_id]);
+    if (!b) throw badRequest('Rekening bank tidak ditemukan');
+    if (!b.coa_kode) throw badRequest('Rekening bank belum dipetakan ke akun pada bagan akun');
+    return b.coa_kode;
+  }
+  return ['transfer', 'qris', 'bank'].includes(metode) ? AKUN.bank() : AKUN.kas();
+}
 
 /** Memastikan periode akuntansi tanggal tersebut masih terbuka. */
 export function assertPeriodeTerbuka(tanggal) {
@@ -104,11 +194,11 @@ export function postJournal(j, ctx = null) {
     const nomor = j.nomor || nextNumber(prefixOf(j.tipe), tanggal);
     const { lastInsertRowid: id } = run(
       `INSERT INTO jurnal(nomor, tanggal, tipe, referensi, keterangan, cabang_id, unit_usaha_id,
-                          total_debit, total_kredit, status, dibuat_oleh)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+                          total_debit, total_kredit, status, dibuat_oleh, sumber)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
       [nomor, tanggal, j.tipe || 'umum', j.referensi || null, j.keterangan || null,
         j.cabang_id ?? null, j.unit_usaha_id ?? null, totalD, totalK,
-        j.status || 'posted', ctx?.user?.username || 'sistem'],
+        j.status || 'posted', ctx?.user?.username || 'sistem', j.sumber || 'sistem'],
     );
     lines.forEach((l, i) => {
       run(
@@ -135,14 +225,42 @@ function prefixOf(tipe) {
   }[tipe] || 'JV';
 }
 
+/** Awalan referensi jurnal yang dibentuk otomatis oleh modul (untuk jurnal lama tanpa kolom sumber). */
+const REFERENSI_SISTEM = ['simpanan:', 'pindahbuku:', 'bunga:', 'pinjaman:', 'angsuran:', 'pelunasan:',
+  'restrukturisasi:', 'penjualan:', 'retur:', 'pembelian:', 'hp:', 'aset:', 'disposal:', 'penyusutan:',
+  'maintenance:', 'opname:', 'opname_kas:', 'stok:', 'shu:', 'distribusi:', 'keluar:'];
+
+/** Asal jurnal: 'manual', 'recurring', atau 'sistem'. */
+export function sumberJurnal(j) {
+  if (j.sumber) return j.sumber;
+  if (j.referensi?.startsWith('recurring:')) return 'recurring';
+  if (j.referensi && REFERENSI_SISTEM.some((p) => j.referensi.startsWith(p))) return 'sistem';
+  if (get('SELECT 1 FROM kas_bank WHERE jurnal_id = ?', [j.id])) return 'sistem';
+  return 'manual';
+}
+
 /**
  * Membatalkan jurnal dengan membuat jurnal balik (reversing entry).
  * Jurnal asli tidak dihapus - prinsip audit trail yang tidak dapat disangkal.
+ *
+ * Jurnal yang dibentuk otomatis oleh modul (setoran simpanan, bukti kas,
+ * penjualan, dsb.) tidak boleh dibatalkan langsung dari buku besar: saldo
+ * rekening, stok, atau dokumen sumbernya akan tertinggal. Pembatalannya
+ * lewat dokumen sumber, yang memanggil fungsi ini dengan { sistem: true }.
  */
-export function voidJournal(jurnalId, alasan, ctx) {
+export function voidJournal(jurnalId, alasan, ctx, { sistem = false } = {}) {
   const j = get('SELECT * FROM jurnal WHERE id = ?', [jurnalId]);
   if (!j) throw notFound('Jurnal tidak ditemukan');
   if (j.status === 'void') throw conflict('Jurnal ini sudah dibatalkan');
+  if (String(j.referensi || '').startsWith('void:')) throw conflict('Jurnal balik tidak dapat dibatalkan lagi');
+  // Jurnal penutup hanya menyentuh buku besar, sehingga boleh dibatalkan
+  // langsung (mis. untuk menutup ulang tahun buku sesudah koreksi).
+  if (!sistem && j.tipe !== 'penutup' && sumberJurnal(j) === 'sistem') {
+    throw conflict(`Jurnal ${j.nomor} dibentuk otomatis oleh modul dan tidak dapat dibatalkan dari buku besar`,
+      'Batalkan melalui dokumen sumbernya (mis. bukti kas, transaksi simpanan, retur penjualan) '
+      + 'agar saldo buku pembantu ikut terkoreksi.');
+  }
+  if (!String(alasan || '').trim()) throw badRequest('Alasan pembatalan wajib diisi');
   const lines = all('SELECT * FROM jurnal_detail WHERE jurnal_id = ? ORDER BY urut', [jurnalId]);
 
   return tx(() => {
@@ -153,6 +271,7 @@ export function voidJournal(jurnalId, alasan, ctx) {
       keterangan: `PEMBATALAN ${j.nomor} - ${alasan}`,
       cabang_id: j.cabang_id,
       unit_usaha_id: j.unit_usaha_id,
+      sumber: sumberJurnal(j),
       lines: lines.map((l) => ({ ...l, debit: l.kredit, kredit: l.debit })),
     }, ctx);
     run('UPDATE jurnal SET status = ?, void_alasan = ? WHERE id = ?', ['void', alasan, jurnalId]);
@@ -287,7 +406,7 @@ export function labaRugi(f = {}) {
   const beban = tb.baris.filter((r) => r.tipe === 'beban');
   const totalPendapatan = pendapatan.reduce((s, r) => s + r.saldo, 0);
   const totalBeban = beban.reduce((s, r) => s + r.saldo, 0);
-  const hpp = beban.filter((r) => r.kode.startsWith('5-1')).reduce((s, r) => s + r.saldo, 0);
+  const hpp = beban.filter((r) => termasukKelompok(r.kode, 'hpp')).reduce((s, r) => s + r.saldo, 0);
   const operasional = totalBeban - hpp;
   return {
     periode: { dari: f.dari, sampai: f.sampai },
@@ -353,7 +472,7 @@ export function neraca(f = {}) {
 
 /** Laporan Arus Kas (metode langsung, berbasis mutasi akun kas & bank). */
 export function arusKas(f = {}) {
-  const kasAkun = all("SELECT kode FROM coa WHERE is_kas = 1 OR is_bank = 1").map((r) => r.kode);
+  const kasAkun = akunKasBank();
   if (!kasAkun.length) return { operasi: [], investasi: [], pendanaan: [], saldo_awal: 0, saldo_akhir: 0 };
   const ph = kasAkun.map(() => '?').join(',');
 
@@ -399,10 +518,12 @@ export function arusKas(f = {}) {
    *   investasi - perolehan & pelepasan aset tetap
    *   pendanaan - simpanan anggota, modal, dan pinjaman jangka panjang
    *   operasi   - selebihnya (penjualan, pembelian, beban, jasa pinjaman)
+   * Akun yang masuk kelompok investasi & pendanaan diatur pada Parameter
+   * Sistem (kelompok.arus_investasi, kelompok.arus_pendanaan).
    */
   const klasifikasi = (kode, tipe) => {
-    if (kode.startsWith('1-15') || kode.startsWith('1-16')) return 'investasi';
-    if (tipe === 'ekuitas' || kode.startsWith('2-12') || kode.startsWith('2-2')) return 'pendanaan';
+    if (termasukKelompok(kode, 'arus_investasi')) return 'investasi';
+    if (tipe === 'ekuitas' || termasukKelompok(kode, 'arus_pendanaan')) return 'pendanaan';
     return 'operasi';
   };
 
@@ -468,9 +589,11 @@ export function perubahanEkuitas(f = {}) {
 export function rasioKeuangan(f = {}) {
   const n = neraca(f);
   const lr = labaRugi({ dari: `${(f.sampai || '').slice(0, 4) || new Date().getFullYear()}-01-01`, sampai: f.sampai });
-  const lancar = n.aset.filter((r) => r.kode.startsWith('1-1')).reduce((s, r) => s + r.saldo, 0);
-  const hutangLancar = n.kewajiban.filter((r) => r.kode.startsWith('2-1')).reduce((s, r) => s + r.saldo, 0);
-  const kas = n.aset.filter((r) => r.kode.startsWith('1-11') || r.kode.startsWith('1-12')).reduce((s, r) => s + r.saldo, 0);
+  const kasBank = new Set(akunKasBank());
+  const lancar = n.aset.filter((r) => termasukKelompok(r.kode, 'aset_lancar')).reduce((s, r) => s + r.saldo, 0);
+  const hutangLancar = n.kewajiban.filter((r) => termasukKelompok(r.kode, 'kewajiban_lancar'))
+    .reduce((s, r) => s + r.saldo, 0);
+  const kas = n.aset.filter((r) => kasBank.has(r.kode)).reduce((s, r) => s + r.saldo, 0);
   const piutang = scalar("SELECT COALESCE(SUM(outstanding_pokok),0) FROM pinjaman WHERE status = 'dicairkan'");
   const npl = scalar("SELECT COALESCE(SUM(outstanding_pokok),0) FROM pinjaman WHERE status = 'dicairkan' AND kolektibilitas >= 3");
   const pct = (a, b) => (b ? Number(((a / b) * 100).toFixed(2)) : 0);
@@ -562,4 +685,108 @@ export function jurnalPenutup(tahun, ctx) {
     tanggal: sampai, tipe: 'penutup', referensi: `penutup:${tahun}`,
     keterangan: `Jurnal penutup tahun buku ${tahun}`, lines,
   }, ctx);
+}
+
+// --------------------------- Jurnal berulang ---------------------------
+
+/** Frekuensi jurnal berulang dan jarak antarjadwalnya. */
+export const FREKUENSI_RECURRING = {
+  mingguan: { hari: 7 },
+  bulanan: { bulan: 1 },
+  triwulanan: { bulan: 3 },
+  semesteran: { bulan: 6 },
+  tahunan: { bulan: 12 },
+};
+
+/** Validasi template jurnal berulang: akun sah, seimbang, minimal 2 baris. */
+export function validasiTemplate(lines) {
+  if (!Array.isArray(lines) || lines.length < 2) throw badRequest('Template jurnal minimal 2 baris');
+  let d = 0;
+  let k = 0;
+  const bersih = lines.map((l) => {
+    const baris = { coa_kode: String(l.coa_kode || '').trim(), debit: rupiah(l.debit || 0),
+      kredit: rupiah(l.kredit || 0), keterangan: l.keterangan || null };
+    if (!baris.coa_kode) throw badRequest('Setiap baris template wajib memiliki akun');
+    if (baris.debit < 0 || baris.kredit < 0) throw badRequest('Nilai debit/kredit tidak boleh negatif');
+    if (baris.debit > 0 && baris.kredit > 0) throw badRequest(`Baris akun ${baris.coa_kode} tidak boleh berisi debit dan kredit sekaligus`);
+    assertAkun(baris.coa_kode);
+    d += baris.debit;
+    k += baris.kredit;
+    return baris;
+  }).filter((l) => l.debit || l.kredit);
+  if (d !== k) throw badRequest('Template jurnal tidak seimbang', `Debit ${d.toLocaleString('id-ID')} ≠ kredit ${k.toLocaleString('id-ID')}`);
+  if (d === 0) throw badRequest('Nilai template jurnal tidak boleh nol');
+  return bersih;
+}
+
+function tanggalKe(r, k) {
+  const f = FREKUENSI_RECURRING[r.frekuensi] || FREKUENSI_RECURRING.bulanan;
+  if (f.hari) {
+    const t = new Date(`${r.tanggal_mulai}T00:00:00Z`);
+    t.setUTCDate(t.getUTCDate() + f.hari * k);
+    return t.toISOString().slice(0, 10);
+  }
+  // Dihitung dari tanggal mulai (bukan dari jadwal sebelumnya) supaya jadwal
+  // akhir bulan tidak bergeser 31 → 30 → 28.
+  const [y, m, d] = r.tanggal_mulai.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1 + f.bulan * k, 1));
+  const akhir = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(d, akhir));
+  return target.toISOString().slice(0, 10);
+}
+
+/** Tanggal jadwal berikutnya yang belum diposting (null bila sudah berakhir). */
+export function jadwalBerikutnya(r) {
+  for (let k = 0; k < 5000; k++) {
+    const t = tanggalKe(r, k);
+    if (r.tanggal_akhir && t > r.tanggal_akhir) return null;
+    if (!r.terakhir_dibuat || t > r.terakhir_dibuat) return t;
+  }
+  return null;
+}
+
+/**
+ * Memposting seluruh jadwal jurnal berulang yang sudah jatuh tempo sampai
+ * tanggal tertentu. Idempoten: jadwal yang sudah diposting dilewati.
+ * Kegagalan satu template (mis. periode ditutup) tidak menghentikan yang lain.
+ */
+export function jalankanRecurring({ sampai, id = null } = {}, ctx = null) {
+  const batas = sampai || new Date().toISOString().slice(0, 10);
+  const daftar = id
+    ? all('SELECT * FROM jurnal_recurring WHERE id = ?', [id])
+    : all("SELECT * FROM jurnal_recurring WHERE status = 'aktif' ORDER BY id");
+  const hasil = [];
+  for (const r of daftar) {
+    const dibuat = [];
+    let galat = null;
+    let rr = { ...r };
+    try {
+      for (let n = 0; n < 400; n++) {
+        const due = jadwalBerikutnya(rr);
+        if (!due || due > batas) break;
+        tx(() => {
+          const ada = get("SELECT id FROM jurnal WHERE referensi = ? AND tanggal = ? AND status = 'posted'",
+            [`recurring:${r.id}`, due]);
+          if (!ada) {
+            const j = postJournal({
+              tanggal: due, tipe: 'umum', referensi: `recurring:${r.id}`, sumber: 'recurring',
+              keterangan: `${r.nama} (jurnal berulang ${due})`,
+              lines: JSON.parse(r.template),
+            }, ctx);
+            dibuat.push({ tanggal: due, nomor: j.nomor, jurnal_id: j.id });
+          }
+          run('UPDATE jurnal_recurring SET terakhir_dibuat = ? WHERE id = ?', [due, r.id]);
+        });
+        rr = { ...rr, terakhir_dibuat: due };
+      }
+    } catch (err) {
+      galat = err.message;
+    }
+    hasil.push({ id: r.id, nama: r.nama, dibuat, galat, jadwal_berikutnya: jadwalBerikutnya(rr) });
+  }
+  return {
+    sampai: batas,
+    jumlah_jurnal: hasil.reduce((s, h) => s + h.dibuat.length, 0),
+    template: hasil,
+  };
 }

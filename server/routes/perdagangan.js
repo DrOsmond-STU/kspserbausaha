@@ -29,13 +29,14 @@ router.get('/api/persediaan/kartu-stok', 'persediaan.view', ({ query }) => {
   };
 });
 
-router.post('/api/persediaan/penyesuaian', 'persediaan.update', ({ body, ctx }) => inv.mutasi({
+router.post('/api/persediaan/penyesuaian', 'persediaan.update', ({ body, ctx }) => inv.penyesuaianStok({
   barang_id: num(body, 'barang_id', { min: 1 }),
   gudang_id: num(body, 'gudang_id', { min: 1 }),
   tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
   jenis: oneOf(body, 'jenis', ['masuk', 'keluar'], { required: false, dflt: 'masuk' }),
   qty: num(body, 'qty', { integer: false, label: 'Kuantitas' }),
   harga: num(body, 'harga', { required: false, min: 0 }),
+  akun_lawan: str(body, 'akun_lawan', { required: false, max: 20 }),
   keterangan: str(body, 'keterangan', { required: false, max: 200 }),
 }, ctx));
 
@@ -110,6 +111,7 @@ router.post('/api/pos/jual', 'pos.create', ({ body, ctx }) => trade.jual({
   poin_dipakai: num(body, 'poin_dipakai', { required: false, min: 0 }),
   metode_bayar: oneOf(body, 'metode_bayar',
     ['tunai', 'qris', 'transfer', 'piutang', 'potong_simpanan'], { required: false, dflt: 'tunai' }),
+  bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
 }, ctx));
 
 router.get('/api/pos/rekap', 'pos.view', ({ query, ctx }) => trade.rekapKasir({
@@ -122,6 +124,7 @@ router.post('/api/pos/retur', 'pos.update', ({ body, ctx }) => trade.returPenjua
   tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
   items: body.items || null,
   alasan: str(body, 'alasan', { required: false, max: 300 }),
+  bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
 }, ctx));
 
 // ---------------------------- Penjualan -----------------------------
@@ -208,8 +211,22 @@ router.post('/api/pembelian', 'pembelian.create', ({ body, ctx }) => trade.buatP
   items: body.items || [],
   diskon: num(body, 'diskon', { required: false, min: 0 }),
   pajak: num(body, 'pajak', { required: false, min: 0 }),
-  status: body.status,
+  status: oneOf(body, 'status', ['draft', 'diajukan'], { required: false, dflt: 'draft' }),
 }, ctx));
+
+router.put('/api/pembelian/:id', 'pembelian.update', ({ params, body, ctx }) => trade.ubahPembelian(idParam(params), {
+  tanggal: date(body, 'tanggal', { required: false, dflt: null }),
+  supplier_id: body.supplier_id !== undefined ? (body.supplier_id ? Number(body.supplier_id) : null) : undefined,
+  gudang_id: body.gudang_id !== undefined ? (body.gudang_id ? Number(body.gudang_id) : null) : undefined,
+  unit_usaha_id: body.unit_usaha_id !== undefined ? (body.unit_usaha_id ? Number(body.unit_usaha_id) : null) : undefined,
+  cabang_id: body.cabang_id !== undefined ? (body.cabang_id ? Number(body.cabang_id) : null) : undefined,
+  items: body.items || [],
+  diskon: body.diskon !== undefined ? num(body, 'diskon', { required: false, min: 0 }) : undefined,
+  pajak: body.pajak !== undefined ? num(body, 'pajak', { required: false, min: 0 }) : undefined,
+}, ctx));
+
+router.post('/api/pembelian/:id/batal', 'pembelian.update', ({ params, body, ctx }) =>
+  trade.batalPembelian(idParam(params), str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' }), ctx));
 
 router.post('/api/pembelian/:id/terima', 'pembelian.update', ({ params, body, ctx }) =>
   trade.terimaBarang({
@@ -218,6 +235,7 @@ router.post('/api/pembelian/:id/terima', 'pembelian.update', ({ params, body, ct
     items: body.items || null,
     metode_bayar: oneOf(body, 'metode_bayar', ['hutang', 'tunai', 'transfer'],
       { required: false, dflt: 'hutang' }),
+    bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
   }, ctx));
 
 router.get('/api/pembelian/evaluasi/supplier', 'pembelian.view', () =>
@@ -258,6 +276,7 @@ router.post('/api/hutang-piutang/bayar', 'kas.create', ({ body, ctx }) => trade.
   tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
   nominal: num(body, 'nominal', { min: 1 }),
   metode: oneOf(body, 'metode', ['tunai', 'transfer'], { required: false, dflt: 'tunai' }),
+  bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
 }, ctx));
 
 export default router;

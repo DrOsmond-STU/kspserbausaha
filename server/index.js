@@ -16,6 +16,7 @@ import {
   COOKIE_NAME, parseCookies, requireUser, sessionCookie, clearCookie, purgeExpiredSessions,
 } from './lib/auth.js';
 import { pastikanDataAwal } from './seed.js';
+import { jalankanRecurring } from './services/accounting.js';
 
 import authRoutes from './routes/auth.js';
 import dashboardRoutes from './routes/dashboard.js';
@@ -200,6 +201,26 @@ setInterval(() => {
 
 migrate();
 pastikanDataAwal();
+
+/**
+ * Jurnal berulang (sewa, amortisasi, dsb.) diposting otomatis begitu jatuh
+ * tempo - saat server menyala lalu setiap jam. Dapat dimatikan lewat
+ * pengaturan akuntansi.recurring_otomatis = 0.
+ */
+function jurnalBerulangOtomatis() {
+  if (setting('akuntansi.recurring_otomatis', '1') !== '1') return;
+  try {
+    const h = jalankanRecurring();
+    if (h.jumlah_jurnal) console.log(`[ECMS] ${h.jumlah_jurnal} jurnal berulang diposting otomatis`);
+    for (const t of h.template.filter((x) => x.galat)) {
+      console.warn(`[ECMS] Jurnal berulang "${t.nama}" gagal diposting: ${t.galat}`);
+    }
+  } catch (err) {
+    console.error('[ECMS] Jurnal berulang otomatis gagal:', err);
+  }
+}
+jurnalBerulangOtomatis();
+setInterval(jurnalBerulangOtomatis, 60 * 60 * 1000).unref();
 
 server.listen(PORT, HOST, () => {
   console.log('');

@@ -7,11 +7,37 @@
 import { all, get, run, scalar, nextNumber, tx, settingNum } from '../db.js';
 import { badRequest, notFound, conflict } from '../lib/http.js';
 import { logAudit } from '../lib/audit.js';
-import { postJournal, AKUN } from './accounting.js';
-import { mutasi, stokBarang } from './inventory.js';
+import { postJournal, AKUN, akunKasMetode } from './accounting.js';
+import { mutasi, stokBarang, akunBarang, tambahNilai } from './inventory.js';
 import { rupiah, today, addDays } from '../lib/util.js';
 
 // ------------------------------ PENJUALAN ------------------------------
+
+/**
+ * Membagi `total` ke beberapa akun sebanding bobotnya, dengan sisa
+ * pembulatan dititipkan pada akun berbobot terbesar agar jumlahnya persis.
+ * @param {Map<string, number>} bobot kode akun → bobot
+ * @returns {Map<string, number>}
+ */
+function alokasi(bobot, total) {
+  const jumlah = [...bobot.values()].reduce((s, v) => s + v, 0);
+  const hasil = new Map();
+  if (!bobot.size) return hasil;
+  for (const [k, v] of bobot) hasil.set(k, jumlah ? rupiah(total * v / jumlah) : 0);
+  const selisih = total - [...hasil.values()].reduce((s, v) => s + v, 0);
+  if (selisih) {
+    const terbesar = [...bobot.entries()].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+    hasil.set(terbesar, hasil.get(terbesar) + selisih);
+  }
+  return hasil;
+}
+
+/** Rekening simpanan sukarela aktif seorang anggota (untuk potong simpanan). */
+function rekeningSukarela(anggota_id) {
+  return get(
+    `SELECT r.*, p.coa_kode FROM rekening_simpanan r JOIN produk_simpanan p ON p.id = r.produk_id
+      WHERE r.anggota_id = ? AND p.jenis = 'sukarela' AND r.status = 'aktif' ORDER BY r.id LIMIT 1`, [anggota_id]);
+}
 
 /**
  * Transaksi penjualan / POS.
@@ -101,33 +127,39 @@ export function jual(data, ctx) {
     }
 
     // ---- Jurnal ----
-    const akunTerima = metode === 'piutang' ? AKUN.piutang_usaha()
-      : metode === 'transfer' || metode === 'qris' ? AKUN.bank() : AKUN.kas();
+    // Pendapatan, HPP, dan persediaan dibukukan ke akun masing-masing barang
+    // (master barang), atau ke pemetaan di Parameter Sistem bila kosong.
     const lines = [];
+    let rekPotong = null;
     if (metode === 'potong_simpanan') {
       if (!anggota) throw badRequest('Pemotongan simpanan hanya berlaku untuk anggota');
-      const rek = get(
-        `SELECT r.*, p.coa_kode FROM rekening_simpanan r JOIN produk_simpanan p ON p.id = r.produk_id
-          WHERE r.anggota_id = ? AND p.jenis = 'sukarela' AND r.status = 'aktif' LIMIT 1`, [anggota.id]);
-      if (!rek) throw badRequest('Anggota belum memiliki rekening simpanan sukarela');
-      if (rek.saldo - rek.saldo_blokir < total) throw conflict('Saldo simpanan sukarela tidak mencukupi');
-      run('UPDATE rekening_simpanan SET saldo = saldo - ? WHERE id = ?', [total, rek.id]);
-      run(`INSERT INTO transaksi_simpanan(nomor, rekening_id, tanggal, jenis, debit, saldo_akhir,
-             keterangan, metode, petugas)
-           VALUES(?,?,?,'penarikan',?,?,?,'pindah_buku',?)`,
-      [nextNumber('TSP', tgl), rek.id, tgl, total, rek.saldo - total,
-        `Pembayaran belanja ${nomor}`, ctx?.user?.username || 'kasir']);
-      lines.push({ coa_kode: rek.coa_kode, debit: total, anggota_id: anggota.id,
+      rekPotong = rekeningSukarela(anggota.id);
+      if (!rekPotong) throw badRequest('Anggota belum memiliki rekening simpanan sukarela');
+      if (rekPotong.saldo - rekPotong.saldo_blokir < total) throw conflict('Saldo simpanan sukarela tidak mencukupi');
+      lines.push({ coa_kode: rekPotong.coa_kode, debit: total, anggota_id: anggota.id,
         keterangan: `Potong simpanan untuk ${nomor}` });
     } else {
+      const akunTerima = metode === 'piutang' ? AKUN.piutang_usaha() : akunKasMetode(metode, data.bank_account_id);
       lines.push({ coa_kode: akunTerima, debit: total, anggota_id: data.anggota_id || null,
         keterangan: `Penjualan ${nomor}` });
     }
-    lines.push({ coa_kode: AKUN.penjualan(), kredit: total - pajak, keterangan: `Penjualan ${nomor}` });
+    const bobotPendapatan = new Map();
+    const hppPerAkun = new Map();
+    const sediaanPerAkun = new Map();
+    for (const b of baris) {
+      const akun = akunBarang(b.barang);
+      tambahNilai(bobotPendapatan, akun.penjualan, b.subtotal);
+      const nilaiHpp = rupiah(b.hpp_satuan * b.qty);
+      tambahNilai(hppPerAkun, akun.hpp, nilaiHpp);
+      tambahNilai(sediaanPerAkun, akun.persediaan, nilaiHpp);
+    }
+    for (const [kode, nilai] of alokasi(bobotPendapatan, total - pajak)) {
+      if (nilai) lines.push({ coa_kode: kode, kredit: nilai, keterangan: `Penjualan ${nomor}` });
+    }
     if (pajak > 0) lines.push({ coa_kode: AKUN.hutang_pajak(), kredit: pajak, keterangan: 'PPN keluaran' });
-    if (totalHpp > 0) {
-      lines.push({ coa_kode: AKUN.hpp(), debit: totalHpp, keterangan: `HPP ${nomor}` });
-      lines.push({ coa_kode: AKUN.persediaan(), kredit: totalHpp, keterangan: `Pengurangan persediaan ${nomor}` });
+    for (const [kode, nilai] of hppPerAkun) lines.push({ coa_kode: kode, debit: nilai, keterangan: `HPP ${nomor}` });
+    for (const [kode, nilai] of sediaanPerAkun) {
+      lines.push({ coa_kode: kode, kredit: nilai, keterangan: `Pengurangan persediaan ${nomor}` });
     }
     const jurnal = postJournal({
       tanggal: tgl, tipe: 'penjualan', referensi: `penjualan:${id}`,
@@ -135,6 +167,14 @@ export function jual(data, ctx) {
       cabang_id: data.cabang_id, unit_usaha_id: data.unit_usaha_id, lines,
     }, ctx);
     run('UPDATE penjualan SET jurnal_id = ? WHERE id = ?', [jurnal.id, id]);
+    if (rekPotong) {
+      run('UPDATE rekening_simpanan SET saldo = saldo - ? WHERE id = ?', [total, rekPotong.id]);
+      run(`INSERT INTO transaksi_simpanan(nomor, rekening_id, tanggal, jenis, debit, saldo_akhir,
+             keterangan, jurnal_id, metode, petugas)
+           VALUES(?,?,?,'penarikan',?,?,?,?,'pindah_buku',?)`,
+      [nextNumber('TSP', tgl), rekPotong.id, tgl, total, rekPotong.saldo - total,
+        `Pembayaran belanja ${nomor}`, jurnal.id, ctx?.user?.username || 'kasir']);
+    }
 
     // ---- Piutang & loyalty ----
     if (metode === 'piutang') {
@@ -180,40 +220,101 @@ export function jual(data, ctx) {
   });
 }
 
-/** Retur penjualan: barang kembali ke gudang, jurnal dibalik. */
-export function returPenjualan({ penjualan_id, tanggal, items, alasan }, ctx) {
+/**
+ * Retur penjualan: barang kembali ke gudang dan jurnal penjualannya dibalik
+ * secara proporsional (pendapatan, PPN, HPP, persediaan). Dana dikembalikan
+ * lewat jalur pembayaran semula: kas/bank, pengurangan piutang, atau
+ * dikreditkan kembali ke simpanan sukarela.
+ */
+export function returPenjualan({ penjualan_id, tanggal, items, alasan, bank_account_id }, ctx) {
   const p = get('SELECT * FROM penjualan WHERE id = ?', [penjualan_id]);
   if (!p) throw notFound('Transaksi penjualan tidak ditemukan');
   if (p.status === 'retur') throw conflict('Transaksi ini sudah pernah diretur seluruhnya');
   const tgl = tanggal || today();
 
   return tx(() => {
-    let nilaiRetur = 0;
-    let hppRetur = 0;
     const detail = all('SELECT * FROM penjualan_detail WHERE penjualan_id = ?', [penjualan_id]);
-    const target = items?.length ? items : detail.map((d) => ({ barang_id: d.barang_id, qty: d.qty }));
+    const sudahRetur = new Map(all(
+      `SELECT barang_id, SUM(qty) AS qty FROM mutasi_stok WHERE referensi = ? AND jenis = 'retur_masuk'
+        GROUP BY barang_id`, [`retur:${penjualan_id}`]).map((r) => [r.barang_id, r.qty]));
+    const target = items?.length ? items
+      : detail.map((d) => ({ barang_id: d.barang_id, qty: d.qty - (sudahRetur.get(d.barang_id) || 0) }))
+        .filter((x) => x.qty > 0);
+    if (!target.length) throw conflict('Seluruh barang pada transaksi ini sudah diretur');
 
+    let nilaiItem = 0;
+    const bobotPendapatan = new Map();
+    const hppPerAkun = new Map();
+    const sediaanPerAkun = new Map();
     for (const it of target) {
       const d = detail.find((x) => x.barang_id === Number(it.barang_id));
       if (!d) throw badRequest(`Barang id ${it.barang_id} tidak ada pada transaksi ini`);
       const qty = Number(it.qty);
-      if (!(qty > 0) || qty > d.qty) throw badRequest('Kuantitas retur tidak valid');
+      const sisa = d.qty - (sudahRetur.get(d.barang_id) || 0);
+      if (!(qty > 0) || qty > sisa) {
+        throw badRequest('Kuantitas retur tidak valid', `Sisa yang dapat diretur: ${sisa}`);
+      }
+      const barang = get('SELECT * FROM barang WHERE id = ?', [d.barang_id]);
+      const akun = akunBarang(barang);
       const nilai = rupiah((d.subtotal / d.qty) * qty);
-      nilaiRetur += nilai;
-      hppRetur += rupiah(d.hpp_satuan * qty);
+      const hpp = rupiah(d.hpp_satuan * qty);
+      nilaiItem += nilai;
+      tambahNilai(bobotPendapatan, akun.penjualan, nilai);
+      tambahNilai(hppPerAkun, akun.hpp, hpp);
+      tambahNilai(sediaanPerAkun, akun.persediaan, hpp);
       mutasi({ barang_id: d.barang_id, gudang_id: p.gudang_id, tanggal: tgl, jenis: 'retur_masuk',
         qty, harga: d.hpp_satuan, referensi: `retur:${penjualan_id}`, keterangan: `Retur ${p.nomor}` }, ctx);
     }
 
-    const akunBayar = p.metode_bayar === 'piutang' ? AKUN.piutang_usaha()
-      : p.metode_bayar === 'transfer' || p.metode_bayar === 'qris' ? AKUN.bank() : AKUN.kas();
-    const lines = [
-      { coa_kode: AKUN.penjualan(), debit: nilaiRetur, keterangan: `Retur penjualan ${p.nomor}` },
-      { coa_kode: akunBayar, kredit: nilaiRetur, keterangan: `Pengembalian dana retur ${p.nomor}` },
-    ];
-    if (hppRetur > 0) {
-      lines.push({ coa_kode: AKUN.persediaan(), debit: hppRetur, keterangan: 'Barang retur masuk gudang' });
-      lines.push({ coa_kode: AKUN.hpp(), kredit: hppRetur, keterangan: 'Koreksi HPP retur' });
+    // Nilai yang dikembalikan sebanding porsi barang terhadap subtotal nota,
+    // sehingga diskon nota, poin, dan PPN ikut terkoreksi secara proporsional.
+    const porsi = p.subtotal > 0 ? nilaiItem / p.subtotal : 1;
+    const nilaiRetur = Math.min(rupiah(p.total * porsi), p.total);
+    const pajakRetur = Math.min(rupiah(p.pajak * porsi), nilaiRetur);
+    const hppRetur = [...hppPerAkun.values()].reduce((a, b) => a + b, 0);
+
+    const lines = [];
+    for (const [kode, nilai] of alokasi(bobotPendapatan, nilaiRetur - pajakRetur)) {
+      if (nilai) lines.push({ coa_kode: kode, debit: nilai, keterangan: `Retur penjualan ${p.nomor}` });
+    }
+    if (pajakRetur > 0) lines.push({ coa_kode: AKUN.hutang_pajak(), debit: pajakRetur, keterangan: 'Koreksi PPN keluaran retur' });
+
+    // Sisi pengembalian dana mengikuti cara bayar semula.
+    let rekSimpanan = null;
+    if (p.metode_bayar === 'piutang') {
+      const hp = get("SELECT * FROM hutang_piutang WHERE jenis = 'piutang' AND referensi = ?", [`penjualan:${penjualan_id}`]);
+      const sisaPiutang = hp ? hp.nominal - hp.terbayar : 0;
+      const kurangiPiutang = Math.min(nilaiRetur, Math.max(0, sisaPiutang));
+      if (kurangiPiutang > 0) {
+        lines.push({ coa_kode: AKUN.piutang_usaha(), kredit: kurangiPiutang, anggota_id: p.anggota_id,
+          keterangan: `Pengurangan piutang retur ${p.nomor}` });
+        const nominalBaru = hp.nominal - kurangiPiutang;
+        run('UPDATE hutang_piutang SET nominal = ?, status = ? WHERE id = ?',
+          [nominalBaru, hp.terbayar >= nominalBaru ? 'lunas' : 'terbuka', hp.id]);
+      }
+      if (nilaiRetur - kurangiPiutang > 0) {
+        lines.push({ coa_kode: akunKasMetode('tunai', bank_account_id), kredit: nilaiRetur - kurangiPiutang,
+          keterangan: `Pengembalian dana retur ${p.nomor}` });
+      }
+    } else if (p.metode_bayar === 'potong_simpanan') {
+      rekSimpanan = get(
+        `SELECT r.*, pr.coa_kode FROM transaksi_simpanan t JOIN rekening_simpanan r ON r.id = t.rekening_id
+           JOIN produk_simpanan pr ON pr.id = r.produk_id
+          WHERE (t.jurnal_id = ? OR t.keterangan = ?) ORDER BY t.id LIMIT 1`,
+        [p.jurnal_id, `Pembayaran belanja ${p.nomor}`])
+        || (p.anggota_id ? rekeningSukarela(p.anggota_id) : null);
+      if (!rekSimpanan) throw conflict('Rekening simpanan pembayar tidak ditemukan untuk menampung dana retur');
+      lines.push({ coa_kode: rekSimpanan.coa_kode, kredit: nilaiRetur, anggota_id: rekSimpanan.anggota_id,
+        keterangan: `Pengembalian dana retur ${p.nomor} ke simpanan` });
+    } else {
+      lines.push({ coa_kode: akunKasMetode(p.metode_bayar, bank_account_id), kredit: nilaiRetur,
+        keterangan: `Pengembalian dana retur ${p.nomor}` });
+    }
+    for (const [kode, nilai] of sediaanPerAkun) {
+      if (nilai) lines.push({ coa_kode: kode, debit: nilai, keterangan: 'Barang retur masuk gudang' });
+    }
+    for (const [kode, nilai] of hppPerAkun) {
+      if (nilai) lines.push({ coa_kode: kode, kredit: nilai, keterangan: 'Koreksi HPP retur' });
     }
     const jurnal = postJournal({
       tanggal: tgl, tipe: 'penjualan', referensi: `retur:${penjualan_id}`,
@@ -221,11 +322,24 @@ export function returPenjualan({ penjualan_id, tanggal, items, alasan }, ctx) {
       cabang_id: p.cabang_id, unit_usaha_id: p.unit_usaha_id, lines,
     }, ctx);
 
-    const returPenuh = nilaiRetur >= p.total;
+    if (rekSimpanan && nilaiRetur > 0) {
+      const saldo = scalar('SELECT saldo FROM rekening_simpanan WHERE id = ?', [rekSimpanan.id]);
+      run('UPDATE rekening_simpanan SET saldo = ? WHERE id = ?', [saldo + nilaiRetur, rekSimpanan.id]);
+      run(`INSERT INTO transaksi_simpanan(nomor, rekening_id, tanggal, jenis, kredit, saldo_akhir,
+             keterangan, jurnal_id, metode, petugas)
+           VALUES(?,?,?,'setoran',?,?,?,?,'pindah_buku',?)`,
+      [nextNumber('TSP', tgl), rekSimpanan.id, tgl, nilaiRetur, saldo + nilaiRetur,
+        `Pengembalian dana retur ${p.nomor}`, jurnal.id, ctx?.user?.username || 'kasir']);
+    }
+
+    const sisaQty = detail.reduce((s, d) => s + d.qty, 0)
+      - scalar(`SELECT COALESCE(SUM(qty),0) FROM mutasi_stok WHERE referensi = ? AND jenis = 'retur_masuk'`,
+        [`retur:${penjualan_id}`]);
+    const returPenuh = sisaQty <= 0;
     if (returPenuh) run("UPDATE penjualan SET status = 'retur' WHERE id = ?", [penjualan_id]);
     logAudit(ctx, { aksi: 'update', modul: 'penjualan', entitas_id: penjualan_id,
       keterangan: `Retur ${p.nomor} senilai Rp ${nilaiRetur.toLocaleString('id-ID')}: ${alasan || '-'}` });
-    return { nilai_retur: nilaiRetur, hpp_retur: hppRetur, retur_penuh: returPenuh, jurnal };
+    return { nilai_retur: nilaiRetur, pajak_retur: pajakRetur, hpp_retur: hppRetur, retur_penuh: returPenuh, jurnal };
   });
 }
 
@@ -280,12 +394,80 @@ export function buatPembelian(data, ctx) {
   });
 }
 
+/** Status pembelian yang masih dapat diubah / dibatalkan (belum ada barang diterima). */
+const PEMBELIAN_TERBUKA = ['draft', 'diajukan', 'disetujui'];
+
+function pembelianBelumDiterima(pb) {
+  if (!PEMBELIAN_TERBUKA.includes(pb.status)) {
+    throw conflict(`Dokumen ${pb.nomor} berstatus "${pb.status}" dan tidak dapat diubah`);
+  }
+  if (scalar('SELECT COALESCE(SUM(qty_diterima),0) FROM pembelian_detail WHERE pembelian_id = ?', [pb.id]) > 0) {
+    throw conflict(`Sebagian barang pada ${pb.nomor} sudah diterima sehingga dokumen tidak dapat diubah`);
+  }
+}
+
+/** Mengubah dokumen pembelian yang belum menerima barang (belum ada jurnal). */
+export function ubahPembelian(id, data, ctx) {
+  const pb = get('SELECT * FROM pembelian WHERE id = ?', [id]);
+  if (!pb) throw notFound('Dokumen pembelian tidak ditemukan');
+  pembelianBelumDiterima(pb);
+  const items = data.items || [];
+  if (!items.length) throw badRequest('Dokumen pembelian minimal berisi 1 barang');
+  const supplierId = data.supplier_id !== undefined ? (data.supplier_id || null) : pb.supplier_id;
+  const supplier = supplierId ? get('SELECT * FROM supplier WHERE id = ?', [supplierId]) : null;
+  if (supplierId && !supplier) throw notFound('Supplier tidak ditemukan');
+  const tgl = data.tanggal || pb.tanggal;
+
+  return tx(() => {
+    let subtotal = 0;
+    run('DELETE FROM pembelian_detail WHERE pembelian_id = ?', [id]);
+    for (const it of items) {
+      const barang = get('SELECT * FROM barang WHERE id = ?', [it.barang_id]);
+      if (!barang) throw notFound(`Barang id ${it.barang_id} tidak ditemukan`);
+      const qty = Number(it.qty);
+      const harga = rupiah(it.harga);
+      if (!(qty > 0)) throw badRequest(`Kuantitas ${barang.nama} harus lebih besar dari nol`);
+      if (harga < 0) throw badRequest(`Harga ${barang.nama} tidak boleh negatif`);
+      const diskon = rupiah(it.diskon || 0);
+      const sub = rupiah(qty * harga - diskon);
+      subtotal += sub;
+      run(`INSERT INTO pembelian_detail(pembelian_id, barang_id, qty, harga, diskon, subtotal)
+           VALUES(?,?,?,?,?,?)`, [id, barang.id, qty, harga, diskon, sub]);
+    }
+    const diskonNota = rupiah(data.diskon ?? pb.diskon ?? 0);
+    const pajak = rupiah(data.pajak ?? pb.pajak ?? 0);
+    const total = subtotal - diskonNota + pajak;
+    run(`UPDATE pembelian SET tanggal = ?, supplier_id = ?, gudang_id = ?, unit_usaha_id = ?, cabang_id = ?,
+           subtotal = ?, diskon = ?, pajak = ?, total = ?, jatuh_tempo = ? WHERE id = ?`,
+    [tgl, supplierId, data.gudang_id !== undefined ? (data.gudang_id || null) : pb.gudang_id,
+      data.unit_usaha_id !== undefined ? (data.unit_usaha_id || null) : pb.unit_usaha_id,
+      data.cabang_id !== undefined ? (data.cabang_id || null) : pb.cabang_id,
+      subtotal, diskonNota, pajak, total, addDays(tgl, supplier?.termin_hari ?? 0), id]);
+    const sesudah = get('SELECT * FROM pembelian WHERE id = ?', [id]);
+    logAudit(ctx, { aksi: 'update', modul: 'pembelian', entitas_id: id,
+      keterangan: `Dokumen ${pb.nomor} diubah (total Rp ${total.toLocaleString('id-ID')})`, before: pb, after: sesudah });
+    return sesudah;
+  });
+}
+
+/** Membatalkan dokumen pembelian yang belum menerima barang. */
+export function batalPembelian(id, alasan, ctx) {
+  const pb = get('SELECT * FROM pembelian WHERE id = ?', [id]);
+  if (!pb) throw notFound('Dokumen pembelian tidak ditemukan');
+  pembelianBelumDiterima(pb);
+  if (!String(alasan || '').trim()) throw badRequest('Alasan pembatalan wajib diisi');
+  run("UPDATE pembelian SET status = 'batal', alasan_batal = ? WHERE id = ?", [alasan, id]);
+  logAudit(ctx, { aksi: 'void', modul: 'pembelian', entitas_id: id,
+    keterangan: `Dokumen ${pb.nomor} dibatalkan: ${alasan}`, before: pb });
+  return get('SELECT * FROM pembelian WHERE id = ?', [id]);
+}
+
 /**
  * Penerimaan barang atas dokumen pembelian.
  *
  * Jurnal:  D Persediaan (+ PPN Masukan)   K Hutang Usaha / Kas
  */
-export function terimaBarang({ pembelian_id, tanggal, items, metode_bayar = 'hutang' }, ctx) {
+export function terimaBarang({ pembelian_id, tanggal, items, metode_bayar = 'hutang', bank_account_id }, ctx) {
   const pb = get('SELECT * FROM pembelian WHERE id = ?', [pembelian_id]);
   if (!pb) throw notFound('Dokumen pembelian tidak ditemukan');
   if (['selesai', 'batal'].includes(pb.status)) throw conflict(`Dokumen berstatus "${pb.status}"`);
@@ -297,6 +479,7 @@ export function terimaBarang({ pembelian_id, tanggal, items, metode_bayar = 'hut
     const target = items?.length ? items
       : detail.map((d) => ({ detail_id: d.id, qty: d.qty - d.qty_diterima }));
     let nilaiTerima = 0;
+    const sediaanPerAkun = new Map();
 
     for (const it of target) {
       const d = detail.find((x) => x.id === Number(it.detail_id))
@@ -311,6 +494,8 @@ export function terimaBarang({ pembelian_id, tanggal, items, metode_bayar = 'hut
       }
       const hargaNetto = rupiah(d.subtotal / d.qty);
       nilaiTerima += rupiah(hargaNetto * qty);
+      tambahNilai(sediaanPerAkun, akunBarang(get('SELECT * FROM barang WHERE id = ?', [d.barang_id])).persediaan,
+        rupiah(hargaNetto * qty));
       mutasi({ barang_id: d.barang_id, gudang_id: pb.gudang_id, tanggal: tgl, jenis: 'masuk',
         qty, harga: hargaNetto, batch: it.batch, serial_number: it.serial_number, expired: it.expired,
         referensi: `pembelian:${pembelian_id}`, keterangan: `Penerimaan ${pb.nomor}` }, ctx);
@@ -320,11 +505,11 @@ export function terimaBarang({ pembelian_id, tanggal, items, metode_bayar = 'hut
 
     const pajakProporsi = pb.subtotal > 0 ? rupiah(pb.pajak * nilaiTerima / pb.subtotal) : 0;
     const totalTagih = nilaiTerima + pajakProporsi;
-    const akunLawan = metode_bayar === 'tunai' ? AKUN.kas()
-      : metode_bayar === 'transfer' ? AKUN.bank() : AKUN.hutang_usaha();
-    const lines = [{ coa_kode: AKUN.persediaan(), debit: nilaiTerima, keterangan: `Penerimaan ${pb.nomor}` }];
+    const akunLawan = metode_bayar === 'hutang' ? AKUN.hutang_usaha() : akunKasMetode(metode_bayar, bank_account_id);
+    const lines = [...sediaanPerAkun].map(([kode, nilai]) =>
+      ({ coa_kode: kode, debit: nilai, keterangan: `Penerimaan ${pb.nomor}` }));
     if (pajakProporsi > 0) {
-      lines.push({ coa_kode: AKUN.hutang_pajak(), debit: pajakProporsi, keterangan: 'PPN masukan' });
+      lines.push({ coa_kode: AKUN.ppn_masukan(), debit: pajakProporsi, keterangan: 'PPN masukan' });
     }
     lines.push({ coa_kode: akunLawan, kredit: totalTagih, keterangan: `Pembelian ${pb.nomor}` });
 
@@ -355,7 +540,7 @@ export function terimaBarang({ pembelian_id, tanggal, items, metode_bayar = 'hut
 }
 
 /** Pembayaran hutang / penerimaan piutang. */
-export function bayarHutangPiutang({ id, tanggal, nominal, metode = 'tunai' }, ctx) {
+export function bayarHutangPiutang({ id, tanggal, nominal, metode = 'tunai', bank_account_id }, ctx) {
   const hp = get('SELECT * FROM hutang_piutang WHERE id = ?', [id]);
   if (!hp) throw notFound('Data hutang/piutang tidak ditemukan');
   if (hp.status === 'lunas') throw conflict('Tagihan ini sudah lunas');
@@ -364,7 +549,7 @@ export function bayarHutangPiutang({ id, tanggal, nominal, metode = 'tunai' }, c
   if (nom <= 0) throw badRequest('Nominal pembayaran harus lebih besar dari nol');
   if (nom > sisa) throw badRequest(`Nominal melebihi sisa tagihan Rp ${sisa.toLocaleString('id-ID')}`);
   const tgl = tanggal || today();
-  const akunKas = metode === 'transfer' ? AKUN.bank() : AKUN.kas();
+  const akunKas = akunKasMetode(metode, bank_account_id);
 
   return tx(() => {
     const lines = hp.jenis === 'hutang'

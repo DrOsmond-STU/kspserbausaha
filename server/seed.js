@@ -34,6 +34,7 @@ const COA = [
   ['1-1319', 'Cadangan Kerugian Piutang', 'aset', 'D', '1-1', 3, 1],
   ['1-1401', 'Persediaan Barang Dagang', 'aset', 'D', '1-1', 3, 1],
   ['1-1501', 'Biaya Dibayar di Muka', 'aset', 'D', '1-1', 3, 1],
+  ['1-1502', 'PPN Masukan', 'aset', 'D', '1-1', 3, 1],
   ['1-16', 'Aset Tetap', 'aset', 'D', '1', 2, 0],
   ['1-1601', 'Tanah', 'aset', 'D', '1-16', 3, 1],
   ['1-1602', 'Bangunan', 'aset', 'D', '1-16', 3, 1],
@@ -84,6 +85,7 @@ const COA = [
   ['5-2202', 'Beban Listrik, Air & Telekomunikasi', 'beban', 'D', '5-2', 3, 1],
   ['5-2203', 'Beban Alat Tulis Kantor', 'beban', 'D', '5-2', 3, 1],
   ['5-2204', 'Beban Sewa', 'beban', 'D', '5-2', 3, 1],
+  ['5-2205', 'Beban Pemeliharaan & Perbaikan', 'beban', 'D', '5-2', 3, 1],
   ['5-2301', 'Beban Penyusutan Aset Tetap', 'beban', 'D', '5-2', 3, 1],
   ['5-2401', 'Beban Organisasi & RAT', 'beban', 'D', '5-2', 3, 1],
   ['5-2402', 'Beban Pendidikan & Pelatihan', 'beban', 'D', '5-2', 3, 1],
@@ -118,16 +120,30 @@ const PENGATURAN = [
   ['loyalty.rupiah_per_poin', '10000', 'Nilai belanja untuk memperoleh 1 poin'],
   ['loyalty.nilai_per_poin', '100', 'Nilai tukar 1 poin dalam rupiah'],
 
+  // Pemetaan akun jurnal otomatis. Seluruh modul membaca akun dari sini -
+  // tidak ada kode akun yang ditanam di dalam program.
   ['coa.kas', '1-1101', 'Akun kas default'],
   ['coa.bank', '1-1201', 'Akun bank default'],
   ['coa.piutang_usaha', '1-1301', 'Akun piutang usaha'],
   ['coa.piutang_pinjaman', '1-1310', 'Akun piutang pinjaman anggota'],
+  ['coa.cadangan_kerugian', '1-1319', 'Akun cadangan kerugian piutang'],
   ['coa.persediaan', '1-1401', 'Akun persediaan'],
+  ['coa.ppn_masukan', '1-1502', 'Akun PPN masukan'],
+  ['coa.aset_tetap', '1-1604', 'Akun aset tetap default'],
+  ['coa.akumulasi_penyusutan', '1-1699', 'Akun akumulasi penyusutan'],
   ['coa.hutang_usaha', '2-1101', 'Akun utang usaha'],
-  ['coa.hutang_pajak', '2-1301', 'Akun utang pajak'],
+  ['coa.hutang_pajak', '2-1301', 'Akun utang pajak / PPN keluaran'],
   ['coa.shu_dibagikan', '2-1401', 'Akun SHU yang akan dibagikan'],
+  ['coa.dana_pengurus', '2-1402', 'Akun dana pengurus'],
+  ['coa.dana_karyawan', '2-1403', 'Akun dana karyawan'],
+  ['coa.dana_pendidikan', '2-1404', 'Akun dana pendidikan'],
+  ['coa.dana_sosial', '2-1405', 'Akun dana sosial'],
+  ['coa.dana_pembangunan', '2-1406', 'Akun dana pembangunan'],
+  ['coa.simpanan_pokok', '3-1101', 'Akun simpanan pokok'],
+  ['coa.simpanan_wajib', '3-1102', 'Akun simpanan wajib'],
   ['coa.cadangan', '3-1201', 'Akun dana cadangan'],
   ['coa.shu_berjalan', '3-1301', 'Akun SHU tahun berjalan'],
+  ['coa.shu_ditahan', '3-1302', 'Akun SHU tahun lalu yang ditahan'],
   ['coa.penjualan', '4-1101', 'Akun penjualan'],
   ['coa.pendapatan_bunga', '4-1201', 'Akun pendapatan jasa pinjaman'],
   ['coa.pendapatan_admin', '4-1202', 'Akun pendapatan administrasi'],
@@ -136,13 +152,22 @@ const PENGATURAN = [
   ['coa.hpp', '5-1101', 'Akun harga pokok penjualan'],
   ['coa.beban_bunga_simpanan', '5-2101', 'Akun beban jasa simpanan'],
   ['coa.beban_penyusutan', '5-2301', 'Akun beban penyusutan'],
+  ['coa.beban_pemeliharaan', '5-2205', 'Akun beban pemeliharaan aset'],
   ['coa.beban_selisih', '5-2901', 'Akun beban selisih'],
   ['coa.beban_lain', '5-2902', 'Akun beban lain-lain'],
-  ['coa.dana_pengurus', '2-1402', 'Akun dana pengurus'],
-  ['coa.dana_karyawan', '2-1403', 'Akun dana karyawan'],
-  ['coa.dana_pendidikan', '2-1404', 'Akun dana pendidikan'],
-  ['coa.dana_sosial', '2-1405', 'Akun dana sosial'],
-  ['coa.dana_pembangunan', '2-1406', 'Akun dana pembangunan'],
+
+  // Kelompok akun untuk penyajian laporan: awalan kode akun, dipisah koma.
+  ['kelompok.hpp', '5-1', 'Awalan akun harga pokok penjualan'],
+  ['kelompok.aset_lancar', '1-11,1-12,1-13,1-14,1-15', 'Awalan akun aset lancar'],
+  ['kelompok.kewajiban_lancar', '2-1', 'Awalan akun kewajiban jangka pendek'],
+  ['kelompok.piutang', '1-13', 'Awalan akun piutang (CALK)'],
+  ['kelompok.persediaan', '1-14', 'Awalan akun persediaan (CALK)'],
+  ['kelompok.aset_tetap', '1-16', 'Awalan akun aset tetap (CALK)'],
+  ['kelompok.arus_investasi', '1-16', 'Awalan akun lawan arus kas investasi'],
+  ['kelompok.arus_pendanaan', '2-12,2-2', 'Awalan akun lawan arus kas pendanaan (selain ekuitas)'],
+  ['kelompok.pajak', '2-13,1-1502', 'Awalan akun pajak untuk rekap pajak'],
+
+  ['akuntansi.recurring_otomatis', '1', 'Posting jurnal berulang otomatis saat jatuh tempo (1 = ya, 0 = tidak)'],
 ];
 
 const ALUR_APPROVAL = [
@@ -356,17 +381,18 @@ export async function seedDemo() {
   // sehingga kas akan tersaji negatif. Modal awal mencerminkan akumulasi
   // permodalan koperasi sejak berdiri tahun 2018.
   postJournal({
-    tanggal: mulai, tipe: 'pembuka', referensi: `pembuka:${tahunLalu}`,
+    tanggal: mulai, tipe: 'pembuka', referensi: `pembuka:${tahunLalu}`, sumber: 'manual',
     keterangan: `Saldo pembuka tahun buku ${tahunLalu}`,
     lines: [
       { coa_kode: '1-1101', debit: 180_000_000, keterangan: 'Saldo kas awal' },
       { coa_kode: '1-1102', debit: 10_000_000, keterangan: 'Kas kecil unit toko' },
       { coa_kode: '1-1201', debit: 420_000_000, keterangan: 'Saldo bank awal' },
       { coa_kode: '1-1602', debit: 240_000_000, keterangan: 'Bangunan kantor koperasi' },
-      { coa_kode: '1-1699', kredit: 40_000_000, keterangan: 'Akumulasi penyusutan bangunan' },
+      { coa_kode: '1-1603', debit: 120_000_000, keterangan: 'Kendaraan operasional' },
+      { coa_kode: '1-1699', kredit: 55_200_000, keterangan: 'Akumulasi penyusutan bangunan & kendaraan' },
       { coa_kode: '3-1103', kredit: 300_000_000, keterangan: 'Modal penyertaan anggota' },
       { coa_kode: '3-1104', kredit: 60_000_000, keterangan: 'Hibah pembinaan koperasi' },
-      { coa_kode: '3-1201', kredit: 320_000_000, keterangan: 'Akumulasi dana cadangan' },
+      { coa_kode: '3-1201', kredit: 424_800_000, keterangan: 'Akumulasi dana cadangan' },
       { coa_kode: '3-1302', kredit: 130_000_000, keterangan: 'SHU tahun lalu yang ditahan' },
     ],
   }, ctx);
@@ -829,8 +855,20 @@ export async function seedDemo() {
   // Aset tetap
   // ----------------------------------------------------------------------
   console.log('  → Mencatat aset tetap, penyusutan & pemeliharaan…');
+  // Bangunan kantor dan kendaraan pick up sudah dimiliki sebelum tahun buku
+  // pertama, sehingga didaftarkan sebagai "saldo awal" (nilainya sudah ada di
+  // neraca pembuka). Aset lain dibeli dalam rentang data dan perolehannya
+  // dijurnal otomatis melalui bank.
+  const asetSaldoAwal = [
+    ['AST000', 'Gedung Kantor Koperasi', 'bangunan', `${tahunLalu - 4}-09-01`, 240_000_000, 0, 20, '1-1602', 40_000_000],
+    ['AST001', 'Kendaraan Operasional (Pick Up)', 'kendaraan', `${tahunLalu - 2}-06-01`, 120_000_000, 24_000_000, 10, '1-1603', 15_200_000],
+  ];
+  for (const [kode, nama, kategori, tglPerolehan, harga, residu, umur, coaAset, akumulasi] of asetSaldoAwal) {
+    assets.tambah({ kode, nama, kategori, tanggal_perolehan: tglPerolehan, harga_perolehan: harga,
+      nilai_residu: residu, umur_manfaat: umur, coa_aset: coaAset, sumber_perolehan: 'saldo_awal',
+      akumulasi_awal: akumulasi, cabang_id: 1 }, ctx);
+  }
   const daftarAset = [
-    ['AST001', 'Kendaraan Operasional (Pick Up)', 'kendaraan', `${tahunLalu - 2}-06-01`, 120_000_000, 24_000_000, 10, '1-1603', null],
     ['AST002', 'Sepeda Motor Petugas Lapangan', 'kendaraan', `${tahunLalu}-02-10`, 24_000_000, 4_000_000, 6, '1-1603', 1],
     ['AST003', 'Perangkat Komputer & Server', 'inventaris', `${tahunLalu}-01-05`, 36_000_000, 6_000_000, 5, '1-1604', null],
     ['AST004', 'Etalase & Rak Toko', 'inventaris', `${tahunLalu}-01-05`, 28_000_000, 3_000_000, 5, '1-1604', 2],
@@ -842,8 +880,8 @@ export async function seedDemo() {
   for (const [kode, nama, kategori, tglPerolehan, harga, residu, umur, coaAset, unit] of daftarAset) {
     if (tglPerolehan > hariIni) continue;
     assets.tambah({ kode, nama, kategori, tanggal_perolehan: tglPerolehan, harga_perolehan: harga,
-      nilai_residu: residu, umur_manfaat: umur, coa_aset: coaAset, coa_akumulasi: '1-1699',
-      coa_beban: '5-2301', cabang_id: 1, unit_usaha_id: unit }, ctx);
+      nilai_residu: residu, umur_manfaat: umur, coa_aset: coaAset, sumber_perolehan: 'transfer',
+      cabang_id: 1, unit_usaha_id: unit }, ctx);
   }
   const asetIds = all('SELECT id, kode FROM aset_tetap ORDER BY id');
   for (const a of asetIds.slice(0, 5)) {
@@ -864,7 +902,7 @@ export async function seedDemo() {
     // Gaji tumbuh sedikit pada tahun berjalan, seperti kenaikan berkala.
     const faktor = p.startsWith(String(tahun)) ? 1.08 : 1;
     postJournal({
-      tanggal: akhir, tipe: 'umum', keterangan: `Beban operasional bulan ${p}`,
+      tanggal: akhir, tipe: 'umum', sumber: 'manual', keterangan: `Beban operasional bulan ${p}`,
       lines: [
         { coa_kode: '5-2201', debit: Math.round(9_600_000 * faktor), keterangan: 'Gaji & tunjangan karyawan' },
         { coa_kode: '5-2202', debit: Math.round(1_250_000 * faktor), keterangan: 'Listrik, air & telekomunikasi' },
@@ -886,7 +924,7 @@ export async function seedDemo() {
   // Beban organisasi & pendidikan - tidak setiap bulan
   for (const p of periodeLengkap.filter((_, i) => i % 4 === 1)) {
     postJournal({
-      tanggal: akhirBulan(p), tipe: 'umum', keterangan: `Beban organisasi & pendidikan ${p}`,
+      tanggal: akhirBulan(p), tipe: 'umum', sumber: 'manual', keterangan: `Beban organisasi & pendidikan ${p}`,
       lines: [
         { coa_kode: '5-2401', debit: 2_200_000, keterangan: 'Rapat pengurus & pengawas' },
         { coa_kode: '5-2402', debit: 1_800_000, keterangan: 'Pendidikan & pelatihan anggota' },
@@ -898,7 +936,7 @@ export async function seedDemo() {
   // Penyisihan kerugian piutang pinjaman pada akhir tiap tahun buku
   for (const th of [tahunLalu]) {
     postJournal({
-      tanggal: `${th}-12-31`, tipe: 'penyesuaian', keterangan: `Penyisihan kerugian piutang tahun ${th}`,
+      tanggal: `${th}-12-31`, tipe: 'penyesuaian', sumber: 'manual', keterangan: `Penyisihan kerugian piutang tahun ${th}`,
       lines: [
         { coa_kode: '5-2501', debit: 6_500_000, keterangan: 'Pembentukan cadangan kerugian piutang' },
         { coa_kode: '1-1319', kredit: 6_500_000, keterangan: 'Cadangan kerugian piutang' },
@@ -1267,15 +1305,20 @@ export async function seedDemo() {
   // ----------------------------------------------------------------------
   // Jurnal berulang & pajak
   // ----------------------------------------------------------------------
-  run(`INSERT INTO jurnal_recurring(nama, frekuensi, tanggal_mulai, template, terakhir_dibuat) VALUES
-       ('Beban sewa ruang usaha','bulanan','${mulai}',?,?),
-       ('Amortisasi asuransi dibayar di muka','bulanan','${mulai}',?,?)`,
-  [JSON.stringify([{ coa_kode: '5-2204', debit: 1_500_000, keterangan: 'Sewa ruang usaha toko' },
-    { coa_kode: '1-1201', kredit: 1_500_000, keterangan: 'Pembayaran sewa' }]),
-  akhirBulan(periodeLengkap[periodeLengkap.length - 1] || mulai.slice(0, 7)),
-  JSON.stringify([{ coa_kode: '5-2902', debit: 1_500_000, keterangan: 'Amortisasi asuransi' },
-    { coa_kode: '1-1501', kredit: 1_500_000, keterangan: 'Asuransi dibayar di muka' }]),
-  akhirBulan(periodeLengkap[periodeLengkap.length - 1] || mulai.slice(0, 7))]);
+  // Sewa toko dibukukan manual sampai bulan lalu (lihat beban operasional di
+  // atas); mulai akhir bulan ini diambil alih jurnal berulang yang diposting
+  // otomatis oleh server. Premi asuransi yang dibayar bulanan ke akun biaya
+  // dibayar di muka juga mulai diamortisasi otomatis tiap akhir bulan.
+  const akhirBulanIni = akhirBulan(hariIni.slice(0, 7));
+  run(`INSERT INTO jurnal_recurring(nama, frekuensi, tanggal_mulai, template) VALUES
+       ('Beban sewa ruang usaha','bulanan',?,?),
+       ('Amortisasi asuransi dibayar di muka','bulanan',?,?)`,
+  [akhirBulanIni,
+    JSON.stringify([{ coa_kode: '5-2204', debit: 1_500_000, keterangan: 'Sewa ruang usaha toko' },
+      { coa_kode: '1-1201', kredit: 1_500_000, keterangan: 'Pembayaran sewa' }]),
+    akhirBulanIni,
+    JSON.stringify([{ coa_kode: '5-2902', debit: 1_500_000, keterangan: 'Amortisasi asuransi' },
+      { coa_kode: '1-1501', kredit: 1_500_000, keterangan: 'Asuransi dibayar di muka' }])]);
 
   // ----------------------------------------------------------------------
   // Persetujuan berjenjang

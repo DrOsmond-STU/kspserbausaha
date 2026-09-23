@@ -5,10 +5,10 @@
  * usaha yang dilakukan masing-masing anggota, setelah dikurangi dana cadangan.
  * Persentase alokasi mengikuti AD/ART dan disimpan pada modul Administrator.
  */
-import { all, get, run, scalar, tx, settingNum, setting } from '../db.js';
+import { all, get, run, scalar, tx, settingNum, nextNumber } from '../db.js';
 import { badRequest, notFound, conflict } from '../lib/http.js';
 import { logAudit, notify } from '../lib/audit.js';
-import { labaRugi, postJournal, AKUN } from './accounting.js';
+import { labaRugi, postJournal, AKUN, akunKasMetode } from './accounting.js';
 import { rupiah, today } from '../lib/util.js';
 
 /** Komponen pembagian SHU beserta default sesuai praktik AD/ART umum. */
@@ -16,11 +16,11 @@ export const KOMPONEN = [
   { kode: 'cadangan', nama: 'Dana Cadangan', default: 25, coa: () => AKUN.cadangan() },
   { kode: 'jasa_modal', nama: 'Jasa Modal (Simpanan)', default: 20, coa: () => AKUN.shu_dibagikan() },
   { kode: 'jasa_usaha', nama: 'Jasa Usaha (Transaksi)', default: 30, coa: () => AKUN.shu_dibagikan() },
-  { kode: 'dana_pengurus', nama: 'Dana Pengurus & Pengawas', default: 10, coa: () => setting('coa.dana_pengurus', '2-1402') },
-  { kode: 'dana_karyawan', nama: 'Dana Kesejahteraan Karyawan', default: 5, coa: () => setting('coa.dana_karyawan', '2-1403') },
-  { kode: 'dana_pendidikan', nama: 'Dana Pendidikan', default: 5, coa: () => setting('coa.dana_pendidikan', '2-1404') },
-  { kode: 'dana_sosial', nama: 'Dana Sosial', default: 3, coa: () => setting('coa.dana_sosial', '2-1405') },
-  { kode: 'dana_pembangunan', nama: 'Dana Pembangunan Daerah Kerja', default: 2, coa: () => setting('coa.dana_pembangunan', '2-1406') },
+  { kode: 'dana_pengurus', nama: 'Dana Pengurus & Pengawas', default: 10, coa: () => AKUN.dana_pengurus() },
+  { kode: 'dana_karyawan', nama: 'Dana Kesejahteraan Karyawan', default: 5, coa: () => AKUN.dana_karyawan() },
+  { kode: 'dana_pendidikan', nama: 'Dana Pendidikan', default: 5, coa: () => AKUN.dana_pendidikan() },
+  { kode: 'dana_sosial', nama: 'Dana Sosial', default: 3, coa: () => AKUN.dana_sosial() },
+  { kode: 'dana_pembangunan', nama: 'Dana Pembangunan Daerah Kerja', default: 2, coa: () => AKUN.dana_pembangunan() },
 ];
 
 /**
@@ -249,7 +249,7 @@ export function sahkan(periode_id, { rat_id, tanggal }, ctx) {
 /**
  * Distribusi SHU ke anggota (tunai atau menambah simpanan sukarela).
  */
-export function bagikan(periode_id, { metode = 'simpanan', tanggal }, ctx) {
+export function bagikan(periode_id, { metode = 'simpanan', tanggal, bank_account_id }, ctx) {
   const periode = get('SELECT * FROM shu_periode WHERE id = ?', [periode_id]);
   if (!periode) throw notFound('Periode SHU tidak ditemukan');
   if (periode.status !== 'disetujui') {
@@ -263,8 +263,9 @@ export function bagikan(periode_id, { metode = 'simpanan', tanggal }, ctx) {
     const total = daftar.reduce((s, r) => s + r.shu_total, 0);
     const lines = [{ coa_kode: AKUN.shu_dibagikan(), debit: total, keterangan: `Distribusi SHU ${periode.tahun}` }];
 
-    if (metode === 'tunai') {
-      lines.push({ coa_kode: AKUN.kas(), kredit: total, keterangan: 'Pembayaran SHU tunai' });
+    if (metode === 'tunai' || metode === 'transfer') {
+      lines.push({ coa_kode: akunKasMetode(metode, bank_account_id), kredit: total,
+        keterangan: `Pembayaran SHU ${metode}` });
     } else {
       // Dikreditkan ke rekening simpanan sukarela masing-masing anggota
       const produk = get("SELECT * FROM produk_simpanan WHERE jenis = 'sukarela' AND status = 'aktif' LIMIT 1");
@@ -273,7 +274,7 @@ export function bagikan(periode_id, { metode = 'simpanan', tanggal }, ctx) {
         let rek = get('SELECT * FROM rekening_simpanan WHERE anggota_id = ? AND produk_id = ? AND status = ?',
           [d.anggota_id, produk.id, 'aktif']);
         if (!rek) {
-          const nomor = `SKR${String(d.anggota_id).padStart(6, '0')}`;
+          const nomor = nextNumber(`REK${produk.kode}`, tgl).replace(/\//g, '');
           const id = run(
             `INSERT INTO rekening_simpanan(nomor_rekening, anggota_id, produk_id, saldo, tanggal_buka)
              VALUES(?,?,?,0,?)`, [nomor, d.anggota_id, produk.id, tgl]).lastInsertRowid;
@@ -286,8 +287,10 @@ export function bagikan(periode_id, { metode = 'simpanan', tanggal }, ctx) {
         [`SHU${periode.tahun}-${d.anggota_id}`, rek.id, tgl, d.shu_total, saldoBaru,
           `Pembagian SHU tahun buku ${periode.tahun}`, ctx?.user?.username || 'sistem']);
         run('UPDATE rekening_simpanan SET saldo = ? WHERE id = ?', [saldoBaru, rek.id]);
+        // Satu baris per anggota agar buku besar pembantu simpanan dapat ditelusuri.
+        lines.push({ coa_kode: produk.coa_kode, kredit: d.shu_total, anggota_id: d.anggota_id,
+          keterangan: `SHU ${periode.tahun} dikreditkan ke ${rek.nomor_rekening}` });
       }
-      lines.push({ coa_kode: produk.coa_kode, kredit: total, keterangan: 'SHU dikreditkan ke simpanan sukarela' });
     }
 
     const jurnal = postJournal({

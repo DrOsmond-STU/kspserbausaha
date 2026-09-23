@@ -8,7 +8,7 @@
 import { all, get, run, scalar, nextNumber, tx, settingNum } from '../db.js';
 import { badRequest, notFound, conflict } from '../lib/http.js';
 import { logAudit, notify } from '../lib/audit.js';
-import { postJournal, AKUN } from './accounting.js';
+import { postJournal, AKUN, akunKasMetode } from './accounting.js';
 import { addMonths, diffDays, rupiah, splitEvenly, today } from '../lib/util.js';
 import { ringkasanAnggota, setBlokir } from './savings.js';
 
@@ -309,9 +309,7 @@ export function cairkan(id, { tanggal, metode = 'tunai', bank_account_id, potong
 
     const biaya = potong_biaya ? p.biaya_admin + p.biaya_provisi : 0;
     const cair = p.pokok - biaya;
-    const akunKas = metode === 'transfer'
-      ? (bank_account_id ? get('SELECT coa_kode FROM bank_account WHERE id = ?', [bank_account_id])?.coa_kode : AKUN.bank())
-      : AKUN.kas();
+    const akunKas = akunKasMetode(metode, metode === 'transfer' ? bank_account_id : null);
 
     const lines = [
       { coa_kode: p.coa_piutang || AKUN.piutang_pinjaman(), debit: p.pokok, anggota_id: p.anggota_id,
@@ -447,9 +445,7 @@ export function bayarAngsuran({ pinjaman_id, tanggal, nominal, metode = 'tunai',
     }
 
     const totalBayar = bayarPokok + bayarBunga + bayarDenda;
-    const akunKas = metode === 'transfer'
-      ? (bank_account_id ? get('SELECT coa_kode FROM bank_account WHERE id = ?', [bank_account_id])?.coa_kode : AKUN.bank())
-      : AKUN.kas();
+    const akunKas = akunKasMetode(metode, metode === 'transfer' ? bank_account_id : null);
     const lines = [{ coa_kode: akunKas, debit: totalBayar, keterangan: `Angsuran ${p.nomor}` }];
     if (bayarPokok > 0) {
       lines.push({ coa_kode: p.coa_piutang || AKUN.piutang_pinjaman(), kredit: bayarPokok,
@@ -536,9 +532,7 @@ export function pelunasanDipercepat({ pinjaman_id, tanggal, metode = 'tunai', ba
   }
 
   return tx(() => {
-    const akunKas = metode === 'transfer'
-      ? (bank_account_id ? get('SELECT coa_kode FROM bank_account WHERE id = ?', [bank_account_id])?.coa_kode : AKUN.bank())
-      : AKUN.kas();
+    const akunKas = akunKasMetode(metode, metode === 'transfer' ? bank_account_id : null);
     const pendapatanLain = sim.bunga_berjalan + sim.penalti_pelunasan;
     const lines = [{ coa_kode: akunKas, debit: sim.total, keterangan: `Pelunasan ${p.nomor}` }];
     lines.push({ coa_kode: p.coa_piutang || AKUN.piutang_pinjaman(), kredit: sim.sisa_pokok,
@@ -586,7 +580,9 @@ export function pelunasanDipercepat({ pinjaman_id, tanggal, metode = 'tunai', ba
  */
 export function restrukturisasi({ pinjaman_id, tenor_baru, bunga_baru, tanggal, alasan }, ctx) {
   const lama = get(
-    `SELECT p.*, a.nama AS anggota_nama FROM pinjaman p JOIN anggota a ON a.id = p.anggota_id WHERE p.id = ?`,
+    `SELECT p.*, a.nama AS anggota_nama, pr.coa_piutang, pr.coa_pendapatan_denda
+       FROM pinjaman p JOIN anggota a ON a.id = p.anggota_id
+       JOIN produk_pinjaman pr ON pr.id = p.produk_id WHERE p.id = ?`,
     [pinjaman_id]);
   if (!lama) throw notFound('Pinjaman tidak ditemukan');
   if (lama.status !== 'dicairkan') throw conflict('Hanya pinjaman berjalan yang dapat direstrukturisasi');
@@ -626,8 +622,9 @@ export function restrukturisasi({ pinjaman_id, tenor_baru, bunga_baru, tanggal, 
         keterangan: `Kapitalisasi denda restrukturisasi ${lama.nomor} → ${nomor}`,
         cabang_id: lama.cabang_id,
         lines: [
-          { coa_kode: AKUN.piutang_pinjaman(), debit: denda.total, anggota_id: lama.anggota_id },
-          { coa_kode: AKUN.pendapatan_denda(), kredit: denda.total, anggota_id: lama.anggota_id },
+          { coa_kode: lama.coa_piutang || AKUN.piutang_pinjaman(), debit: denda.total, anggota_id: lama.anggota_id },
+          { coa_kode: lama.coa_pendapatan_denda || AKUN.pendapatan_denda(), kredit: denda.total,
+            anggota_id: lama.anggota_id },
         ],
       }, ctx);
     }

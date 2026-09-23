@@ -2,9 +2,9 @@
  * Modul 7 & 8 - Akuntansi dan Laporan Keuangan.
  */
 import { createRouter, notFound, badRequest, conflict } from '../lib/http.js';
-import { all, get, run, scalar, tx } from '../db.js';
+import { all, get, run, scalar, tx, setting } from '../db.js';
 import { logAudit } from '../lib/audit.js';
-import { idParam, num, str, date, today, rupiah, terbilang, yearOf } from '../lib/util.js';
+import { idParam, num, str, date, oneOf, today, rupiah, terbilang, yearOf } from '../lib/util.js';
 import * as acc from '../services/accounting.js';
 
 const router = createRouter();
@@ -45,7 +45,10 @@ router.get('/api/akuntansi/jurnal/:id', 'akuntansi.view', ({ params }) => {
 
 router.post('/api/akuntansi/jurnal', 'akuntansi.create', ({ body, ctx }) => acc.postJournal({
   tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
-  tipe: body.tipe || 'umum',
+  // Tipe lain (penjualan, simpanan, penutup, ...) khusus untuk jurnal otomatis
+  // modul; jurnal umum yang diinput tangan dibatasi pada tipe berikut.
+  tipe: oneOf(body, 'tipe', ['umum', 'penyesuaian', 'pembuka'], { required: false, dflt: 'umum' }),
+  sumber: 'manual',
   keterangan: str(body, 'keterangan', { max: 300, label: 'Keterangan jurnal' }),
   referensi: str(body, 'referensi', { required: false, max: 100 }),
   cabang_id: body.cabang_id ? Number(body.cabang_id) : null,
@@ -58,38 +61,94 @@ router.post('/api/akuntansi/jurnal/:id/batal', 'akuntansi.post', ({ params, body
 
 // ------------------------- Jurnal berulang --------------------------
 
-router.get('/api/akuntansi/recurring', 'akuntansi.view', () =>
-  ({ data: all('SELECT * FROM jurnal_recurring ORDER BY id DESC') }));
+const recurringDenganJadwal = (r) => ({ ...r, jadwal_berikutnya: r.status === 'aktif' ? acc.jadwalBerikutnya(r) : null });
 
-router.post('/api/akuntansi/recurring', 'akuntansi.create', ({ body, ctx }) => {
-  const nama = str(body, 'nama', { max: 150 });
+function bacaRecurring(body, lama = null) {
+  const frekuensi = oneOf(body, 'frekuensi', Object.keys(acc.FREKUENSI_RECURRING),
+    { required: false, dflt: lama?.frekuensi || 'bulanan' });
+  const tanggalMulai = date(body, 'tanggal_mulai', { required: false, dflt: lama?.tanggal_mulai || today() });
+  const tanggalAkhir = body.tanggal_akhir === undefined ? (lama?.tanggal_akhir ?? null)
+    : (date(body, 'tanggal_akhir', { required: false }) || null);
+  if (tanggalAkhir && tanggalAkhir < tanggalMulai) throw badRequest('Tanggal akhir tidak boleh sebelum tanggal mulai');
   const lines = body.template || body.lines;
-  if (!Array.isArray(lines) || lines.length < 2) throw badRequest('Template jurnal minimal 2 baris');
-  const { lastInsertRowid: id } = run(
-    `INSERT INTO jurnal_recurring(nama, frekuensi, tanggal_mulai, tanggal_akhir, template)
-     VALUES(?,?,?,?,?)`,
-    [nama, body.frekuensi || 'bulanan', date(body, 'tanggal_mulai', { required: false, dflt: today() }),
-      body.tanggal_akhir || null, JSON.stringify(lines)],
-  );
-  logAudit(ctx, { aksi: 'create', modul: 'akuntansi', entitas_id: id,
-    keterangan: `Jurnal berulang "${nama}" dibuat` });
-  return get('SELECT * FROM jurnal_recurring WHERE id = ?', [id]);
+  return {
+    nama: body.nama !== undefined || !lama ? str(body, 'nama', { max: 150, label: 'Nama jurnal berulang' }) : lama.nama,
+    frekuensi, tanggal_mulai: tanggalMulai, tanggal_akhir: tanggalAkhir,
+    template: lines !== undefined || !lama ? JSON.stringify(acc.validasiTemplate(lines)) : lama.template,
+    status: oneOf(body, 'status', ['aktif', 'nonaktif'], { required: false, dflt: lama?.status || 'aktif' }),
+  };
+}
+
+router.get('/api/akuntansi/recurring', 'akuntansi.view', () =>
+  ({ data: all('SELECT * FROM jurnal_recurring ORDER BY id DESC').map(recurringDenganJadwal) }));
+
+router.get('/api/akuntansi/recurring/:id', 'akuntansi.view', ({ params }) => {
+  const r = get('SELECT * FROM jurnal_recurring WHERE id = ?', [idParam(params)]);
+  if (!r) throw notFound('Jurnal berulang tidak ditemukan');
+  return {
+    ...recurringDenganJadwal(r),
+    riwayat: all(`SELECT id, nomor, tanggal, status, total_debit FROM jurnal
+                   WHERE referensi = ? ORDER BY tanggal DESC LIMIT 60`, [`recurring:${r.id}`]),
+  };
 });
 
+router.post('/api/akuntansi/recurring', 'akuntansi.create', ({ body, ctx }) => {
+  const d = bacaRecurring(body);
+  const { lastInsertRowid: id } = run(
+    `INSERT INTO jurnal_recurring(nama, frekuensi, tanggal_mulai, tanggal_akhir, template, status)
+     VALUES(?,?,?,?,?,?)`,
+    [d.nama, d.frekuensi, d.tanggal_mulai, d.tanggal_akhir, d.template, d.status],
+  );
+  logAudit(ctx, { aksi: 'create', modul: 'akuntansi', entitas_id: id,
+    keterangan: `Jurnal berulang "${d.nama}" dibuat`, after: d });
+  return recurringDenganJadwal(get('SELECT * FROM jurnal_recurring WHERE id = ?', [id]));
+});
+
+router.put('/api/akuntansi/recurring/:id', 'akuntansi.update', ({ params, body, ctx }) => {
+  const id = idParam(params);
+  const lama = get('SELECT * FROM jurnal_recurring WHERE id = ?', [id]);
+  if (!lama) throw notFound('Jurnal berulang tidak ditemukan');
+  const d = bacaRecurring(body, lama);
+  run(`UPDATE jurnal_recurring SET nama = ?, frekuensi = ?, tanggal_mulai = ?, tanggal_akhir = ?,
+         template = ?, status = ? WHERE id = ?`,
+  [d.nama, d.frekuensi, d.tanggal_mulai, d.tanggal_akhir, d.template, d.status, id]);
+  logAudit(ctx, { aksi: 'update', modul: 'akuntansi', entitas_id: id,
+    keterangan: `Jurnal berulang "${d.nama}" diubah`, before: lama, after: d });
+  return recurringDenganJadwal(get('SELECT * FROM jurnal_recurring WHERE id = ?', [id]));
+});
+
+/** Menghapus template. Jurnal yang sudah terbentuk tetap ada di buku besar. */
+router.delete('/api/akuntansi/recurring/:id', 'akuntansi.delete', ({ params, ctx }) => {
+  const id = idParam(params);
+  const lama = get('SELECT * FROM jurnal_recurring WHERE id = ?', [id]);
+  if (!lama) throw notFound('Jurnal berulang tidak ditemukan');
+  run('DELETE FROM jurnal_recurring WHERE id = ?', [id]);
+  logAudit(ctx, { aksi: 'delete', modul: 'akuntansi', entitas_id: id,
+    keterangan: `Jurnal berulang "${lama.nama}" dihapus`, before: lama });
+  return { dihapus: true, id };
+});
+
+/** Memposting seluruh jadwal yang sudah jatuh tempo sampai tanggal tertentu. */
 router.post('/api/akuntansi/recurring/:id/jalankan', 'akuntansi.post', ({ params, body, ctx }) => {
   const id = idParam(params);
   const r = get('SELECT * FROM jurnal_recurring WHERE id = ?', [id]);
   if (!r) throw notFound('Jurnal berulang tidak ditemukan');
   if (r.status !== 'aktif') throw conflict('Jurnal berulang ini tidak aktif');
-  const tanggal = date(body, 'tanggal', { required: false, dflt: today() });
-  const jurnal = acc.postJournal({
-    tanggal, tipe: 'umum', referensi: `recurring:${id}`,
-    keterangan: `${r.nama} (jurnal berulang ${tanggal.slice(0, 7)})`,
-    lines: JSON.parse(r.template),
-  }, ctx);
-  run('UPDATE jurnal_recurring SET terakhir_dibuat = ? WHERE id = ?', [tanggal, id]);
-  return jurnal;
+  const sampai = date(body, 'tanggal', { required: false, dflt: today() });
+  const h = acc.jalankanRecurring({ sampai, id }, ctx).template[0];
+  if (h.galat) throw badRequest(`Jurnal berulang gagal diposting: ${h.galat}`);
+  logAudit(ctx, { aksi: 'post', modul: 'akuntansi', entitas_id: id,
+    keterangan: `Jurnal berulang "${r.nama}" dijalankan s.d. ${sampai}: ${h.dibuat.length} jurnal` });
+  return {
+    ...h,
+    pesan: h.dibuat.length ? `${h.dibuat.length} jurnal diposting`
+      : `Belum ada jadwal yang jatuh tempo s.d. ${sampai}${h.jadwal_berikutnya ? ` (berikutnya ${h.jadwal_berikutnya})` : ''}`,
+  };
 });
+
+/** Menjalankan seluruh jurnal berulang yang jatuh tempo (juga dijalankan otomatis oleh server). */
+router.post('/api/akuntansi/recurring-jalankan-semua', 'akuntansi.post', ({ body, ctx }) =>
+  acc.jalankanRecurring({ sampai: date(body, 'tanggal', { required: false, dflt: today() }) }, ctx));
 
 // --------------------------- Periode ---------------------------
 
@@ -153,6 +212,7 @@ router.get('/api/laporan/calk', 'laporan.view', ({ query }) => {
   const tahun = yearOf(f.sampai);
   const n = acc.neraca(f);
   const lr = acc.labaRugi({ ...f, dari: `${tahun}-01-01` });
+  const kasBank = new Set(acc.akunKasBank());
   const profil = Object.fromEntries(
     all("SELECT key, value FROM settings WHERE key LIKE 'koperasi.%'").map((r) => [r.key, r.value]));
   return {
@@ -175,10 +235,10 @@ router.get('/api/laporan/calk', 'laporan.view', ({ query }) => {
       'Pendapatan jasa pinjaman diakui pada saat diterima (cash basis untuk pinjaman non-lancar) sesuai prinsip konservatisme.',
     ],
     penjelasan_pos: {
-      kas_dan_setara_kas: n.aset.filter((r) => r.kode.startsWith('1-11') || r.kode.startsWith('1-12')),
-      piutang_pinjaman: n.aset.filter((r) => r.kode.startsWith('1-13')),
-      persediaan: n.aset.filter((r) => r.kode.startsWith('1-14')),
-      aset_tetap: n.aset.filter((r) => r.kode.startsWith('1-16')),
+      kas_dan_setara_kas: n.aset.filter((r) => kasBank.has(r.kode)),
+      piutang_pinjaman: n.aset.filter((r) => acc.termasukKelompok(r.kode, 'piutang')),
+      persediaan: n.aset.filter((r) => acc.termasukKelompok(r.kode, 'persediaan')),
+      aset_tetap: n.aset.filter((r) => acc.termasukKelompok(r.kode, 'aset_tetap')),
       liabilitas: n.kewajiban,
       ekuitas: n.ekuitas,
       pendapatan: lr.pendapatan,
@@ -195,11 +255,27 @@ router.get('/api/laporan/calk', 'laporan.view', ({ query }) => {
 /** Rekapitulasi pajak (PPh & PPN) dari mutasi akun pajak. */
 router.get('/api/laporan/pajak', 'laporan.view', ({ query }) => {
   const f = filterDari(query);
-  const akunPajak = all("SELECT kode, nama FROM coa WHERE kode LIKE '2-13%' OR nama LIKE '%pajak%'");
+  // Akun pajak = akun pada master pajak + pemetaan PPN + kelompok "pajak"
+  // pada Parameter Sistem. Tidak ada kode akun yang ditanam di sini.
+  const kode = new Set(all("SELECT DISTINCT coa_kode FROM pajak WHERE coa_kode IS NOT NULL AND coa_kode <> ''")
+    .map((r) => r.coa_kode));
+  for (const k of ['hutang_pajak', 'ppn_masukan']) {
+    const v = setting(`coa.${k}`, null);
+    if (v) kode.add(v);
+  }
+  const awalan = acc.awalanKelompok('pajak');
+  for (const r of all('SELECT kode FROM coa WHERE is_postable = 1')) {
+    if (awalan.some((a) => r.kode.startsWith(a))) kode.add(r.kode);
+  }
+  const akunPajak = [...kode].sort()
+    .map((k) => get('SELECT kode, nama FROM coa WHERE kode = ?', [k])).filter(Boolean);
+  const ppnKeluaran = setting('coa.hutang_pajak', null);
+  const ppnMasukan = setting('coa.ppn_masukan', null);
   return {
     periode: f,
     akun: akunPajak.map((a) => ({ ...a, ...acc.saldoAkun(a.kode, f) })),
-    ppn_keluaran: acc.saldoAkun(acc.AKUN.hutang_pajak(), f),
+    ppn_keluaran: ppnKeluaran ? acc.saldoAkun(ppnKeluaran, f) : null,
+    ppn_masukan: ppnMasukan ? acc.saldoAkun(ppnMasukan, f) : null,
     catatan: 'Koperasi wajib menyampaikan SPT Tahunan PPh Badan. SHU yang dibagikan kepada anggota '
       + 'bukan merupakan objek PPh Pasal 23 sepanjang memenuhi ketentuan perpajakan yang berlaku.',
   };

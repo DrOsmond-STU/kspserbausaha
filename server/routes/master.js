@@ -8,6 +8,33 @@ import { logAudit } from '../lib/audit.js';
 
 const router = createRouter();
 
+/**
+ * Memastikan kode akun pada isian master benar-benar ada di bagan akun,
+ * dapat dijurnal, aktif, dan (bila ditentukan) bertipe sesuai. Kesalahan
+ * pemetaan ditolak saat disimpan - bukan baru ketahuan ketika transaksi
+ * pertama gagal diposting.
+ */
+function cekAkun(data, kolom, { tipe = null, kasBank = false, label = kolom } = {}) {
+  const kode = data[kolom];
+  if (kode === undefined || kode === null || kode === '') return;
+  const a = get('SELECT kode, nama, tipe, is_postable, status, is_kas, is_bank FROM coa WHERE kode = ?', [kode]);
+  if (!a) throw badRequest(`${label}: akun ${kode} tidak terdaftar dalam bagan akun`);
+  if (!a.is_postable) throw badRequest(`${label}: akun ${kode} - ${a.nama} adalah akun induk`);
+  if (a.status !== 'aktif') throw badRequest(`${label}: akun ${kode} - ${a.nama} tidak aktif`);
+  const daftarTipe = Array.isArray(tipe) ? tipe : tipe ? [tipe] : null;
+  if (daftarTipe && !daftarTipe.includes(a.tipe)) {
+    throw badRequest(`${label}: akun ${kode} - ${a.nama} bertipe ${a.tipe}, seharusnya ${daftarTipe.join('/')}`);
+  }
+  if (kasBank && !a.is_kas && !a.is_bank) {
+    throw badRequest(`${label}: akun ${kode} - ${a.nama} bukan akun kas/bank`);
+  }
+}
+
+/** Pengaturan pemetaan akun (coa.*) yang memakai kode akun tertentu. */
+function dipakaiPemetaan(kode) {
+  return all("SELECT key FROM settings WHERE key LIKE 'coa.%' AND value = ?", [kode]).map((r) => r.key);
+}
+
 // ------------------------------ Cabang ------------------------------
 mountCrud(router, '/api/master/cabang', 'master', crud({
   table: 'cabang', modul: 'master',
@@ -25,12 +52,43 @@ mountCrud(router, '/api/master/unit-usaha', 'master', crud({
 }));
 
 // ------------------------ Chart of Account --------------------------
+const TIPE_AKUN = ['aset', 'kewajiban', 'ekuitas', 'pendapatan', 'beban'];
 const coaResource = crud({
   table: 'coa', modul: 'master',
   fields: ['kode', 'nama', 'tipe', 'saldo_normal', 'parent_kode', 'level', 'is_kas', 'is_bank',
     'is_postable', 'status'],
   required: ['kode', 'nama', 'tipe', 'saldo_normal'], unique: ['kode'],
   search: ['kode', 'nama'], orderBy: 'kode ASC', filters: ['tipe'],
+  validate(data, before) {
+    if (data.tipe !== undefined && !TIPE_AKUN.includes(data.tipe)) {
+      throw badRequest(`Tipe akun harus salah satu dari: ${TIPE_AKUN.join(', ')}`);
+    }
+    if (data.saldo_normal !== undefined && !['D', 'K'].includes(data.saldo_normal)) {
+      throw badRequest('Saldo normal harus D (debit) atau K (kredit)');
+    }
+    if (data.parent_kode) {
+      if (data.parent_kode === (data.kode ?? before?.kode)) throw badRequest('Akun induk tidak boleh akun itu sendiri');
+      if (!get('SELECT 1 FROM coa WHERE kode = ?', [data.parent_kode])) {
+        throw badRequest(`Akun induk ${data.parent_kode} tidak terdaftar`);
+      }
+    }
+    if (!before) return;
+    const dipakaiJurnal = scalar('SELECT COUNT(*) FROM jurnal_detail WHERE coa_kode = ?', [before.kode]);
+    if (data.kode !== undefined && data.kode !== before.kode && dipakaiJurnal > 0) {
+      throw conflict(`Kode akun ${before.kode} sudah dipakai ${dipakaiJurnal} baris jurnal dan tidak dapat diganti`);
+    }
+    if (data.tipe !== undefined && data.tipe !== before.tipe && dipakaiJurnal > 0) {
+      throw conflict(`Tipe akun ${before.kode} tidak dapat diubah karena sudah memiliki jurnal`);
+    }
+    const menonaktifkan = (data.status !== undefined && data.status !== 'aktif')
+      || (data.is_postable !== undefined && !Number(data.is_postable))
+      || (data.kode !== undefined && data.kode !== before.kode);
+    const pemetaan = dipakaiPemetaan(before.kode);
+    if (menonaktifkan && pemetaan.length) {
+      throw conflict(`Akun ${before.kode} masih dipakai pada Parameter Sistem (${pemetaan.join(', ')})`,
+        'Pindahkan pemetaan akun tersebut ke akun lain terlebih dahulu.');
+    }
+  },
 });
 router.get('/api/master/coa', 'master.view', ({ query }) => {
   const res = coaResource.list({ ...query, limit: query.limit || 1000 });
@@ -58,6 +116,13 @@ router.delete('/api/master/coa/:id', 'master.delete', ({ params, ctx }) => {
       throw conflict(`Akun ${akun.kode} sudah memiliki ${dipakai} baris jurnal dan tidak dapat dihapus`,
         'Ubah status akun menjadi "nonaktif" agar tidak dapat dipakai pada transaksi baru.');
     }
+    const pemetaan = dipakaiPemetaan(akun.kode);
+    if (pemetaan.length) {
+      throw conflict(`Akun ${akun.kode} masih dipakai pada Parameter Sistem (${pemetaan.join(', ')})`,
+        'Pindahkan pemetaan akun tersebut ke akun lain terlebih dahulu.');
+    }
+    const anak = scalar('SELECT COUNT(*) FROM coa WHERE parent_kode = ?', [akun.kode]);
+    if (anak > 0) throw conflict(`Akun ${akun.kode} masih memiliki ${anak} sub-akun`);
   }
   return coaResource.remove(Number(params.id), ctx);
 });
@@ -69,6 +134,10 @@ mountCrud(router, '/api/master/produk-simpanan', 'master', crud({
     'bunga_tahunan', 'boleh_tarik', 'tenor_bulan', 'masuk_shu', 'status'],
   required: ['kode', 'nama', 'jenis', 'coa_kode'], unique: ['kode'],
   search: ['kode', 'nama'], orderBy: 'kode ASC', filters: ['jenis'],
+  validate(data) {
+    cekAkun(data, 'coa_kode', { tipe: ['kewajiban', 'ekuitas'], label: 'Akun simpanan' });
+    cekAkun(data, 'coa_beban_bunga', { tipe: 'beban', label: 'Akun beban jasa simpanan' });
+  },
 }));
 
 // ------------------------- Produk Pinjaman --------------------------
@@ -79,6 +148,12 @@ mountCrud(router, '/api/master/produk-pinjaman', 'master', crud({
     'coa_pendapatan_bunga', 'coa_pendapatan_admin', 'coa_pendapatan_denda', 'wajib_agunan', 'status'],
   required: ['kode', 'nama', 'jenis', 'coa_piutang', 'coa_pendapatan_bunga'], unique: ['kode'],
   search: ['kode', 'nama'], orderBy: 'kode ASC', filters: ['jenis'],
+  validate(data) {
+    cekAkun(data, 'coa_piutang', { tipe: 'aset', label: 'Akun piutang pinjaman' });
+    cekAkun(data, 'coa_pendapatan_bunga', { tipe: 'pendapatan', label: 'Akun pendapatan jasa' });
+    cekAkun(data, 'coa_pendapatan_admin', { tipe: 'pendapatan', label: 'Akun pendapatan administrasi' });
+    cekAkun(data, 'coa_pendapatan_denda', { tipe: 'pendapatan', label: 'Akun pendapatan denda' });
+  },
 }));
 
 // ---------------------------- Kategori & Barang ---------------------
@@ -94,6 +169,11 @@ mountCrud(router, '/api/master/barang', 'master', crud({
     'coa_persediaan', 'coa_penjualan', 'coa_hpp', 'status'],
   required: ['kode', 'nama'], unique: ['kode'], search: ['kode', 'nama', 'barcode'], orderBy: 'kode ASC',
   filters: ['kategori_id'],
+  validate(data) {
+    cekAkun(data, 'coa_persediaan', { tipe: 'aset', label: 'Akun persediaan' });
+    cekAkun(data, 'coa_penjualan', { tipe: 'pendapatan', label: 'Akun penjualan' });
+    cekAkun(data, 'coa_hpp', { tipe: 'beban', label: 'Akun HPP' });
+  },
   selectSql: `SELECT t.*, k.nama AS kategori_nama,
                      (SELECT COALESCE(SUM(qty),0) FROM stok WHERE barang_id = t.id) AS stok
                 FROM barang t LEFT JOIN kategori_barang k ON k.id = t.kategori_id`,
@@ -125,12 +205,14 @@ mountCrud(router, '/api/master/bank', 'master', crud({
   table: 'bank_account', modul: 'master',
   fields: ['nama_bank', 'nomor_rekening', 'atas_nama', 'cabang_id', 'coa_kode', 'saldo_awal', 'status'],
   required: ['nama_bank', 'nomor_rekening', 'atas_nama', 'coa_kode'], unique: ['nomor_rekening'],
+  validate(data) { cekAkun(data, 'coa_kode', { kasBank: true, label: 'Akun bank' }); },
   search: ['nama_bank', 'nomor_rekening', 'atas_nama'], orderBy: 'nama_bank ASC', label: 'nama_bank',
 }));
 
 // ------------------------------ Pajak -------------------------------
 mountCrud(router, '/api/master/pajak', 'master', crud({
   table: 'pajak', modul: 'master', fields: ['kode', 'nama', 'tarif', 'coa_kode', 'status'],
+  validate(data) { cekAkun(data, 'coa_kode', { label: 'Akun pajak' }); },
   required: ['kode', 'nama'], unique: ['kode'], search: ['kode', 'nama'], orderBy: 'kode ASC',
 }));
 

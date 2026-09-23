@@ -136,6 +136,19 @@ router.post('/api/simpanan/bunga', 'simpanan.post', ({ body, ctx }) => svc.posBu
 router.post('/api/simpanan/rekening/:id/blokir', 'simpanan.update', ({ params, body, ctx }) =>
   svc.setBlokir(idParam(params), num(body, 'nominal', { min: 0 }), ctx));
 
+/** Menutup rekening & mengembalikan saldonya (dijurnal otomatis). */
+router.post('/api/simpanan/rekening/:id/tutup', 'simpanan.update', ({ params, body, ctx }) =>
+  svc.tutupRekening(idParam(params), {
+    tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
+    metode: oneOf(body, 'metode', ['tunai', 'transfer'], { required: false, dflt: 'tunai' }),
+    bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
+    keterangan: str(body, 'keterangan', { required: false, max: 200 }),
+  }, ctx));
+
+/** Membatalkan setoran/penarikan yang salah input (jurnal dibalik, saldo dikoreksi). */
+router.post('/api/simpanan/transaksi/:id/batal', 'simpanan.update', ({ params, body, ctx }) =>
+  svc.batalTransaksi(idParam(params), str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' }), ctx));
+
 router.get('/api/simpanan/anggota/:id', 'simpanan.view', ({ params }) =>
   svc.ringkasanAnggota(idParam(params)));
 

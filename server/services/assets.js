@@ -7,8 +7,8 @@
 import { all, get, run, tx, scalar } from '../db.js';
 import { badRequest, notFound, conflict } from '../lib/http.js';
 import { logAudit } from '../lib/audit.js';
-import { postJournal, AKUN } from './accounting.js';
-import { rupiah, today, endOfMonth, diffDays } from '../lib/util.js';
+import { postJournal, voidJournal, AKUN, akunKasMetode } from './accounting.js';
+import { rupiah, today, endOfMonth } from '../lib/util.js';
 
 /** Penyusutan per bulan untuk satu aset. */
 export function penyusutanBulanan(aset) {
@@ -42,10 +42,29 @@ export function daftar(filter = {}) {
   }));
 }
 
-/** Mendaftarkan aset baru (opsional langsung membentuk jurnal perolehan). */
+/**
+ * Sumber perolehan aset:
+ *   kas / transfer  D Aset Tetap            K Kas / Bank
+ *   hutang          D Aset Tetap            K Utang Usaha
+ *   saldo_awal      tanpa jurnal - aset sudah tercatat pada neraca pembuka
+ *                   (dipakai saat memindahkan register aset lama ke sistem)
+ */
+export const SUMBER_PEROLEHAN = ['kas', 'transfer', 'hutang', 'saldo_awal'];
+
+/** Akun aset/akumulasi/beban sebuah aset: isian aset, bila kosong dari Parameter Sistem. */
+function akunAset(a) {
+  return {
+    aset: a.coa_aset || AKUN.aset_tetap(),
+    akumulasi: a.coa_akumulasi || AKUN.akumulasi_penyusutan(),
+    beban: a.coa_beban || AKUN.beban_penyusutan(),
+  };
+}
+
+/** Mendaftarkan aset baru dan membukukan perolehannya secara otomatis. */
 export function tambah(data, ctx) {
   const kode = String(data.kode || '').trim();
   if (!kode) throw badRequest('Kode aset wajib diisi');
+  if (!String(data.nama || '').trim()) throw badRequest('Nama aset wajib diisi');
   if (get('SELECT id FROM aset_tetap WHERE kode = ?', [kode])) {
     throw conflict(`Kode aset "${kode}" sudah digunakan`);
   }
@@ -53,35 +72,117 @@ export function tambah(data, ctx) {
   if (harga <= 0) throw badRequest('Harga perolehan harus lebih besar dari nol');
   const residu = rupiah(data.nilai_residu || 0);
   if (residu >= harga) throw badRequest('Nilai residu harus lebih kecil dari harga perolehan');
+  // Kompatibilitas: klien lama mengirim buat_jurnal + metode_bayar.
+  let sumber = data.sumber_perolehan
+    || (data.buat_jurnal === false ? 'saldo_awal' : (data.metode_bayar === 'transfer' ? 'transfer' : 'kas'));
+  if (!SUMBER_PEROLEHAN.includes(sumber)) throw badRequest(`Sumber perolehan "${sumber}" tidak dikenal`);
+  const akumulasiAwal = sumber === 'saldo_awal' ? rupiah(data.akumulasi_awal || 0) : 0;
+  if (akumulasiAwal < 0 || akumulasiAwal > harga - residu) {
+    throw badRequest('Akumulasi penyusutan awal tidak boleh melebihi harga perolehan dikurangi nilai residu');
+  }
+  const coa = akunAset(data);
+  const tanggal = data.tanggal_perolehan || today();
 
   return tx(() => {
     const { lastInsertRowid: id } = run(
       `INSERT INTO aset_tetap(kode, nama, kategori, tanggal_perolehan, harga_perolehan, nilai_residu,
-         umur_manfaat, metode, nilai_buku, lokasi, cabang_id, unit_usaha_id, penanggung_jawab,
-         coa_aset, coa_akumulasi, coa_beban, barcode)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [kode, data.nama, data.kategori || 'inventaris', data.tanggal_perolehan || today(), harga, residu,
-        Number(data.umur_manfaat) || 4, data.metode || 'garis_lurus', harga, data.lokasi || null,
-        data.cabang_id || null, data.unit_usaha_id || null, data.penanggung_jawab || null,
-        data.coa_aset || null, data.coa_akumulasi || null, data.coa_beban || null,
-        data.barcode || kode],
+         umur_manfaat, metode, akumulasi_penyusutan, nilai_buku, lokasi, cabang_id, unit_usaha_id,
+         penanggung_jawab, coa_aset, coa_akumulasi, coa_beban, barcode)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [kode, data.nama, data.kategori || 'inventaris', tanggal, harga, residu,
+        Number(data.umur_manfaat) || 4, data.metode || 'garis_lurus', akumulasiAwal, harga - akumulasiAwal,
+        data.lokasi || null, data.cabang_id || null, data.unit_usaha_id || null, data.penanggung_jawab || null,
+        coa.aset, coa.akumulasi, coa.beban, data.barcode || kode],
     );
     let jurnal = null;
-    if (data.buat_jurnal && data.coa_aset) {
+    if (sumber !== 'saldo_awal') {
+      const lawan = sumber === 'hutang' ? AKUN.hutang_usaha() : akunKasMetode(sumber, data.bank_account_id);
       jurnal = postJournal({
-        tanggal: data.tanggal_perolehan || today(), tipe: 'umum', referensi: `aset:${id}`,
+        tanggal, tipe: 'umum', referensi: `aset:${id}`,
         keterangan: `Perolehan aset ${kode} - ${data.nama}`,
         cabang_id: data.cabang_id, unit_usaha_id: data.unit_usaha_id,
         lines: [
-          { coa_kode: data.coa_aset, debit: harga, keterangan: data.nama },
-          { coa_kode: data.metode_bayar === 'transfer' ? AKUN.bank() : AKUN.kas(), kredit: harga },
+          { coa_kode: coa.aset, debit: harga, keterangan: data.nama },
+          { coa_kode: lawan, kredit: harga, keterangan: `Perolehan ${kode}` },
         ],
       }, ctx);
+      if (sumber === 'hutang') {
+        run(`INSERT INTO hutang_piutang(jenis, referensi, pihak, tanggal, jatuh_tempo, nominal)
+             VALUES('hutang',?,?,?,?,?)`,
+        [`aset:${id}`, data.pemasok || data.vendor || null, tanggal, data.jatuh_tempo || tanggal, harga]);
+      }
     }
     logAudit(ctx, { aksi: 'create', modul: 'aset', entitas_id: id,
-      keterangan: `Aset ${kode} - ${data.nama} senilai Rp ${harga.toLocaleString('id-ID')}`,
-      after: { kode, nama: data.nama, harga } });
+      keterangan: `Aset ${kode} - ${data.nama} senilai Rp ${harga.toLocaleString('id-ID')} (${sumber})`,
+      after: { kode, nama: data.nama, harga, sumber } });
     return { id, kode, jurnal };
+  });
+}
+
+/** Kolom aset yang boleh diubah sesudah didaftarkan. */
+const KOLOM_UBAH = ['nama', 'kategori', 'lokasi', 'cabang_id', 'unit_usaha_id', 'penanggung_jawab', 'barcode',
+  'umur_manfaat', 'metode', 'nilai_residu', 'coa_beban', 'status'];
+
+/**
+ * Mengubah data aset. Nilai perolehan dan akun aset/akumulasi tidak dapat
+ * diubah karena sudah terbukukan; koreksinya melalui pelepasan atau jurnal
+ * penyesuaian. Umur, metode, dan residu berlaku untuk penyusutan berikutnya.
+ */
+export function ubah(aset_id, data, ctx) {
+  const a = get('SELECT * FROM aset_tetap WHERE id = ?', [aset_id]);
+  if (!a) throw notFound('Aset tidak ditemukan');
+  if (a.status === 'dilepas') throw conflict('Aset yang sudah dilepas tidak dapat diubah');
+  const ubahan = {};
+  for (const k of KOLOM_UBAH) if (data[k] !== undefined) ubahan[k] = data[k] === '' ? null : data[k];
+  if (ubahan.status && !['aktif', 'maintenance', 'rusak'].includes(ubahan.status)) {
+    throw badRequest('Status aset hanya dapat diubah menjadi aktif, maintenance, atau rusak (gunakan Pelepasan untuk melepas aset)');
+  }
+  if (ubahan.nilai_residu !== undefined) {
+    ubahan.nilai_residu = rupiah(ubahan.nilai_residu || 0);
+    if (ubahan.nilai_residu >= a.harga_perolehan) throw badRequest('Nilai residu harus lebih kecil dari harga perolehan');
+  }
+  if (ubahan.umur_manfaat !== undefined && !(Number(ubahan.umur_manfaat) > 0)) {
+    throw badRequest('Umur manfaat harus lebih besar dari nol');
+  }
+  if (ubahan.coa_beban) {
+    const akun = get('SELECT tipe, is_postable FROM coa WHERE kode = ?', [ubahan.coa_beban]);
+    if (!akun || !akun.is_postable || akun.tipe !== 'beban') throw badRequest('Akun beban penyusutan tidak valid');
+  }
+  const kolom = Object.keys(ubahan);
+  if (!kolom.length) throw badRequest('Tidak ada perubahan yang dikirim');
+  run(`UPDATE aset_tetap SET ${kolom.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`,
+    [...kolom.map((k) => ubahan[k]), aset_id]);
+  const sesudah = get('SELECT * FROM aset_tetap WHERE id = ?', [aset_id]);
+  logAudit(ctx, { aksi: 'update', modul: 'aset', entitas_id: aset_id,
+    keterangan: `Aset ${a.kode} diubah`, before: a, after: sesudah });
+  return sesudah;
+}
+
+/**
+ * Menghapus aset yang salah input. Hanya boleh bila belum pernah disusutkan;
+ * jurnal perolehannya dibatalkan dengan jurnal balik sehingga buku besar
+ * kembali seperti sebelum aset didaftarkan.
+ */
+export function hapus(aset_id, ctx) {
+  const a = get('SELECT * FROM aset_tetap WHERE id = ?', [aset_id]);
+  if (!a) throw notFound('Aset tidak ditemukan');
+  if (scalar('SELECT COUNT(*) FROM aset_penyusutan WHERE aset_id = ?', [aset_id]) > 0) {
+    throw conflict(`Aset ${a.kode} sudah disusutkan dan tidak dapat dihapus`,
+      'Gunakan Pelepasan Aset untuk mengeluarkan aset dari pembukuan.');
+  }
+  const hp = get("SELECT * FROM hutang_piutang WHERE referensi = ? AND jenis = 'hutang'", [`aset:${aset_id}`]);
+  if (hp && hp.terbayar > 0) {
+    throw conflict('Utang perolehan aset ini sudah dibayar sebagian sehingga aset tidak dapat dihapus');
+  }
+  return tx(() => {
+    const jurnal = get("SELECT id FROM jurnal WHERE referensi = ? AND status = 'posted'", [`aset:${aset_id}`]);
+    if (jurnal) voidJournal(jurnal.id, `Penghapusan aset ${a.kode} (salah input)`, ctx, { sistem: true });
+    if (hp) run('DELETE FROM hutang_piutang WHERE id = ?', [hp.id]);
+    run('DELETE FROM aset_maintenance WHERE aset_id = ?', [aset_id]);
+    run('DELETE FROM aset_tetap WHERE id = ?', [aset_id]);
+    logAudit(ctx, { aksi: 'delete', modul: 'aset', entitas_id: aset_id,
+      keterangan: `Aset ${a.kode} - ${a.nama} dihapus`, before: a });
+    return { dihapus: true, id: aset_id };
   });
 }
 
@@ -112,9 +213,10 @@ export function jalankanPenyusutan(periode, ctx) {
            VALUES(?,?,?,?,?)`, [a.id, periode, susut, akumulasi, a.harga_perolehan - akumulasi]);
       run('UPDATE aset_tetap SET akumulasi_penyusutan = ?, nilai_buku = ? WHERE id = ?',
         [akumulasi, a.harga_perolehan - akumulasi, a.id]);
-      lines.push({ coa_kode: a.coa_beban || AKUN.beban_penyusutan(), debit: susut,
+      const coa = akunAset(a);
+      lines.push({ coa_kode: coa.beban, debit: susut,
         unit_usaha_id: a.unit_usaha_id, cabang_id: a.cabang_id, keterangan: `Penyusutan ${a.kode}` });
-      lines.push({ coa_kode: a.coa_akumulasi || '1-1699', kredit: susut,
+      lines.push({ coa_kode: coa.akumulasi, kredit: susut,
         unit_usaha_id: a.unit_usaha_id, cabang_id: a.cabang_id, keterangan: `Akumulasi penyusutan ${a.kode}` });
       total += susut;
       diproses.push({ kode: a.kode, nama: a.nama, penyusutan: susut, nilai_buku: a.harga_perolehan - akumulasi });
@@ -134,7 +236,7 @@ export function jalankanPenyusutan(periode, ctx) {
 }
 
 /** Pelepasan aset (dijual / dihapuskan) beserta pengakuan laba-rugi pelepasan. */
-export function disposal(aset_id, { tanggal, nilai_jual = 0, keterangan, metode = 'tunai' }, ctx) {
+export function disposal(aset_id, { tanggal, nilai_jual = 0, keterangan, metode = 'tunai', bank_account_id }, ctx) {
   const a = get('SELECT * FROM aset_tetap WHERE id = ?', [aset_id]);
   if (!a) throw notFound('Aset tidak ditemukan');
   if (a.status === 'dilepas') throw conflict('Aset ini sudah dilepas');
@@ -144,16 +246,17 @@ export function disposal(aset_id, { tanggal, nilai_jual = 0, keterangan, metode 
   const labaRugi = hasil - nilaiBuku;
 
   return tx(() => {
+    const coa = akunAset(a);
     const lines = [];
     if (hasil > 0) {
-      lines.push({ coa_kode: metode === 'transfer' ? AKUN.bank() : AKUN.kas(), debit: hasil,
+      lines.push({ coa_kode: akunKasMetode(metode, bank_account_id), debit: hasil,
         keterangan: `Hasil pelepasan ${a.kode}` });
     }
     if (a.akumulasi_penyusutan > 0) {
-      lines.push({ coa_kode: a.coa_akumulasi || '1-1699', debit: a.akumulasi_penyusutan,
+      lines.push({ coa_kode: coa.akumulasi, debit: a.akumulasi_penyusutan,
         keterangan: `Penghapusan akumulasi penyusutan ${a.kode}` });
     }
-    lines.push({ coa_kode: a.coa_aset || '1-1601', kredit: a.harga_perolehan,
+    lines.push({ coa_kode: coa.aset, kredit: a.harga_perolehan,
       keterangan: `Pelepasan aset ${a.kode}` });
     if (labaRugi > 0) {
       lines.push({ coa_kode: AKUN.pendapatan_lain(), kredit: labaRugi, keterangan: 'Laba pelepasan aset' });
@@ -175,19 +278,46 @@ export function disposal(aset_id, { tanggal, nilai_jual = 0, keterangan, metode 
   });
 }
 
-/** Mencatat pemeliharaan aset. */
+/**
+ * Mencatat pemeliharaan aset. Biaya pemeliharaan langsung dibebankan:
+ *   D Beban Pemeliharaan   K Kas / Bank / Utang Usaha
+ */
 export function maintenance(aset_id, data, ctx) {
   const a = get('SELECT * FROM aset_tetap WHERE id = ?', [aset_id]);
   if (!a) throw notFound('Aset tidak ditemukan');
-  const { lastInsertRowid: id } = run(
-    `INSERT INTO aset_maintenance(aset_id, tanggal, jenis, biaya, vendor, keterangan, jadwal_berikutnya)
-     VALUES(?,?,?,?,?,?,?)`,
-    [aset_id, data.tanggal || today(), data.jenis || 'perawatan rutin', rupiah(data.biaya || 0),
-      data.vendor || null, data.keterangan || null, data.jadwal_berikutnya || null],
-  );
-  logAudit(ctx, { aksi: 'create', modul: 'aset', entitas_id: aset_id,
-    keterangan: `Pemeliharaan ${a.kode}: ${data.jenis || 'perawatan'} Rp ${rupiah(data.biaya || 0).toLocaleString('id-ID')}` });
-  return { id };
+  const biaya = rupiah(data.biaya || 0);
+  if (biaya < 0) throw badRequest('Biaya pemeliharaan tidak boleh negatif');
+  const tanggal = data.tanggal || today();
+  const metode = data.metode_bayar || 'tunai';
+  return tx(() => {
+    let jurnal = null;
+    if (biaya > 0) {
+      const lawan = metode === 'hutang' ? AKUN.hutang_usaha() : akunKasMetode(metode, data.bank_account_id);
+      jurnal = postJournal({
+        tanggal, tipe: metode === 'hutang' ? 'umum' : 'kas_keluar', referensi: `maintenance:${aset_id}`,
+        keterangan: `Pemeliharaan aset ${a.kode} - ${data.jenis || 'perawatan'}`,
+        cabang_id: a.cabang_id, unit_usaha_id: a.unit_usaha_id,
+        lines: [
+          { coa_kode: AKUN.beban_pemeliharaan(), debit: biaya, keterangan: `Pemeliharaan ${a.kode}` },
+          { coa_kode: lawan, kredit: biaya, keterangan: data.vendor || `Pemeliharaan ${a.kode}` },
+        ],
+      }, ctx);
+      if (metode === 'hutang') {
+        run(`INSERT INTO hutang_piutang(jenis, referensi, pihak, tanggal, jatuh_tempo, nominal)
+             VALUES('hutang',?,?,?,?,?)`,
+        [`maintenance:${aset_id}`, data.vendor || null, tanggal, data.jatuh_tempo || tanggal, biaya]);
+      }
+    }
+    const { lastInsertRowid: id } = run(
+      `INSERT INTO aset_maintenance(aset_id, tanggal, jenis, biaya, vendor, keterangan, jadwal_berikutnya)
+       VALUES(?,?,?,?,?,?,?)`,
+      [aset_id, tanggal, data.jenis || 'perawatan rutin', biaya,
+        data.vendor || null, data.keterangan || null, data.jadwal_berikutnya || null],
+    );
+    logAudit(ctx, { aksi: 'create', modul: 'aset', entitas_id: aset_id,
+      keterangan: `Pemeliharaan ${a.kode}: ${data.jenis || 'perawatan'} Rp ${biaya.toLocaleString('id-ID')}` });
+    return { id, jurnal };
+  });
 }
 
 /** Ringkasan aset untuk dashboard & laporan. */

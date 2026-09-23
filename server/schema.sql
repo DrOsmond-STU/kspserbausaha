@@ -324,6 +324,7 @@ CREATE TABLE IF NOT EXISTS transaksi_simpanan (
   metode          TEXT NOT NULL DEFAULT 'tunai', -- tunai|transfer|potong_gaji|pindah_buku
   bank_account_id INTEGER REFERENCES bank_account(id),
   petugas         TEXT,
+  status          TEXT NOT NULL DEFAULT 'posted',  -- posted|batal
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_trxsim_rek ON transaksi_simpanan(rekening_id, tanggal);
@@ -472,6 +473,7 @@ CREATE TABLE IF NOT EXISTS jurnal (
   is_recurring  INTEGER NOT NULL DEFAULT 0,
   dibuat_oleh   TEXT,
   void_alasan   TEXT,
+  sumber        TEXT,                   -- manual|recurring|sistem
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_jurnal_tanggal ON jurnal(tanggal);
@@ -525,6 +527,8 @@ CREATE TABLE IF NOT EXISTS kas_bank (
   rekonsiliasi  INTEGER NOT NULL DEFAULT 0,
   tanggal_rekon TEXT,
   dibuat_oleh   TEXT,
+  status        TEXT NOT NULL DEFAULT 'posted',  -- posted|batal
+  alasan_batal  TEXT,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -26,6 +26,15 @@ db.exec('PRAGMA busy_timeout = 5000');
  */
 const KOLOM_SUSULAN = [
   ['users', 'terkunci_sampai', 'TEXT'],
+  // Asal jurnal: 'manual' (jurnal umum), 'recurring', atau 'sistem' (dibuat
+  // otomatis oleh modul). Jurnal sistem hanya boleh dibatalkan lewat dokumen
+  // sumbernya agar buku pembantu (simpanan, kas, stok) tetap sejalan.
+  ['jurnal', 'sumber', 'TEXT'],
+  ['kas_bank', 'status', "TEXT NOT NULL DEFAULT 'posted'"],
+  ['kas_bank', 'alasan_batal', 'TEXT'],
+  ['transaksi_simpanan', 'status', "TEXT NOT NULL DEFAULT 'posted'"],
+  ['pembelian', 'alasan_batal', 'TEXT'],
+  ['anggaran', 'catatan_revisi', 'TEXT'],
 ];
 
 /** Menjalankan skema (idempoten - seluruh DDL memakai IF NOT EXISTS). */

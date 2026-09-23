@@ -8,6 +8,7 @@ import { logAudit, verifyChain } from '../lib/audit.js';
 import { ROLES, ROLE_CODES, MODULES, roleInfo } from '../lib/rbac.js';
 import { idParam, num, str, oneOf, today } from '../lib/util.js';
 import { KOMPONEN } from '../services/shu.js';
+import { PEMETAAN_AKUN, KELOMPOK_AKUN } from '../services/accounting.js';
 import { copyFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -136,8 +137,51 @@ router.get('/api/admin/settings', 'admin.view', ({ query }) => {
     data: rows,
     map: Object.fromEntries(rows.map((r) => [r.key, r.value])),
     komponen_shu: KOMPONEN.map((k) => ({ kode: k.kode, nama: k.nama, default: k.default })),
+    // Metadata supaya antarmuka menampilkan pemetaan akun sebagai pilihan
+    // akun (bukan isian bebas) dan menyaring menurut tipe akun yang sah.
+    pemetaan_akun: PEMETAAN_AKUN.map((p) => ({ key: `coa.${p.kunci}`, label: p.label, tipe: p.tipe })),
+    kelompok_akun: KELOMPOK_AKUN.map((k) => ({ key: `kelompok.${k.kunci}`, label: k.label })),
+    daftar_akun: all(`SELECT kode, nama, tipe, is_kas, is_bank FROM coa
+                       WHERE is_postable = 1 AND status = 'aktif' ORDER BY kode`),
   };
 });
+
+/**
+ * Validasi pengaturan pemetaan akun & kelompok akun. Pemetaan yang salah
+ * membuat seluruh jurnal otomatis modul terkait gagal, jadi ditolak sejak
+ * disimpan - bukan saat transaksi pertama kali dicoba.
+ */
+function validasiPengaturan(key, value) {
+  const v = String(value ?? '').trim();
+  if (key.startsWith('coa.')) {
+    const p = PEMETAAN_AKUN.find((x) => `coa.${x.kunci}` === key);
+    if (!p) throw badRequest(`Pemetaan akun "${key}" tidak dikenal`);
+    if (!v) throw badRequest(`Pemetaan akun "${p.label}" wajib diisi`);
+    const akun = get('SELECT kode, nama, tipe, is_postable, status FROM coa WHERE kode = ?', [v]);
+    if (!akun) throw badRequest(`Akun ${v} untuk "${p.label}" tidak terdaftar dalam bagan akun`);
+    if (!akun.is_postable) throw badRequest(`Akun ${v} - ${akun.nama} adalah akun induk dan tidak dapat dipakai untuk "${p.label}"`);
+    if (akun.status !== 'aktif') throw badRequest(`Akun ${v} - ${akun.nama} tidak aktif`);
+    if (akun.tipe !== p.tipe) {
+      throw badRequest(`Akun ${v} - ${akun.nama} bertipe ${akun.tipe}, sedangkan "${p.label}" memerlukan akun bertipe ${p.tipe}`);
+    }
+    if ((key === 'coa.kas' || key === 'coa.bank')
+      && !get('SELECT 1 FROM coa WHERE kode = ? AND (is_kas = 1 OR is_bank = 1)', [v])) {
+      throw badRequest(`Akun ${v} - ${akun.nama} belum ditandai sebagai akun kas/bank pada bagan akun`);
+    }
+    return v;
+  }
+  if (key.startsWith('kelompok.')) {
+    if (!KELOMPOK_AKUN.some((k) => `kelompok.${k.kunci}` === key)) {
+      throw badRequest(`Kelompok akun "${key}" tidak dikenal`);
+    }
+    const awalan = v.split(',').map((x) => x.trim()).filter(Boolean);
+    if (awalan.some((a) => !/^[0-9A-Za-z.-]+$/.test(a))) {
+      throw badRequest(`Isian "${key}" harus berupa awalan kode akun dipisah koma, mis. 1-11,1-12`);
+    }
+    return awalan.join(',');
+  }
+  return value;
+}
 
 router.put('/api/admin/settings', 'admin.update', ({ body, ctx }) => {
   const entries = Object.entries(body.settings || body || {});
@@ -145,7 +189,7 @@ router.put('/api/admin/settings', 'admin.update', ({ body, ctx }) => {
   return tx(() => {
     const before = {};
     for (const [k] of entries) before[k] = setting(k, null);
-    for (const [k, v] of entries) setSetting(k, v);
+    for (const [k, v] of entries) setSetting(k, validasiPengaturan(k, v));
     // Validasi khusus: total alokasi SHU harus 100%
     const totalShu = KOMPONEN.reduce((s, k) => s + Number(setting(`shu.${k.kode}`, k.default)), 0);
     if (entries.some(([k]) => k.startsWith('shu.')) && Math.abs(totalShu - 100) > 0.01) {

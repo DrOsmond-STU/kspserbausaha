@@ -5,7 +5,7 @@ import { createRouter, notFound, badRequest, conflict } from '../lib/http.js';
 import { all, get, run, scalar, tx, nextNumber } from '../db.js';
 import { logAudit } from '../lib/audit.js';
 import { idParam, num, str, date, oneOf, today, rupiah, terbilang, yearOf } from '../lib/util.js';
-import { postJournal, saldoAkun, AKUN } from '../services/accounting.js';
+import { postJournal, voidJournal, saldoAkun, AKUN, assertAkunKas } from '../services/accounting.js';
 
 const router = createRouter();
 
@@ -17,13 +17,15 @@ router.get('/api/kas', 'kas.view', ({ query }) => {
   if (query.dari) { w.push('tanggal >= ?'); p.push(query.dari); }
   if (query.sampai) { w.push('tanggal <= ?'); p.push(query.sampai); }
   if (query.jenis) { w.push('jenis = ?'); p.push(query.jenis); }
+  if (query.status) { w.push('status = ?'); p.push(query.status); }
   const where = w.length ? `WHERE ${w.join(' AND ')}` : '';
   const limit = Math.min(Number(query.limit) || 100, 500);
   const data = all(`SELECT * FROM kas_bank ${where} ORDER BY tanggal DESC, id DESC LIMIT ?`, [...p, limit]);
+  const berlaku = data.filter((r) => r.status !== 'batal');
   return {
     data,
-    total_masuk: data.filter((r) => r.jenis === 'kas_masuk').reduce((s, r) => s + r.nominal, 0),
-    total_keluar: data.filter((r) => r.jenis === 'kas_keluar').reduce((s, r) => s + r.nominal, 0),
+    total_masuk: berlaku.filter((r) => r.jenis === 'kas_masuk').reduce((s, r) => s + r.nominal, 0),
+    total_keluar: berlaku.filter((r) => r.jenis === 'kas_keluar').reduce((s, r) => s + r.nominal, 0),
   };
 });
 
@@ -48,6 +50,7 @@ router.post('/api/kas', 'kas.create', ({ body, ctx }) => {
   const coaKas = str(body, 'coa_kas', { max: 20, label: 'Akun kas/bank' });
   const coaLawan = str(body, 'coa_lawan', { max: 20, label: 'Akun lawan' });
   if (coaKas === coaLawan) throw badRequest('Akun kas dan akun lawan tidak boleh sama');
+  assertAkunKas(coaKas);
   const tanggal = date(body, 'tanggal', { required: false, dflt: today() });
   const keterangan = str(body, 'keterangan', { max: 300, label: 'Keterangan' });
 
@@ -82,6 +85,8 @@ router.post('/api/kas/transfer', 'kas.create', ({ body, ctx }) => {
   const dari = str(body, 'coa_kas', { max: 20, label: 'Akun asal' });
   const ke = str(body, 'coa_tujuan', { max: 20, label: 'Akun tujuan' });
   if (dari === ke) throw badRequest('Akun asal dan tujuan tidak boleh sama');
+  assertAkunKas(dari, 'Akun asal');
+  assertAkunKas(ke, 'Akun tujuan');
   const nominal = num(body, 'nominal', { min: 1 });
   const tanggal = date(body, 'tanggal', { required: false, dflt: today() });
   const keterangan = str(body, 'keterangan', { required: false, max: 300 }) || `Transfer ${dari} → ${ke}`;
@@ -100,6 +105,27 @@ router.post('/api/kas/transfer', 'kas.create', ({ body, ctx }) => {
     logAudit(ctx, { aksi: 'create', modul: 'kas', entitas_id: id,
       keterangan: `${nomor} transfer Rp ${nominal.toLocaleString('id-ID')} dari ${dari} ke ${ke}` });
     return { id, nomor, jurnal };
+  });
+});
+
+/**
+ * Membatalkan bukti kas / transfer yang salah input. Bukti tetap tersimpan
+ * berstatus "batal" dan jurnalnya dibalik (reversing entry).
+ */
+router.post('/api/kas/:id/batal', 'kas.update', ({ params, body, ctx }) => {
+  const id = idParam(params);
+  const alasan = str(body, 'alasan', { max: 300, label: 'Alasan pembatalan' });
+  const k = get('SELECT * FROM kas_bank WHERE id = ?', [id]);
+  if (!k) throw notFound('Bukti kas tidak ditemukan');
+  if (k.status === 'batal') throw conflict('Bukti kas ini sudah dibatalkan');
+  if (k.rekonsiliasi) throw conflict('Bukti kas yang sudah direkonsiliasi tidak dapat dibatalkan',
+    'Batalkan tanda rekonsiliasinya terlebih dahulu.');
+  return tx(() => {
+    const jurnal = k.jurnal_id ? voidJournal(k.jurnal_id, `Pembatalan ${k.nomor}: ${alasan}`, ctx, { sistem: true }) : null;
+    run("UPDATE kas_bank SET status = 'batal', alasan_batal = ? WHERE id = ?", [alasan, id]);
+    logAudit(ctx, { aksi: 'void', modul: 'kas', entitas_id: id,
+      keterangan: `${k.nomor} dibatalkan: ${alasan}`, before: k });
+    return { ...get('SELECT * FROM kas_bank WHERE id = ?', [id]), jurnal };
   });
 });
 
@@ -122,7 +148,7 @@ router.post('/api/kas/rekonsiliasi', 'kas.update', ({ body, ctx }) => {
 
 router.get('/api/kas/rekonsiliasi/belum', 'kas.view', ({ query }) => ({
   data: all(
-    `SELECT * FROM kas_bank WHERE rekonsiliasi = 0 ${query.sampai ? 'AND tanggal <= ?' : ''}
+    `SELECT * FROM kas_bank WHERE rekonsiliasi = 0 AND status <> 'batal' ${query.sampai ? 'AND tanggal <= ?' : ''}
       ORDER BY tanggal DESC LIMIT 200`, query.sampai ? [query.sampai] : []),
 }));
 
@@ -132,6 +158,7 @@ router.get('/api/kas/rekonsiliasi/belum', 'kas.view', ({ query }) => ({
  */
 router.post('/api/kas/opname', 'kas.create', ({ body, ctx }) => {
   const coaKas = str(body, 'coa_kas', { max: 20, label: 'Akun kas' });
+  assertAkunKas(coaKas, 'Akun kas');
   const fisik = num(body, 'saldo_fisik', { min: 0, label: 'Saldo fisik' });
   const tanggal = date(body, 'tanggal', { required: false, dflt: today() });
   const sistem = saldoAkun(coaKas, { sampai: tanggal }).saldo;

@@ -47,8 +47,9 @@ router.post('/api/shu/:id/sahkan', 'shu.approve', ({ params, body, ctx }) => shu
 }, ctx));
 
 router.post('/api/shu/:id/bagikan', 'shu.approve', ({ params, body, ctx }) => shu.bagikan(idParam(params), {
-  metode: oneOf(body, 'metode', ['tunai', 'simpanan'], { required: false, dflt: 'simpanan' }),
+  metode: oneOf(body, 'metode', ['tunai', 'transfer', 'simpanan'], { required: false, dflt: 'simpanan' }),
   tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
+  bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
 }, ctx));
 
 // --------------------------- Unit Usaha ---------------------------
@@ -128,9 +129,22 @@ router.post('/api/aset', 'aset.create', ({ body, ctx }) => aset.tambah({
   lokasi: body.lokasi, cabang_id: body.cabang_id ? Number(body.cabang_id) : null,
   unit_usaha_id: body.unit_usaha_id ? Number(body.unit_usaha_id) : null,
   penanggung_jawab: body.penanggung_jawab,
-  coa_aset: body.coa_aset, coa_akumulasi: body.coa_akumulasi, coa_beban: body.coa_beban,
-  barcode: body.barcode, buat_jurnal: body.buat_jurnal === true, metode_bayar: body.metode_bayar,
+  coa_aset: body.coa_aset || null, coa_akumulasi: body.coa_akumulasi || null, coa_beban: body.coa_beban || null,
+  barcode: body.barcode,
+  // Perolehan selalu dijurnal otomatis kecuali aset lama yang sudah ada di
+  // neraca pembuka (saldo_awal). buat_jurnal/metode_bayar dipertahankan
+  // untuk klien lama.
+  sumber_perolehan: oneOf(body, 'sumber_perolehan', aset.SUMBER_PEROLEHAN, { required: false, dflt: null })
+    || (body.buat_jurnal === false ? 'saldo_awal' : (body.metode_bayar === 'transfer' ? 'transfer' : 'kas')),
+  bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
+  akumulasi_awal: num(body, 'akumulasi_awal', { required: false, min: 0 }),
+  pemasok: str(body, 'pemasok', { required: false, max: 150 }),
+  jatuh_tempo: date(body, 'jatuh_tempo', { required: false, dflt: null }),
 }, ctx));
+
+router.put('/api/aset/:id', 'aset.update', ({ params, body, ctx }) => aset.ubah(idParam(params), body, ctx));
+
+router.delete('/api/aset/:id', 'aset.delete', ({ params, ctx }) => aset.hapus(idParam(params), ctx));
 
 router.post('/api/aset/penyusutan', 'aset.post', ({ body, ctx }) =>
   aset.jalankanPenyusutan(str(body, 'periode', { max: 7, label: 'Periode (YYYY-MM)' }), ctx));
@@ -140,10 +154,20 @@ router.post('/api/aset/:id/disposal', 'aset.update', ({ params, body, ctx }) => 
   nilai_jual: num(body, 'nilai_jual', { required: false, min: 0 }),
   keterangan: str(body, 'keterangan', { required: false, max: 300 }),
   metode: oneOf(body, 'metode', ['tunai', 'transfer'], { required: false, dflt: 'tunai' }),
+  bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
 }, ctx));
 
-router.post('/api/aset/:id/maintenance', 'aset.update', ({ params, body, ctx }) =>
-  aset.maintenance(idParam(params), body, ctx));
+router.post('/api/aset/:id/maintenance', 'aset.update', ({ params, body, ctx }) => aset.maintenance(idParam(params), {
+  tanggal: date(body, 'tanggal', { required: false, dflt: today() }),
+  jenis: str(body, 'jenis', { required: false, max: 100 }),
+  biaya: num(body, 'biaya', { required: false, min: 0 }),
+  vendor: str(body, 'vendor', { required: false, max: 150 }),
+  keterangan: str(body, 'keterangan', { required: false, max: 300 }),
+  jadwal_berikutnya: date(body, 'jadwal_berikutnya', { required: false, dflt: null }),
+  metode_bayar: oneOf(body, 'metode_bayar', ['tunai', 'transfer', 'hutang'], { required: false, dflt: 'tunai' }),
+  bank_account_id: body.bank_account_id ? Number(body.bank_account_id) : null,
+  jatuh_tempo: date(body, 'jatuh_tempo', { required: false, dflt: null }),
+}, ctx));
 
 // ------------------------------- RAT -------------------------------
 
