@@ -6,6 +6,7 @@ import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 import { migrate, run, setting } from './db.js';
 import {
@@ -16,6 +17,7 @@ import {
   COOKIE_NAME, parseCookies, requireUser, sessionCookie, clearCookie, purgeExpiredSessions,
 } from './lib/auth.js';
 import { pastikanDataAwal } from './seed.js';
+import { profilKoperasi } from './lib/profil.js';
 import { jalankanRecurring } from './services/accounting.js';
 
 import authRoutes from './routes/auth.js';
@@ -62,6 +64,14 @@ const MIME = {
 
 /** Rute publik yang tidak memerlukan sesi. */
 const PUBLIK = new Set(['POST /api/auth/login', 'POST /api/auth/logout', 'GET /api/info']);
+
+const sidikLogo = (isi) => createHash('sha1').update(isi).digest('hex').slice(0, 12);
+
+/** Nama koperasi & alamat logo untuk halaman yang tampil sebelum masuk. */
+function identitasPublik() {
+  const p = profilKoperasi();
+  return { nama: p.nama, logo: p.logo ? `/api/logo?v=${sidikLogo(p.logo)}` : '' };
+}
 
 async function sajikanStatis(req, res, pathname) {
   const bersih = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
@@ -133,7 +143,27 @@ const server = http.createServer(async (req, res) => {
       // contoh boleh ditampilkan. Bila pengaturan belum ada - misalnya basis
       // data lama - jawabannya tidak, karena itu pilihan yang aman.
       demo: setting('mode_demo', '0') === '1',
+      // Identitas yang memang tampil di setiap cetakan, sehingga aman dibuka
+      // sebelum masuk: halaman masuk & ikon tab memakai logo dari Setup Koperasi.
+      koperasi: identitasPublik(),
     });
+    return;
+  }
+
+  // Logo koperasi sebagai berkas gambar biasa (bukan data URI) supaya dapat
+  // dipakai sebagai <img> dan ikon tab. Alamatnya membawa ?v=<sidik> dari
+  // /api/info, jadi logo baru langsung terpakai tanpa menunggu singgahan habis.
+  if (pathname === '/api/logo' && (req.method === 'GET' || req.method === 'HEAD')) {
+    const m = /^data:(image\/(?:png|jpeg|jpg));base64,(.+)$/.exec(profilKoperasi().logo || '');
+    if (!m) { sendText(res, 404, 'Logo belum diatur'); return; }
+    const data = Buffer.from(m[2], 'base64');
+    res.writeHead(200, {
+      'Content-Type': m[1] === 'image/jpg' ? 'image/jpeg' : m[1],
+      'Content-Length': data.length,
+      'Cache-Control': 'public, max-age=86400',
+      ETag: `"${sidikLogo(m[2])}"`,
+    });
+    res.end(req.method === 'HEAD' ? undefined : data);
     return;
   }
 

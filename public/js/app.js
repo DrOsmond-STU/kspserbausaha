@@ -20,7 +20,23 @@ const POLA_MASUK = '<svg viewBox="0 0 320 140" width="100%" height="100%" preser
     .map(([x, y, w, o]) => `<rect x="${x}" y="${y}" width="${w}" height="24" rx="6" opacity="${o}"/>`).join('')
   + '</g></svg>';
 
+/** Ikon tab browser mengikuti logo koperasi; tanpa logo kembali ke bawaan. */
+const FAVICON_BAWAAN = document.querySelector('link[rel=icon]')?.href || '';
+function pasangFavicon(src) {
+  const tautan = document.querySelector('link[rel=icon]');
+  if (tautan) tautan.href = src || FAVICON_BAWAAN;
+}
+
+/** Kotak lambang: logo koperasi dari Setup Koperasi bila ada, bila tidak lambang bawaan. */
+function isiTanda(wadah, logo, ukuran) {
+  kosongkan(wadah).append(logo ? el('img', { src: logo, alt: 'Logo koperasi' }) : lambang(ukuran));
+  wadah.classList.toggle('berlogo', !!logo);
+  return wadah;
+}
+
 function layarMasuk(pesanAwal) {
+  const kop = negara.aplikasi?.koperasi || {};
+  pasangFavicon(kop.logo);
   const form = el('form', { onsubmit: async (e) => { e.preventDefault(); await kirim(); } }, [
     kolom('Nama Pengguna', input('username', { required: true, autocomplete: 'username',
       placeholder: 'contoh: admin' })),
@@ -69,8 +85,8 @@ function layarMasuk(pesanAwal) {
     // Pola ubin dekoratif; murni hiasan sehingga disembunyikan dari pembaca layar.
     el('div.masuk-pola', { 'aria-hidden': 'true', html: POLA_MASUK }),
     el('div.merek-atas', [
-      el('span.tanda-masuk', lambang(26)),
-      el('div', [el('div.nama', 'ECMS'), el('div.tag', 'Koperasi Serba Usaha')]),
+      isiTanda(el('span.tanda-masuk'), kop.logo, 26),
+      el('div', { gaya: { minWidth: 0 } }, [el('div.nama', 'ECMS'), el('div.tag', kop.nama || 'Koperasi Serba Usaha')]),
     ]),
     el('div', [
       el('h2', 'Kelola seluruh usaha koperasi dari satu tempat'),
@@ -84,6 +100,7 @@ function layarMasuk(pesanAwal) {
 
   const kartu = el('div.kartu-masuk', [
     el('div.merek', [
+      kop.logo ? el('img.logo-koperasi', { src: kop.logo, alt: `Logo ${kop.nama || 'koperasi'}` }) : null,
       el('div.logo', 'ECMS'),
       el('h1', 'Masuk ke sistem'),
       el('div.sub', 'Gunakan akun yang diberikan pengurus koperasi.'),
@@ -115,7 +132,7 @@ async function gambarKerangka() {
 
   const sidebar = el('aside.sidebar#sidebar', [
     el('div.sidebar-kepala', [
-      el('div.tanda#tanda-koperasi', lambang(22)),
+      isiTanda(el('div.tanda#tanda-koperasi'), negara.aplikasi?.koperasi?.logo, 22),
       el('div', { gaya: { minWidth: 0 } }, [
         el('div.logo', 'ECMS'),
         el('div.nama-koperasi#nama-koperasi', negara.koperasi || 'Koperasi Serba Usaha'),
@@ -190,9 +207,11 @@ export async function segarkanIdentitas(paksa = false) {
     const nama = document.getElementById('nama-koperasi');
     if (nama) { nama.textContent = negara.koperasi || 'Koperasi Serba Usaha'; nama.title = nama.textContent; }
     const tanda = document.getElementById('tanda-koperasi');
-    if (tanda) {
-      kosongkan(tanda).append(d.profil?.logo ? el('img', { src: d.profil.logo, alt: 'Logo koperasi' }) : lambang(22));
-      tanda.classList.toggle('berlogo', !!d.profil?.logo);
+    if (tanda) isiTanda(tanda, d.profil?.logo, 22);
+    pasangFavicon(d.profil?.logo);
+    // Halaman masuk berikutnya (sesudah keluar) memakai logo & nama terbaru.
+    if (negara.aplikasi) {
+      negara.aplikasi.koperasi = { nama: negara.koperasi, logo: d.profil?.logo || '' };
     }
     // Hanya pemegang akses administrator yang diingatkan; pengguna lain tidak
     // dapat berbuat apa-apa atas status aktivasi.

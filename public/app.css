@@ -298,6 +298,12 @@ table { border-collapse:collapse; width:100%; }
   box-shadow:var(--bayang); padding:32px;
 }
 .kartu-masuk .merek { margin-bottom:24px; }
+.kartu-masuk .merek .logo-koperasi {
+  display:block; width:auto; height:56px; max-width:180px; object-fit:contain; margin-bottom:14px;
+}
+.masuk-merek .merek-atas .tanda-masuk.berlogo { background:#fff; padding:4px; overflow:hidden; }
+.masuk-merek .merek-atas .tanda-masuk.berlogo img { width:100%; height:100%; object-fit:contain; }
+.masuk-merek .merek-atas .tag { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .kartu-masuk .merek .logo {
   display:none; font-family:var(--font-judul); font-size:26px; font-weight:800;
   letter-spacing:.14em; color:var(--brand); margin-bottom:10px;
@@ -323,6 +329,7 @@ table { border-collapse:collapse; width:100%; }
   .masuk-form { background:var(--hero-bg); align-content:center; padding:32px 16px; }
   .kartu-masuk { max-width:440px; padding:28px 22px; box-shadow:var(--bayang-modal); }
   .kartu-masuk .merek { text-align:center; }
+  .kartu-masuk .merek .logo-koperasi { margin-left:auto; margin-right:auto; }
   .kartu-masuk .merek .logo { display:block; }
 }
 

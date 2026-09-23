@@ -164,10 +164,21 @@ describe('Setup Koperasi', () => {
     assert.equal(cetak.isi.profil.logo, LOGO_PNG);
     assert.ok(cetak.isi.ttd.default && cetak.isi.ttd.laporan);
 
+    // Halaman masuk (tanpa sesi) mendapat nama & alamat logo, lalu gambarnya
+    const info = await (await fetch(`${asal}/api/info`)).json();
+    assert.equal(info.koperasi.nama, 'KSU Uji Laporan');
+    assert.match(info.koperasi.logo, /^\/api\/logo\?v=[0-9a-f]{12}$/);
+    const gambar = await fetch(`${asal}${info.koperasi.logo}`);
+    assert.equal(gambar.status, 200);
+    assert.equal(gambar.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await gambar.arrayBuffer()), Buffer.from(LOGO_PNG.split(',')[1], 'base64'));
+
     // Logo dapat dihapus tanpa mengubah isian lain
     const hapus = await panggil('PUT', '/api/setup/koperasi', { logo: '' });
     assert.equal(hapus.isi.profil.logo, '');
     assert.equal(hapus.isi.profil.nama, 'KSU Uji Laporan');
+    assert.equal((await (await fetch(`${asal}/api/info`)).json()).koperasi.logo, '');
+    assert.equal((await fetch(`${asal}/api/logo`)).status, 404);
   });
 
   test('hak akses: pengawas hanya dapat melihat; staf gudang tidak dapat membuka', async () => {
