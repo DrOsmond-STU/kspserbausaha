@@ -35,7 +35,16 @@ const KOLOM_SUSULAN = [
   ['transaksi_simpanan', 'status', "TEXT NOT NULL DEFAULT 'posted'"],
   ['pembelian', 'alasan_batal', 'TEXT'],
   ['anggaran', 'catatan_revisi', 'TEXT'],
+  // Koreksi transaksi tersimpan (batal / ubah)
+  ['penjualan', 'alasan_batal', 'TEXT'],
+  ['pinjaman_angsuran', 'status', "TEXT NOT NULL DEFAULT 'posted'"],
+  ['pinjaman_angsuran', 'alasan_batal', 'TEXT'],
   ['stock_opname', 'alasan_batal', 'TEXT'],
+  // Nilai persediaan per barang disimpan utuh (bukan qty × HPP yang sudah
+  // dibulatkan) agar kartu stok selalu sama persis dengan akun persediaan.
+  ['barang', 'nilai_persediaan', 'INTEGER'],
+  ['mutasi_stok', 'nilai', 'INTEGER'],
+  ['penjualan_detail', 'hpp_nilai', 'INTEGER'],
 ];
 
 /** Menjalankan skema (idempoten - seluruh DDL memakai IF NOT EXISTS). */
@@ -45,6 +54,10 @@ export function migrate() {
     const ada = db.prepare(`PRAGMA table_info(${tabel})`).all().some((k) => k.name === kolom);
     if (!ada) db.exec(`ALTER TABLE ${tabel} ADD COLUMN ${kolom} ${tipe}`);
   }
+  // Basis data lama: nilai persediaan awal = stok × HPP rata-rata yang tercatat
+  db.exec(`UPDATE barang SET nilai_persediaan = ROUND(harga_beli *
+             (SELECT COALESCE(SUM(qty),0) FROM stok WHERE stok.barang_id = barang.id))
+           WHERE nilai_persediaan IS NULL`);
 }
 
 const plain = (row) => (row ? { ...row } : row);

@@ -169,7 +169,14 @@ mountCrud(router, '/api/master/barang', 'master', crud({
     'coa_persediaan', 'coa_penjualan', 'coa_hpp', 'status'],
   required: ['kode', 'nama'], unique: ['kode'], search: ['kode', 'nama', 'barcode'], orderBy: 'kode ASC',
   filters: ['kategori_id'],
-  validate(data) {
+  validate(data, before) {
+    // HPP rata-rata bergerak dihitung sistem dari mutasi stok. Mengetiknya
+    // manual saat masih ada stok akan menggeser nilai persediaan tanpa jurnal.
+    if (before && data.harga_beli !== undefined && Number(data.harga_beli) !== Number(before.harga_beli)
+      && scalar('SELECT COALESCE(SUM(qty),0) FROM stok WHERE barang_id = ?', [before.id]) !== 0) {
+      throw conflict('Harga pokok (HPP) barang yang masih memiliki stok dihitung otomatis dan tidak dapat diubah',
+        'Koreksi nilai persediaan melalui Persediaan → Penyesuaian Stok agar ikut terjurnal.');
+    }
     cekAkun(data, 'coa_persediaan', { tipe: 'aset', label: 'Akun persediaan' });
     cekAkun(data, 'coa_penjualan', { tipe: 'pendapatan', label: 'Akun penjualan' });
     cekAkun(data, 'coa_hpp', { tipe: 'beban', label: 'Akun HPP' });

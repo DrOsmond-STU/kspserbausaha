@@ -40,12 +40,20 @@ export function totalStok(barang_id) {
 }
 
 /**
- * Mencatat mutasi stok dan (untuk barang masuk) memperbarui HPP rata-rata bergerak.
+ * Mencatat mutasi stok dan memperbarui nilai persediaan rata-rata bergerak.
+ *
+ * Nilai persediaan setiap barang disimpan utuh (kolom nilai_persediaan).
+ * Barang keluar dinilai sebanding porsinya terhadap nilai itu - dan barang
+ * terakhir mengambil seluruh sisanya - sehingga jumlah nilai di kartu stok
+ * selalu sama persis dengan saldo akun persediaan, tanpa selisih pembulatan.
+ * Nilai mutasi dikembalikan (`nilai`) dan WAJIB dipakai pemanggil untuk jurnal.
  *
  * @param {number} qty (+) masuk / (-) keluar
- * @param {number} harga harga satuan untuk mutasi masuk; diabaikan saat keluar
+ * @param {number} harga harga satuan barang masuk (0 = HPP rata-rata saat ini)
+ * @param {number} [nilai] nilai mutasi yang ditentukan pemanggil (mis. pembatalan)
+ * @param {boolean} [pindah] perpindahan antar gudang - nilai total tidak berubah
  */
-export function mutasi({ barang_id, gudang_id, tanggal, jenis, qty, harga = 0, batch, serial_number, expired, referensi, keterangan }, ctx) {
+export function mutasi({ barang_id, gudang_id, tanggal, jenis, qty, harga = 0, nilai = null, pindah = false, batch, serial_number, expired, referensi, keterangan }, ctx) {
   const barang = get('SELECT * FROM barang WHERE id = ?', [barang_id]);
   if (!barang) throw notFound(`Barang id ${barang_id} tidak ditemukan`);
   const gudangRow = get('SELECT * FROM gudang WHERE id = ?', [gudang_id]);
@@ -59,15 +67,24 @@ export function mutasi({ barang_id, gudang_id, tanggal, jenis, qty, harga = 0, b
       `Stok tersedia ${stokLama} ${barang.satuan}, diminta ${Math.abs(qty)} ${barang.satuan}`);
   }
 
-  // HPP rata-rata bergerak hanya dihitung ulang saat barang masuk dengan harga
+  const totalGlobal = totalStok(barang_id);
+  const nilaiLama = barang.nilai_persediaan ?? rupiah(totalGlobal * barang.harga_beli);
+  const totalBaru = totalGlobal + (pindah ? 0 : qty);
+  let nilaiMutasi = 0;
   let hpp = barang.harga_beli;
-  if (qty > 0 && harga > 0) {
-    const totalGlobal = totalStok(barang_id);
-    const nilaiLama = totalGlobal * barang.harga_beli;
-    const nilaiBaru = qty * harga;
-    const qtyTotal = totalGlobal + qty;
-    hpp = qtyTotal > 0 ? rupiah((nilaiLama + nilaiBaru) / qtyTotal) : harga;
-    run('UPDATE barang SET harga_beli = ? WHERE id = ?', [hpp, barang_id]);
+  if (!pindah) {
+    if (qty > 0) {
+      nilaiMutasi = nilai !== null ? rupiah(nilai) : rupiah(qty * (harga > 0 ? harga : barang.harga_beli));
+    } else if (nilai !== null) {
+      nilaiMutasi = rupiah(nilai);
+    } else {
+      nilaiMutasi = totalBaru <= 0 ? nilaiLama : rupiah(nilaiLama * (-qty) / totalGlobal);
+    }
+    const nilaiBaru = qty > 0 ? nilaiLama + nilaiMutasi : nilaiLama - nilaiMutasi;
+    if (totalBaru > 0) hpp = rupiah(nilaiBaru / totalBaru);
+    else if (qty > 0) hpp = rupiah(nilaiMutasi / qty);
+    run('UPDATE barang SET harga_beli = ?, nilai_persediaan = ? WHERE id = ?',
+      [Math.max(0, hpp), totalBaru <= 0 ? 0 : nilaiBaru, barang_id]);
   }
 
   run(
@@ -77,10 +94,11 @@ export function mutasi({ barang_id, gudang_id, tanggal, jenis, qty, harga = 0, b
   );
   const { lastInsertRowid: id } = run(
     `INSERT INTO mutasi_stok(tanggal, barang_id, gudang_id, jenis, qty, harga, saldo_qty,
-       batch, serial_number, expired, referensi, keterangan)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [tanggal || today(), barang_id, gudang_id, jenis, qty, qty > 0 ? harga : hpp, stokBaru,
-      batch || null, serial_number || null, expired || null, referensi || null, keterangan || null],
+       batch, serial_number, expired, referensi, keterangan, nilai)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [tanggal || today(), barang_id, gudang_id, jenis, qty, qty > 0 && harga > 0 ? harga : barang.harga_beli, stokBaru,
+      batch || null, serial_number || null, expired || null, referensi || null, keterangan || null,
+      pindah ? 0 : (qty > 0 ? nilaiMutasi : -nilaiMutasi)],
   );
 
   // Peringatan stok minimum / reorder point
@@ -90,7 +108,7 @@ export function mutasi({ barang_id, gudang_id, tanggal, jenis, qty, harga = 0, b
       pesan: `${barang.kode} - ${barang.nama}: sisa ${totalSesudah} ${barang.satuan} (ROP ${barang.reorder_point})`,
       tipe: 'warning', link: '#/persediaan' });
   }
-  return { id, stok_sebelum: stokLama, stok_sesudah: stokBaru, hpp };
+  return { id, stok_sebelum: stokLama, stok_sesudah: stokBaru, hpp, nilai: nilaiMutasi };
 }
 
 /**
@@ -116,7 +134,7 @@ export function penyesuaianStok({ barang_id, gudang_id, tanggal, jenis = 'masuk'
     const m = mutasi({ barang_id, gudang_id, tanggal: tgl, jenis: masuk ? 'penyesuaian_masuk' : 'penyesuaian_keluar',
       qty: masuk ? q : -q, harga: masuk ? hargaSatuan : 0,
       referensi: 'penyesuaian', keterangan }, ctx);
-    const nilai = rupiah(q * hargaSatuan);
+    const nilai = m.nilai;
     let jurnal = null;
     if (nilai > 0) {
       const akunSediaan = akunBarang(barang).persediaan;
@@ -135,6 +153,17 @@ export function penyesuaianStok({ barang_id, gudang_id, tanggal, jenis = 'masuk'
   });
 }
 
+/**
+ * Mengeluarkan stok dengan nilai tertentu (bukan nilai rata-rata saat ini).
+ * Dipakai ketika membatalkan barang masuk: nilai yang dikeluarkan harus sama
+ * dengan nilai saat barang itu dicatat masuk, supaya persediaan di kartu stok
+ * tetap sama dengan saldo akun persediaan sesudah jurnalnya dibalik.
+ */
+export function keluarkanSenilai({ barang_id, gudang_id, tanggal, qty, nilai, jenis, referensi, keterangan }, ctx) {
+  return mutasi({ barang_id, gudang_id, tanggal, jenis, qty: -Math.abs(Number(qty)), nilai,
+    referensi, keterangan }, ctx);
+}
+
 /** Transfer stok antar gudang (tanpa jurnal karena nilai persediaan tidak berubah). */
 export function transferGudang({ barang_id, dari_gudang_id, ke_gudang_id, qty, tanggal, keterangan }, ctx) {
   if (dari_gudang_id === ke_gudang_id) throw badRequest('Gudang asal dan tujuan tidak boleh sama');
@@ -142,9 +171,9 @@ export function transferGudang({ barang_id, dari_gudang_id, ke_gudang_id, qty, t
   if (!(q > 0)) throw badRequest('Kuantitas transfer harus lebih besar dari nol');
   const tgl = tanggal || today();
   return tx(() => {
-    const keluar = mutasi({ barang_id, gudang_id: dari_gudang_id, tanggal: tgl, jenis: 'transfer_keluar',
+    const keluar = mutasi({ barang_id, gudang_id: dari_gudang_id, tanggal: tgl, jenis: 'transfer_keluar', pindah: true,
       qty: -q, referensi: `transfer:${ke_gudang_id}`, keterangan }, ctx);
-    const masuk = mutasi({ barang_id, gudang_id: ke_gudang_id, tanggal: tgl, jenis: 'transfer_masuk',
+    const masuk = mutasi({ barang_id, gudang_id: ke_gudang_id, tanggal: tgl, jenis: 'transfer_masuk', pindah: true,
       qty: q, referensi: `transfer:${dari_gudang_id}`, keterangan }, ctx);
     logAudit(ctx, { aksi: 'create', modul: 'persediaan', entitas_id: barang_id,
       keterangan: `Transfer ${q} unit barang #${barang_id}: gudang ${dari_gudang_id} → ${ke_gudang_id}` });
@@ -197,12 +226,16 @@ export function selesaikanOpname(opname_id, detail, ctx) {
       if (!Number.isFinite(fisik) || fisik < 0) throw badRequest('Kuantitas fisik tidak valid');
       const selisih = fisik - row.qty_sistem;
       const barang = get('SELECT * FROM barang WHERE id = ?', [row.barang_id]);
-      const nilai = rupiah(selisih * (barang?.harga_beli || 0));
+      let nilai = 0;
+      if (selisih !== 0) {
+        // Nilai selisih diambil dari mutasi stok supaya jurnal = kartu stok
+        const m = mutasi({ barang_id: row.barang_id, gudang_id: op.gudang_id, tanggal: op.tanggal, jenis: 'opname',
+          qty: selisih, referensi: `opname:${opname_id}`, keterangan: 'Penyesuaian stock opname' }, ctx);
+        nilai = selisih > 0 ? m.nilai : -m.nilai;
+      }
       run(`UPDATE stock_opname_detail SET qty_fisik = ?, selisih = ?, nilai_selisih = ?, keterangan = ?
              WHERE id = ?`, [fisik, selisih, nilai, d.keterangan || null, row.id]);
       if (selisih !== 0) {
-        mutasi({ barang_id: row.barang_id, gudang_id: op.gudang_id, tanggal: op.tanggal, jenis: 'opname',
-          qty: selisih, referensi: `opname:${opname_id}`, keterangan: 'Penyesuaian stock opname' }, ctx);
         if (nilai < 0) nilaiKurang += -nilai; else nilaiLebih += nilai;
         tambahNilai(perAkun, akunBarang(barang).persediaan, nilai);
       }
@@ -270,13 +303,13 @@ export function kartuStok(barang_id, { gudang_id, dari, sampai } = {}) {
 /** Nilai persediaan per barang (untuk laporan & rekonsiliasi neraca). */
 export function nilaiPersediaan({ gudang_id } = {}) {
   const rows = all(
-    `SELECT b.id, b.kode, b.nama, b.satuan, b.harga_beli, b.stok_minimum, b.reorder_point,
+    `SELECT b.id, b.kode, b.nama, b.satuan, b.harga_beli, b.nilai_persediaan, b.stok_minimum, b.reorder_point,
             COALESCE(SUM(s.qty),0) AS qty
        FROM barang b LEFT JOIN stok s ON s.barang_id = b.id ${gudang_id ? 'AND s.gudang_id = ?' : ''}
       WHERE b.status = 'aktif'
       GROUP BY b.id ORDER BY b.kode`,
     gudang_id ? [gudang_id] : [],
-  ).map((r) => ({ ...r, nilai: rupiah(r.qty * r.harga_beli),
+  ).map((r) => ({ ...r, nilai: !gudang_id && r.nilai_persediaan !== null ? r.nilai_persediaan : rupiah(r.qty * r.harga_beli),
     status_stok: r.qty <= 0 ? 'habis' : r.qty <= r.stok_minimum ? 'kritis'
       : r.qty <= r.reorder_point ? 'perlu_order' : 'aman' }));
   return { baris: rows, total_nilai: rows.reduce((s, r) => s + r.nilai, 0) };

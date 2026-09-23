@@ -118,13 +118,20 @@ export function jual(data, ctx) {
         data.status || 'selesai', ctx?.user?.username || 'kasir'],
     );
 
+    // HPP diambil dari nilai yang benar-benar keluar dari kartu stok (rata-rata
+    // bergerak tanpa selisih pembulatan), lalu dipakai apa adanya pada jurnal.
+    totalHpp = 0;
     for (const b of baris) {
-      run(`INSERT INTO penjualan_detail(penjualan_id, barang_id, qty, harga, diskon, subtotal, hpp_satuan)
-           VALUES(?,?,?,?,?,?,?)`,
-      [id, b.barang.id, b.qty, b.harga, b.diskon, b.subtotal, b.hpp_satuan]);
-      mutasi({ barang_id: b.barang.id, gudang_id: gudangId, tanggal: tgl, jenis: 'keluar',
+      const m = mutasi({ barang_id: b.barang.id, gudang_id: gudangId, tanggal: tgl, jenis: 'keluar',
         qty: -b.qty, referensi: `penjualan:${id}`, keterangan: `Penjualan ${nomor}` }, ctx);
+      b.hpp_nilai = m.nilai;
+      b.hpp_satuan = rupiah(m.nilai / b.qty);
+      totalHpp += m.nilai;
+      run(`INSERT INTO penjualan_detail(penjualan_id, barang_id, qty, harga, diskon, subtotal, hpp_satuan, hpp_nilai)
+           VALUES(?,?,?,?,?,?,?,?)`,
+      [id, b.barang.id, b.qty, b.harga, b.diskon, b.subtotal, b.hpp_satuan, b.hpp_nilai]);
     }
+    run('UPDATE penjualan SET hpp = ? WHERE id = ?', [totalHpp, id]);
 
     // ---- Jurnal ----
     // Pendapatan, HPP, dan persediaan dibukukan ke akun masing-masing barang
@@ -149,7 +156,7 @@ export function jual(data, ctx) {
     for (const b of baris) {
       const akun = akunBarang(b.barang);
       tambahNilai(bobotPendapatan, akun.penjualan, b.subtotal);
-      const nilaiHpp = rupiah(b.hpp_satuan * b.qty);
+      const nilaiHpp = b.hpp_nilai;
       tambahNilai(hppPerAkun, akun.hpp, nilaiHpp);
       tambahNilai(sediaanPerAkun, akun.persediaan, nilaiHpp);
     }
@@ -230,6 +237,7 @@ export function returPenjualan({ penjualan_id, tanggal, items, alasan, bank_acco
   const p = get('SELECT * FROM penjualan WHERE id = ?', [penjualan_id]);
   if (!p) throw notFound('Transaksi penjualan tidak ditemukan');
   if (p.status === 'retur') throw conflict('Transaksi ini sudah pernah diretur seluruhnya');
+  if (p.status === 'batal') throw conflict('Transaksi yang sudah dibatalkan tidak dapat diretur');
   const tgl = tanggal || today();
 
   return tx(() => {
@@ -257,13 +265,14 @@ export function returPenjualan({ penjualan_id, tanggal, items, alasan, bank_acco
       const barang = get('SELECT * FROM barang WHERE id = ?', [d.barang_id]);
       const akun = akunBarang(barang);
       const nilai = rupiah((d.subtotal / d.qty) * qty);
-      const hpp = rupiah(d.hpp_satuan * qty);
+      const hppTotal = d.hpp_nilai ?? rupiah(d.hpp_satuan * d.qty);
+      const hpp = qty === d.qty ? hppTotal : rupiah(hppTotal * qty / d.qty);
       nilaiItem += nilai;
       tambahNilai(bobotPendapatan, akun.penjualan, nilai);
       tambahNilai(hppPerAkun, akun.hpp, hpp);
       tambahNilai(sediaanPerAkun, akun.persediaan, hpp);
       mutasi({ barang_id: d.barang_id, gudang_id: p.gudang_id, tanggal: tgl, jenis: 'retur_masuk',
-        qty, harga: d.hpp_satuan, referensi: `retur:${penjualan_id}`, keterangan: `Retur ${p.nomor}` }, ctx);
+        qty, harga: d.hpp_satuan, nilai: hpp, referensi: `retur:${penjualan_id}`, keterangan: `Retur ${p.nomor}` }, ctx);
     }
 
     // Nilai yang dikembalikan sebanding porsi barang terhadap subtotal nota,

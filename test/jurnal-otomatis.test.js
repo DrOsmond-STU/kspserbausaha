@@ -43,7 +43,7 @@ function rekonsiliasi() {
   const outstanding = scalar(`SELECT COALESCE(SUM(outstanding_pokok),0) FROM pinjaman
                                WHERE status IN ('dicairkan','restrukturisasi')`);
   assert.equal(saldo(setting('coa.piutang_pinjaman')), outstanding, 'piutang pinjaman');
-  const stok = scalar('SELECT COALESCE(SUM(s.qty * b.harga_beli),0) FROM stok s JOIN barang b ON b.id = s.barang_id');
+  const stok = scalar('SELECT COALESCE(SUM(nilai_persediaan),0) FROM barang');
   assert.equal(saldo(setting('coa.persediaan')), stok, 'persediaan');
   const hutang = scalar("SELECT COALESCE(SUM(nominal - terbayar),0) FROM hutang_piutang WHERE jenis = 'hutang'");
   assert.equal(saldo(setting('coa.hutang_usaha')), hutang, 'hutang usaha');

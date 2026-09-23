@@ -139,7 +139,8 @@ router.get('/api/bi/pinjaman', 'bi.view', ({ query }) => {
     pendapatan_jasa: all(
       `SELECT substr(tanggal,1,7) AS periode, COALESCE(SUM(bayar_bunga),0) AS bunga,
               COALESCE(SUM(bayar_denda),0) AS denda
-         FROM pinjaman_angsuran WHERE substr(tanggal,1,4) = ? GROUP BY periode ORDER BY periode`,
+         FROM pinjaman_angsuran WHERE substr(tanggal,1,4) = ? AND status <> 'batal'
+        GROUP BY periode ORDER BY periode`,
       [String(tahun)]),
     tunggakan_terbesar: all(
       `SELECT p.nomor, a.nama, p.outstanding_pokok, p.tunggakan_hari, p.kolektibilitas

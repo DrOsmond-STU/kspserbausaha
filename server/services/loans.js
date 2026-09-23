@@ -406,7 +406,7 @@ export function hitungDenda(pinjaman_id, sampai = today()) {
     total += denda;
     rincian.push({ angsuran_ke: t.angsuran_ke, jatuh_tempo: t.jatuh_tempo, hari_telat: hari, sisa, denda });
   }
-  const sudahBayar = scalar('SELECT COALESCE(SUM(bayar_denda),0) FROM pinjaman_angsuran WHERE pinjaman_id = ?', [pinjaman_id]);
+  const sudahBayar = scalar("SELECT COALESCE(SUM(bayar_denda),0) FROM pinjaman_angsuran WHERE pinjaman_id = ? AND status <> 'batal'", [pinjaman_id]);
   return { total: Math.max(0, total - sudahBayar), total_bruto: total, sudah_dibayar: sudahBayar, rincian, grace_period: grace };
 }
 

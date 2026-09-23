@@ -93,7 +93,7 @@ function transaksiAnggota(tahun) {
   const jasa = all(
     `SELECT p.anggota_id, COALESCE(SUM(a.bayar_bunga),0) AS nilai
        FROM pinjaman_angsuran a JOIN pinjaman p ON p.id = a.pinjaman_id
-      WHERE substr(a.tanggal,1,4) = ? GROUP BY p.anggota_id`,
+      WHERE substr(a.tanggal,1,4) = ? AND a.status <> 'batal' GROUP BY p.anggota_id`,
     [String(tahun)],
   );
   const map = new Map();
