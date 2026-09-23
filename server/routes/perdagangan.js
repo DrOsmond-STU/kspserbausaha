@@ -181,7 +181,8 @@ router.get('/api/penjualan', 'penjualan.view', ({ query }) => {
          LEFT JOIN customer c ON c.id = j.customer_id
          ${where} ORDER BY j.tanggal DESC, j.id DESC LIMIT ? OFFSET ?`, [...p, limit, offset]),
     total: scalar(`SELECT COUNT(*) FROM penjualan j ${where}`, p),
-    omzet: scalar(`SELECT COALESCE(SUM(total),0) FROM penjualan j ${where}`, p),
+    // Penjualan yang dibatalkan tetap tampil di daftar, tetapi tidak dihitung sebagai omzet
+    omzet: scalar(`SELECT COALESCE(SUM(CASE WHEN j.status <> 'batal' THEN j.total ELSE 0 END),0) FROM penjualan j ${where}`, p),
     limit, offset,
   };
 });
