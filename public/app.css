@@ -21,8 +21,8 @@
   --hijau-050:#eef9f3;
 
   /* -- gradasi: pita judul & bilah sisi, lalu tombol aksi -- */
-  --grad-hero-dari:#04301f; --grad-hero-ke:#0b7d5e;
-  --grad-aksi-dari:#0b6e4c; --grad-aksi-ke:#149770;
+  --grad-hero-dari:#0a6f4c; --grad-hero-ke:#1aa36d;
+  --grad-aksi-dari:#0d7a52; --grad-aksi-ke:#1aa36d;
 
   /* -- nama lama tetap dipakai sebagian tampilan; dipetakan ke tangga baru -- */
   --merek-1:var(--grad-hero-dari); --merek-2:var(--hijau-600); --merek-3:var(--hijau-500);
@@ -33,7 +33,11 @@
   --bg-panel:#ffffff;      /* kartu, panel, modal */
   --bg-subtle:#f5f9f7;     /* isian baca-saja, kotak keterangan */
   --bg-hover:#eaf4ee;      /* sorot baris & tombol */
-  --bg-kepala:#e2ece6;     /* kepala tabel */
+  --bg-kepala:#e2ece6;     /* kaki tabel, bilah kemajuan, lencana netral */
+  /* kepala tabel & kepala panel: gradasi hijau muda, bukan blok warna rata */
+  --kepala-tabel-bg:linear-gradient(90deg, #d4f0e1 0%, #e4f6ec 50%, #f1faf5 100%);
+  --kepala-tabel-teks:#0a6443;
+  --kepala-panel-bg:linear-gradient(90deg, #eaf8f0 0%, #ffffff 65%);
   --border:#dbe7e0;
   --border-kuat:#b7cfc2;
   --teks:#0a1f16;
@@ -51,18 +55,24 @@
   --info:#1b5fb4; --info-bg:#e6f0fc;
 
   /* -- pita judul (hero) -- */
-  --hero-bg:linear-gradient(135deg, var(--grad-hero-dari) 0%, #075a3f 55%, var(--grad-hero-ke) 100%);
+  /* Gradasi hijau cerah bergerak dari zamrud ke hijau daun, ditambah satu
+     lapis cahaya di kanan atas supaya pita tidak terlihat sebagai blok pekat.
+     Ujung paling terang (#1aa36d) masih memberi kontras >= 3:1 untuk angka
+     besar berwarna putih. */
+  --hero-bg:radial-gradient(900px 320px at 88% -30%, rgba(255,255,255,.20), transparent 62%),
+            linear-gradient(118deg, var(--grad-hero-dari) 0%, #0f8a5c 46%, var(--grad-hero-ke) 100%);
   --hero-teks:#ffffff;
-  --hero-lembut:#e2f7ec;
-  --hero-samar:#9fe0bf;
+  --hero-lembut:#effbf4;
+  --hero-samar:#d2f3e1;
 
-  /* Bilah sisi selalu bergradasi hijau pekat di kedua mode: jangkar visual
-     yang langsung memisahkan navigasi dari isi. */
-  --nav-bg:linear-gradient(165deg, #04301f 0%, #06482f 48%, #0a6a4c 100%);
-  --nav-teks:#c3ebd6;
+  /* Bilah sisi bergradasi hijau dari atas ke bawah, senada dengan pita judul
+     sehingga keduanya tampak menyatu seperti satu bidang warna. */
+  --nav-bg:radial-gradient(420px 260px at 0% 0%, rgba(255,255,255,.10), transparent 70%),
+           linear-gradient(172deg, #0a6a49 0%, #0d7d55 50%, #129063 100%);
+  --nav-teks:#e6f8ee;
   --nav-teks-kuat:#ffffff;
-  --nav-samar:#8fd8b3;
-  --nav-garis:rgba(255,255,255,.14);
+  --nav-samar:#c2ecd6;
+  --nav-garis:rgba(255,255,255,.18);
   --nav-aktif:#ffffff;
   --nav-aktif-teks:#0a6443;
 
@@ -109,10 +119,12 @@
   :root:not([data-tema="terang"]) {
     --hijau-900:#0a3a28; --hijau-800:#0d5638; --hijau-700:#137049; --hijau-600:#1b8a5c;
     --hijau-500:#2fae78; --hijau-400:#5cc996; --hijau-300:#9ce0bd; --hijau-100:#123526; --hijau-050:#0c2019;
-    --grad-hero-dari:#02170f; --grad-hero-ke:#0a5a41;
+    --grad-hero-dari:#063826; --grad-hero-ke:#0f7a55;
     --grad-aksi-dari:#0c6a49; --grad-aksi-ke:#15936b;
     --aksen:#fb923c; --aksen-lembut:#3a2210;
     --bg:#06120d; --bg-panel:#0b1a14; --bg-subtle:#0d1f18; --bg-hover:#11271e; --bg-kepala:#10231b;
+    --kepala-tabel-bg:linear-gradient(90deg, #103a29 0%, #0f2c20 55%, #0d2119 100%); --kepala-tabel-teks:#8fe0bb;
+    --kepala-panel-bg:linear-gradient(90deg, #0f2a1f 0%, #0b1a14 65%);
     --border:#1a2e25; --border-kuat:#2c4a3c;
     --teks:#e8f5ee; --teks-isi:#c7ddd1; --teks-lembut:#9dbaab; --teks-samar:#86a495;
     --brand:#5fd6a2; --brand-terang:#7fe0b5; --brand-lembut:#123526; --brand-tepi:#2fae78;
@@ -120,9 +132,9 @@
     --peringatan:#f2c14e; --peringatan-bg:#3a2f0f;
     --bahaya:#ff7a85; --bahaya-bg:#3b1216;
     --info:#74baee; --info-bg:#12283f;
-    --hero-bg:linear-gradient(135deg, #02170f 0%, #06402d 55%, #0a5a41 100%);
+    --hero-bg:radial-gradient(900px 320px at 88% -30%, rgba(255,255,255,.10), transparent 62%), linear-gradient(118deg, #063826 0%, #0a583c 46%, #0f7a55 100%);
     --hero-lembut:#c3e6d3; --hero-samar:#86d2ab;
-    --nav-bg:linear-gradient(165deg, #02170f 0%, #053424 50%, #084d37 100%);
+    --nav-bg:linear-gradient(172deg, #05301f 0%, #07442d 50%, #0b5c3f 100%);
     --nav-teks:#b9e2cc; --nav-samar:#7fcaa3; --nav-garis:rgba(255,255,255,.10);
     --nav-aktif:#e8f5ee; --nav-aktif-teks:#0a5a3c;
     --seri-1:#34b27c; --seri-2:#e8834a; --seri-3:#4c93e6; --seri-4:#d6a21a;
@@ -141,10 +153,12 @@
 :root[data-tema="gelap"] {
   --hijau-900:#0a3a28; --hijau-800:#0d5638; --hijau-700:#137049; --hijau-600:#1b8a5c;
   --hijau-500:#2fae78; --hijau-400:#5cc996; --hijau-300:#9ce0bd; --hijau-100:#123526; --hijau-050:#0c2019;
-  --grad-hero-dari:#02170f; --grad-hero-ke:#0a5a41;
+  --grad-hero-dari:#063826; --grad-hero-ke:#0f7a55;
   --grad-aksi-dari:#0c6a49; --grad-aksi-ke:#15936b;
   --aksen:#fb923c; --aksen-lembut:#3a2210;
   --bg:#06120d; --bg-panel:#0b1a14; --bg-subtle:#0d1f18; --bg-hover:#11271e; --bg-kepala:#10231b;
+    --kepala-tabel-bg:linear-gradient(90deg, #103a29 0%, #0f2c20 55%, #0d2119 100%); --kepala-tabel-teks:#8fe0bb;
+    --kepala-panel-bg:linear-gradient(90deg, #0f2a1f 0%, #0b1a14 65%);
   --border:#1a2e25; --border-kuat:#2c4a3c;
   --teks:#e8f5ee; --teks-isi:#c7ddd1; --teks-lembut:#9dbaab; --teks-samar:#86a495;
   --brand:#5fd6a2; --brand-terang:#7fe0b5; --brand-lembut:#123526; --brand-tepi:#2fae78;
@@ -152,9 +166,9 @@
   --peringatan:#f2c14e; --peringatan-bg:#3a2f0f;
   --bahaya:#ff7a85; --bahaya-bg:#3b1216;
   --info:#74baee; --info-bg:#12283f;
-  --hero-bg:linear-gradient(135deg, #02170f 0%, #06402d 55%, #0a5a41 100%);
+  --hero-bg:radial-gradient(900px 320px at 88% -30%, rgba(255,255,255,.10), transparent 62%), linear-gradient(118deg, #063826 0%, #0a583c 46%, #0f7a55 100%);
   --hero-lembut:#c3e6d3; --hero-samar:#86d2ab;
-  --nav-bg:linear-gradient(165deg, #02170f 0%, #053424 50%, #084d37 100%);
+  --nav-bg:linear-gradient(172deg, #05301f 0%, #07442d 50%, #0b5c3f 100%);
   --nav-teks:#b9e2cc; --nav-samar:#7fcaa3; --nav-garis:rgba(255,255,255,.10);
   --nav-aktif:#e8f5ee; --nav-aktif-teks:#0a5a3c;
   --seri-1:#34b27c; --seri-2:#e8834a; --seri-3:#4c93e6; --seri-4:#d6a21a;
@@ -244,7 +258,7 @@ table { border-collapse:collapse; width:100%; }
 .masuk-merek {
   position:relative; overflow:hidden; padding:48px 56px;
   display:flex; flex-direction:column; justify-content:space-between; gap:32px;
-  background:linear-gradient(150deg, var(--grad-hero-dari) 0%, #075a3f 52%, var(--grad-hero-ke) 100%);
+  background:var(--hero-bg);
   color:#fff; isolation:isolate;
 }
 /* Satu lapis cahaya lembut memberi kedalaman tanpa berkas gambar. */
@@ -434,7 +448,7 @@ table { border-collapse:collapse; width:100%; }
 .topbar-mobile {
   display:none; align-items:center; gap:12px; position:sticky; top:0; z-index:30;
   padding:calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
-  background:var(--grad-hero-dari); color:#fff;
+  background:var(--hero-bg); color:#fff;
 }
 .topbar-mobile .t {
   font-family:var(--font-judul); font-weight:700; font-size:16px;
@@ -478,7 +492,7 @@ table { border-collapse:collapse; width:100%; }
 }
 .panel-kepala {
   display:flex; align-items:center; gap:12px; flex-wrap:wrap;
-  padding:16px 20px; border-bottom:1px solid var(--border);
+  padding:16px 20px; border-bottom:1px solid var(--border); background:var(--kepala-panel-bg);
 }
 .panel-kepala h3 {
   font-size:16px; line-height:1.4; font-weight:600; color:var(--teks);
@@ -577,7 +591,14 @@ table.tabel { font-size:13.5px; min-width:100%; color:var(--teks-isi); }
 table.tabel th {
   text-align:left; padding:10px 16px; background:var(--bg-kepala); color:var(--teks-lembut);
   font-weight:700; font-size:11px; line-height:14px; text-transform:uppercase; letter-spacing:.09em;
-  white-space:nowrap; position:sticky; top:0; z-index:1;
+  white-space:nowrap;
+}
+/* Gradasi dipasang pada thead, bukan tiap sel, supaya mengalir utuh dari
+   kolom pertama sampai terakhir tanpa belang per kolom. */
+table.tabel thead { background:var(--kepala-tabel-bg); position:sticky; top:0; z-index:1; }
+table.tabel thead th {
+  background:transparent; color:var(--kepala-tabel-teks);
+  border-bottom:1px solid color-mix(in srgb, var(--brand-tepi) 45%, transparent);
 }
 table.tabel td {
   padding:12px 16px; border-bottom:1px solid var(--border); vertical-align:middle; line-height:1.45;
