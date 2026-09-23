@@ -265,6 +265,9 @@ export function voidJournal(jurnalId, alasan, ctx, { sistem = false } = {}) {
 
   return tx(() => {
     const balik = postJournal({
+      // Nomor tersendiri (JBL) supaya jurnal balik tidak memakan nomor urut
+      // bukti kas/dokumen asal dan membuat nomor bukti tampak melompat.
+      nomor: nextNumber('JBL', j.tanggal),
       tanggal: j.tanggal,
       tipe: j.tipe,
       referensi: `void:${j.id}`,

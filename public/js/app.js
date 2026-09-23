@@ -267,6 +267,13 @@ export async function navigasi(hash, paksa = false) {
   if (!negara.user) return;
   const bersih = (hash || '#/').replace(/^#/, '') || '/';
   if (bersih === rutePakai && !paksa) return;
+  // Pindah halaman menutup dialog yang masih terbuka; kalau tidak, modal
+  // halaman lama menutupi halaman baru.
+  if (bersih !== rutePakai) {
+    const host = document.getElementById('modal-host');
+    if (host) kosongkan(host);
+    document.body.style.overflow = '';
+  }
   rutePakai = bersih;
 
   const [dasar, ...sisa] = bersih.split('/').filter(Boolean);
