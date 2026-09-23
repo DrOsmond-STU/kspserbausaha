@@ -5,7 +5,9 @@ import { createRouter, notFound, badRequest, conflict, forbidden } from '../lib/
 import { all, get, run, scalar, setSetting, setting, tx, DB_PATH, db } from '../db.js';
 import { hashPassword, validatePassword, activeSessions } from '../lib/auth.js';
 import { logAudit, verifyChain } from '../lib/audit.js';
-import { ROLES, ROLE_CODES, MODULES, roleInfo } from '../lib/rbac.js';
+import {
+  ROLES, ROLE_CODES, MODULES, AKSI, PERAN_TETAP, roleInfo, izinPeran, diaturUlang, segarkanIzin,
+} from '../lib/rbac.js';
 import { idParam, num, str, oneOf, today } from '../lib/util.js';
 import { KOMPONEN } from '../services/shu.js';
 import { PEMETAAN_AKUN, KELOMPOK_AKUN } from '../services/accounting.js';
@@ -143,11 +145,54 @@ router.delete('/api/admin/users/:id', 'admin.delete', ({ params, ctx }) => {
 router.get('/api/admin/roles', 'admin.view', () => ({
   data: ROLE_CODES.map((k) => ({
     ...roleInfo(k),
-    permissions: ROLES[k].permissions,
+    permissions: izinPeran(k),
+    bawaan: ROLES[k].permissions,
+    diatur: diaturUlang(k),
+    tetap: PERAN_TETAP.has(k),
     jumlah_pengguna: scalar('SELECT COUNT(*) FROM users WHERE role = ?', [k]),
   })),
   modul: MODULES,
+  aksi: AKSI,
 }));
+
+/**
+ * Mengatur ulang izin sebuah peran. Super Administrator (selalu seluruh
+ * akses) dan Anggota (hanya portal) tidak dapat diubah supaya sistem tidak
+ * pernah kehilangan administrator dan anggota tidak pernah masuk ke back office.
+ */
+router.put('/api/admin/roles/:kode', 'admin.update', ({ params, body, ctx }) => {
+  const kode = params.kode;
+  if (!ROLES[kode]) throw notFound('Peran tidak ditemukan');
+  if (PERAN_TETAP.has(kode)) throw conflict(`Izin peran ${ROLES[kode].nama} tidak dapat diubah`);
+  if (!Array.isArray(body.permissions)) throw badRequest('Daftar izin wajib berupa array');
+  const sah = new Set([...MODULES, 'portal']);
+  const aksiSah = new Set([...AKSI.map((a) => a.kode), '*']);
+  const bersih = [...new Set(body.permissions.map((p) => String(p).trim()).filter(Boolean))];
+  for (const p of bersih) {
+    const [m, a] = p.split('.');
+    if (p === '*' || !sah.has(m) || !aksiSah.has(a) || m === 'portal') {
+      throw badRequest(`Izin "${p}" tidak valid`, 'Format: modul.aksi, mis. pos.koreksi atau kas.*');
+    }
+  }
+  const sebelum = izinPeran(kode);
+  setSetting(`rbac.${kode}`, JSON.stringify(bersih.sort()), `Hak akses peran ${ROLES[kode].nama}`);
+  segarkanIzin();
+  logAudit(ctx, { aksi: 'update', modul: 'admin', entitas_id: kode,
+    keterangan: `Hak akses peran ${ROLES[kode].nama} diubah`, before: sebelum, after: bersih });
+  return { kode, permissions: izinPeran(kode), diatur: true };
+});
+
+/** Mengembalikan izin peran ke susunan bawaan. */
+router.delete('/api/admin/roles/:kode', 'admin.update', ({ params, ctx }) => {
+  const kode = params.kode;
+  if (!ROLES[kode]) throw notFound('Peran tidak ditemukan');
+  const sebelum = izinPeran(kode);
+  run('DELETE FROM settings WHERE key = ?', [`rbac.${kode}`]);
+  segarkanIzin();
+  logAudit(ctx, { aksi: 'update', modul: 'admin', entitas_id: kode,
+    keterangan: `Hak akses peran ${ROLES[kode].nama} dikembalikan ke bawaan`, before: sebelum });
+  return { kode, permissions: izinPeran(kode), diatur: false };
+});
 
 // --------------------------- Pengaturan ---------------------------
 
@@ -156,6 +201,7 @@ router.get('/api/admin/settings', 'admin.view', ({ query }) => {
   // Koperasi (logo berupa data URI besar tidak pantas tampil sebagai isian teks).
   const rows = all(
     `SELECT * FROM settings WHERE key NOT LIKE 'koperasi.%' AND key NOT LIKE 'aktivasi.%' AND key NOT LIKE 'ttd.%'
+       AND key NOT LIKE 'rbac.%'
        ${query.prefix ? 'AND key LIKE ?' : ''} ORDER BY key`,
     query.prefix ? [`${query.prefix}%`] : []);
   return {
@@ -178,6 +224,9 @@ router.get('/api/admin/settings', 'admin.view', ({ query }) => {
  */
 function validasiPengaturan(key, value) {
   const v = String(value ?? '').trim();
+  if (/^(rbac|koperasi|aktivasi|ttd)\./.test(key)) {
+    throw badRequest(`Pengaturan "${key}" diubah melalui menu khususnya (Peran & Hak Akses / Setup Koperasi)`);
+  }
   if (key.startsWith('coa.')) {
     const p = PEMETAAN_AKUN.find((x) => `coa.${x.kunci}` === key);
     if (!p) throw badRequest(`Pemetaan akun "${key}" tidak dikenal`);

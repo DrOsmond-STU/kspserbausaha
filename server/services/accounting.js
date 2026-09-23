@@ -248,7 +248,25 @@ export function sumberJurnal(j) {
  * rekening, stok, atau dokumen sumbernya akan tertinggal. Pembatalannya
  * lewat dokumen sumber, yang memanggil fungsi ini dengan { sistem: true }.
  */
-export function voidJournal(jurnalId, alasan, ctx, { sistem = false } = {}) {
+/** Apakah periode akuntansi tanggal tersebut sudah ditutup. */
+export function periodeTertutup(tanggal) {
+  const p = get('SELECT status FROM periode_akuntansi WHERE tahun = ? AND bulan = ?',
+    [yearOf(tanggal), monthOf(tanggal)]);
+  return p?.status === 'tutup';
+}
+
+/**
+ * Tanggal jurnal balik: sama dengan jurnal asli bila periodenya masih
+ * terbuka; bila sudah ditutup, koreksi dibukukan pada periode berjalan
+ * (hari ini) sehingga laporan periode yang sudah ditutup tidak berubah.
+ */
+export function tanggalKoreksi(tanggalAsli, diminta = null) {
+  if (diminta) return diminta;
+  if (!periodeTertutup(tanggalAsli)) return tanggalAsli;
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function voidJournal(jurnalId, alasan, ctx, { sistem = false, tanggal = null } = {}) {
   const j = get('SELECT * FROM jurnal WHERE id = ?', [jurnalId]);
   if (!j) throw notFound('Jurnal tidak ditemukan');
   if (j.status === 'void') throw conflict('Jurnal ini sudah dibatalkan');
@@ -264,14 +282,16 @@ export function voidJournal(jurnalId, alasan, ctx, { sistem = false } = {}) {
   const lines = all('SELECT * FROM jurnal_detail WHERE jurnal_id = ? ORDER BY urut', [jurnalId]);
 
   return tx(() => {
+    const tglBalik = tanggalKoreksi(j.tanggal, tanggal);
     const balik = postJournal({
       // Nomor tersendiri (JBL) supaya jurnal balik tidak memakan nomor urut
       // bukti kas/dokumen asal dan membuat nomor bukti tampak melompat.
-      nomor: nextNumber('JBL', j.tanggal),
-      tanggal: j.tanggal,
+      nomor: nextNumber('JBL', tglBalik),
+      tanggal: tglBalik,
       tipe: j.tipe,
       referensi: `void:${j.id}`,
-      keterangan: `PEMBATALAN ${j.nomor} - ${alasan}`,
+      keterangan: `PEMBATALAN ${j.nomor} - ${alasan}${tglBalik !== j.tanggal
+        ? ` (periode ${j.tanggal.slice(0, 7)} sudah ditutup, dikoreksi per ${tglBalik})` : ''}`,
       cabang_id: j.cabang_id,
       unit_usaha_id: j.unit_usaha_id,
       sumber: sumberJurnal(j),

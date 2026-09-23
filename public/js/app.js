@@ -227,8 +227,9 @@ async function keluar() {
 export function izin(perlu) {
   if (!perlu) return true;
   const daftar = negara.user?.izin || [];
-  const [modul] = perlu.split('.');
-  return daftar.some((p) => p === '*' || p === perlu || p === `${modul}.*`);
+  const [modul, aksi] = perlu.split('.');
+  // Sama dengan server: aksi "koreksi" tidak ikut wildcard modul
+  return daftar.some((p) => p === '*' || p === perlu || (p === `${modul}.*` && aksi !== 'koreksi'));
 }
 
 // ----------------------------- Notifikasi -----------------------------

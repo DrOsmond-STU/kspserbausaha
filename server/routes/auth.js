@@ -8,7 +8,7 @@ import {
   generateTotpSecret, verifyTotp, otpauthUrl,
 } from '../lib/auth.js';
 import { logAudit, unreadCount } from '../lib/audit.js';
-import { ROLES, visibleModules, roleInfo } from '../lib/rbac.js';
+import { izinPeran, visibleModules, roleInfo } from '../lib/rbac.js';
 
 const router = createRouter();
 
@@ -106,7 +106,7 @@ function profil(userId) {
   return {
     ...u,
     role_info: roleInfo(u.role),
-    izin: ROLES[u.role]?.permissions || [],
+    izin: izinPeran(u.role),
     modul: visibleModules(u.role),
     notifikasi_belum_dibaca: unreadCount(u),
   };

@@ -4,8 +4,18 @@
  * Format izin: "<modul>.<aksi>"  contoh: "pinjaman.approve"
  * Wildcard   : "*" (seluruh sistem) atau "pinjaman.*" (seluruh aksi pada modul)
  *
- * Aksi baku: view | create | update | delete | approve | post | export
+ * Aksi baku: view | create | update | delete | approve | post | export | koreksi
+ *
+ * "koreksi" = mengubah atau membatalkan transaksi yang SUDAH tersimpan dan
+ * terjurnal. Aksi ini sengaja TIDAK ikut terbawa wildcard modul ("pos.*"):
+ * kasir boleh berjualan, tetapi membatalkan penjualan adalah wewenang atasan.
+ * Ia hanya diberikan secara eksplisit ("pos.koreksi") atau lewat "*".
+ *
+ * Susunan izin setiap peran di bawah adalah BAWAAN. Administrator dapat
+ * mengubahnya lewat menu Administrator → Peran & Hak Akses; perubahan
+ * disimpan pada pengaturan "rbac.<peran>" dan diutamakan atas bawaan.
  */
+import { get, all } from '../db.js';
 
 export const MODULES = [
   'dashboard', 'master', 'anggota', 'simpanan', 'pinjaman', 'shu', 'akuntansi',
@@ -15,6 +25,25 @@ export const MODULES = [
 ];
 
 const viewAll = MODULES.filter((m) => m !== 'admin').map((m) => `${m}.view`);
+
+/** Aksi yang dapat diatur per modul pada editor hak akses. */
+export const AKSI = [
+  { kode: 'view', nama: 'Lihat' },
+  { kode: 'create', nama: 'Tambah' },
+  { kode: 'update', nama: 'Ubah' },
+  { kode: 'delete', nama: 'Hapus' },
+  { kode: 'approve', nama: 'Setujui' },
+  { kode: 'post', nama: 'Posting / proses' },
+  { kode: 'export', nama: 'Ekspor' },
+  { kode: 'koreksi', nama: 'Koreksi (ubah/batal transaksi tersimpan)' },
+];
+
+/** Aksi yang tidak ikut wildcard modul. */
+const AKSI_KHUSUS = new Set(['koreksi']);
+
+/** Seluruh modul yang memiliki transaksi terjurnal. */
+const KOREKSI_SEMUA = ['akuntansi', 'kas', 'simpanan', 'pinjaman', 'pos', 'penjualan', 'pembelian',
+  'persediaan', 'aset'].map((m) => `${m}.koreksi`);
 
 export const ROLES = {
   super_admin: {
@@ -31,6 +60,8 @@ export const ROLES = {
       'jurnal.approve', 'approval.*', 'anggota.approve', 'rat.*', 'dokumen.*',
       'surat.*', 'unit.*', 'risiko.update', 'compliance.update', 'crm.update',
       'master.update', 'anggaran.create', 'anggaran.update',
+      // Ketua/pengurus: otoritas tertinggi untuk koreksi transaksi
+      ...KOREKSI_SEMUA,
     ],
   },
   pengawas: {
@@ -49,6 +80,7 @@ export const ROLES = {
       'anggaran.view', 'anggaran.create', 'anggaran.update', 'laporan.view',
       'laporan.export', 'master.view', 'anggota.view', 'aset.view', 'bi.view',
       'crm.view', 'crm.update', 'approval.view', 'dokumen.view', 'akuntansi.view',
+      'pos.koreksi', 'penjualan.koreksi', 'pembelian.koreksi', 'persediaan.koreksi',
     ],
   },
   bendahara: {
@@ -60,6 +92,7 @@ export const ROLES = {
       'simpanan.view', 'pinjaman.view', 'shu.view', 'shu.create', 'master.view',
       'master.update', 'anggota.view', 'approval.view', 'bi.view', 'unit.view',
       'dokumen.view', 'persediaan.view',
+      'akuntansi.koreksi', 'kas.koreksi', 'simpanan.koreksi', 'pinjaman.koreksi', 'aset.koreksi',
     ],
   },
   petugas_simpanan: {
@@ -112,14 +145,51 @@ export const ROLES = {
 /** Daftar kode role yang valid. */
 export const ROLE_CODES = Object.keys(ROLES);
 
+/** Peran yang susunan izinnya tidak dapat diubah dari antarmuka. */
+export const PERAN_TETAP = new Set(['super_admin', 'anggota']);
+
+// Izin hasil pengaturan dibaca dari basis data lalu disimpan sementara;
+// segarkanIzin() dipanggil setiap kali administrator menyimpan perubahan.
+let cache = null;
+
+function muatIzin() {
+  const peta = {};
+  for (const kode of ROLE_CODES) peta[kode] = ROLES[kode].permissions;
+  try {
+    for (const r of all("SELECT key, value FROM settings WHERE key LIKE 'rbac.%'")) {
+      const kode = r.key.slice(5);
+      if (!ROLES[kode] || PERAN_TETAP.has(kode)) continue;
+      const daftar = JSON.parse(r.value);
+      if (Array.isArray(daftar)) peta[kode] = daftar.map(String);
+    }
+  } catch { /* tabel belum siap (migrasi awal) - pakai bawaan */ }
+  return peta;
+}
+
+export function segarkanIzin() { cache = null; }
+
+/** Daftar izin efektif sebuah peran (bawaan atau hasil pengaturan). */
+export function izinPeran(role) {
+  if (!cache) cache = muatIzin();
+  return cache[role] || [];
+}
+
+/** Apakah peran diatur ulang (tidak lagi memakai susunan bawaan). */
+export function diaturUlang(role) {
+  return !!get('SELECT 1 FROM settings WHERE key = ?', [`rbac.${role}`]);
+}
+
+/** Pencocokan izin; dipakai server dan (dengan logika sama) klien. */
+export function cocok(daftar, permission) {
+  const [modul, aksi] = permission.split('.');
+  return daftar.some((p) => p === '*' || p === permission
+    || (p === `${modul}.*` && !AKSI_KHUSUS.has(aksi)));
+}
+
 /** Apakah role memiliki izin tertentu. */
 export function can(role, permission) {
-  const def = ROLES[role];
-  if (!def) return false;
-  const [modul] = permission.split('.');
-  return def.permissions.some(
-    (p) => p === '*' || p === permission || p === `${modul}.*`,
-  );
+  if (!ROLES[role]) return false;
+  return cocok(izinPeran(role), permission);
 }
 
 /** Daftar modul yang boleh dilihat oleh sebuah role (untuk menu navigasi). */
