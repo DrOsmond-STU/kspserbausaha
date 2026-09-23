@@ -341,8 +341,13 @@ async function formPenyesuaian() {
         tombol.disabled = true;
         try {
           const d = bacaForm(form);
-          const qty = Math.abs(Number(d.qty));
-          if (!(qty > 0)) throw new Error('Kuantitas harus lebih besar dari nol');
+          // Kuantitas selalu positif; arah mutasi ditentukan kolom Jenis. Angka negatif
+          // ditolak (bukan dibalik diam-diam) agar kebiasaan lama "negatif = keluar" tidak salah arah.
+          const qty = Number(d.qty);
+          if (!(qty > 0)) {
+            throw Object.assign(new Error('Kuantitas harus lebih besar dari nol'),
+              { detail: 'Untuk mengurangi stok, pilih jenis "Barang Keluar" dan isi kuantitas positif.' });
+          }
           const h = await api.post('/api/persediaan/penyesuaian', {
             ...d, qty, harga: d.jenis === 'masuk' ? d.harga : '', akun_lawan: d.akun_lawan || null });
           toast('Stok berhasil disesuaikan', 'sukses', h.jurnal
