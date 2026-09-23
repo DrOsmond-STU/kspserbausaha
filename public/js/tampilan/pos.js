@@ -275,19 +275,20 @@ export async function render() {
       { judul: 'Total', angka: true, render: (p) => (p.status === 'batal'
         ? el('s.samar', rp(p.total)) : el('strong', rp(p.total))) },
       { judul: 'Status', render: (p) => el('div', [status(p.status),
-        p.status === 'batal' && p.alasan_batal && el('div.kecil.samar', p.alasan_batal)]) },
-      { judul: '', render: (p) => el('div.gap8', [
+        p.status === 'batal' && p.alasan_batal && el('div.kecil.samar', p.alasan_batal),
+        p.status === 'selesai' && p.ada_retur && el('div.kecil.samar', 'retur sebagian')]) },
+      { judul: '', render: (p) => el('div.gap8', { gaya: { flexWrap: 'nowrap' } }, [
         el('button.btn.kecil.polos', { title: 'Cetak ulang struk', onclick: async (e) => {
           const tombol = e.currentTarget;
           tombol.disabled = true;
           try { await cetakDokumen(dokStruk(strukDariPenjualan(await api.get(`/api/penjualan/${p.id}`))));
           } catch (err) { galat(err); } finally { tombol.disabled = false; }
         } }, 'Struk'),
-        koreksi && p.status === 'selesai' && el('button.btn.kecil', {
+        koreksi && p.status === 'selesai' && !p.ada_retur && el('button.btn.kecil', {
           title: 'Ubah transaksi (dibatalkan lalu diganti transaksi bernomor baru)',
           onclick: () => formUbahPenjualan(p.id, { saatSelesai: segarkanRekap,
             cetak: (baru) => dokStruk(baru), labelCetak: 'Cetak Struk Pengganti' }).catch(galat) }, 'Ubah'),
-        koreksi && p.status === 'selesai' && el('button.btn.kecil.bahaya', {
+        koreksi && p.status === 'selesai' && !p.ada_retur && el('button.btn.kecil.bahaya', {
           onclick: () => batalPenjualan(p, segarkanRekap) }, 'Batal'),
       ].filter(Boolean)) },
     ], d.data, { kosongTeks: 'Belum ada transaksi hari ini' })));

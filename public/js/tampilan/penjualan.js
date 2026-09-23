@@ -159,16 +159,17 @@ async function transaksiTab() {
           { judul: 'Laba Kotor', angka: true, render: (p) => (p.status === 'batal' ? el('span.samar', '-')
             : el('span.pos', rp(p.total - p.hpp))) },
           { judul: 'Status', render: (p) => el('div', [status(p.status),
-            p.status === 'batal' && p.alasan_batal && el('div.kecil.samar', p.alasan_batal)]) },
+            p.status === 'batal' && p.alasan_batal && el('div.kecil.samar', p.alasan_batal),
+            p.status === 'selesai' && p.ada_retur && el('div.kecil.samar', 'retur sebagian')]) },
           { judul: '', render: (p) => el('div.gap8', { onclick: (e) => e.stopPropagation() }, [
             el('button.btn.kecil.polos', {
               title: 'Cetak faktur / nota',
               onclick: (e) => cetakDenganTombol(e, async () => dokFaktur(await api.get(`/api/penjualan/${p.id}`))),
             }, 'Cetak'),
-            koreksi && p.status === 'selesai' && el('button.btn.kecil', {
+            koreksi && p.status === 'selesai' && !p.ada_retur && el('button.btn.kecil', {
               title: 'Ubah transaksi (dibatalkan lalu diganti transaksi bernomor baru)',
               onclick: () => formUbahPenjualan(p.id, { saatSelesai: muat }).catch(galat) }, 'Ubah'),
-            koreksi && p.status === 'selesai' && el('button.btn.kecil.bahaya', {
+            koreksi && p.status === 'selesai' && !p.ada_retur && el('button.btn.kecil.bahaya', {
               onclick: () => batalPenjualan(p, muat) }, 'Batal'),
           ].filter(Boolean)) },
         ], d.data, { saatKlik: (p) => lihat(p.id, muat).catch(galat), kosongTeks: 'Belum ada transaksi pada periode ini' }), [
@@ -321,7 +322,8 @@ export async function formUbahPenjualan(id, { saatSelesai, cetak, labelCetak } =
     kosongkan(daftar);
     daftar.append(el('div.kecil.lembut', { gaya: { display: 'grid', gap: '8px', marginBottom: '4px',
       gridTemplateColumns: 'minmax(0,2.4fr) minmax(0,.9fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.1fr) auto' } },
-    ['Barang', 'Qty', 'Harga', 'Diskon', el('span.kanan', 'Subtotal'), el('span', { gaya: { width: '28px' } })]));
+    [el('span', 'Barang'), el('span', 'Qty'), el('span', 'Harga'), el('span', 'Diskon'), el('span.kanan', 'Subtotal'),
+      el('span', { gaya: { width: '28px' } })]));
     items.forEach((it, i) => {
       daftar.append(el('div', { gaya: { display: 'grid', gap: '8px', marginBottom: '8px', alignItems: 'center',
         gridTemplateColumns: 'minmax(0,2.4fr) minmax(0,.9fr) minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.1fr) auto' } }, [
@@ -362,8 +364,9 @@ export async function formUbahPenjualan(id, { saatSelesai, cetak, labelCetak } =
 
   const kolomBank = kolomRekeningBank(bank, { label: 'Rekening Bank Tujuan' });
   const form = el('div');
-  const kotakBayar = kolom('Uang Diterima', input('bayar', { tipe: 'number', min: 0, nilai: p.bayar }), {
-    bantuan: 'Kosongkan bila sama dengan total baru' });
+  // Dikosongkan = uang pas senilai total baru (nilai semula bisa kurang bila total bertambah).
+  const kotakBayar = kolom('Uang Diterima', input('bayar', { tipe: 'number', min: 0, placeholder: 'Uang pas' }), {
+    bantuan: `Kosongkan bila uang pas senilai total baru. Semula diterima ${rp(p.bayar)}.` });
   const aturMetode = (m) => {
     kotakBayar.style.display = m === 'tunai' ? '' : 'none';
     aturKolomBank(kolomBank, ['transfer', 'qris'].includes(m));

@@ -196,12 +196,16 @@ router.get('/api/penjualan', 'penjualan.view', ({ query }) => {
   const where = w.length ? `WHERE ${w.join(' AND ')}` : '';
   const limit = Math.min(Number(query.limit) || 50, 500);
   const offset = Math.max(Number(query.offset) || 0, 0);
+  const diretur = new Set(all("SELECT DISTINCT referensi FROM mutasi_stok WHERE jenis = 'retur_masuk'")
+    .map((r) => r.referensi));
   return {
     data: all(
       `SELECT j.*, a.nama AS anggota_nama, c.nama AS customer_nama
          FROM penjualan j LEFT JOIN anggota a ON a.id = j.anggota_id
          LEFT JOIN customer c ON c.id = j.customer_id
-         ${where} ORDER BY j.tanggal DESC, j.id DESC LIMIT ? OFFSET ?`, [...p, limit, offset]),
+         ${where} ORDER BY j.tanggal DESC, j.id DESC LIMIT ? OFFSET ?`, [...p, limit, offset])
+      // ada_retur: sebagian barang sudah diretur, sehingga transaksi tidak lagi dapat diubah/dibatalkan
+      .map((j) => ({ ...j, ada_retur: diretur.has(`retur:${j.id}`) })),
     total: scalar(`SELECT COUNT(*) FROM penjualan j ${where}`, p),
     // Penjualan yang dibatalkan tetap tampil di daftar, tetapi tidak dihitung sebagai omzet
     omzet: scalar(`SELECT COALESCE(SUM(CASE WHEN j.status <> 'batal' THEN j.total ELSE 0 END),0) FROM penjualan j ${where}`, p),
