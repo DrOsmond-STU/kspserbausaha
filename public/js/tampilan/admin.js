@@ -20,8 +20,9 @@ export async function render() {
   const bilah = el('div.tab', daftarTab.map((t, i) => el('button', {
     class: i === 0 ? 'aktif' : '',
     onclick: async (e) => {
+      const tombol = e.currentTarget;
       bilah.querySelectorAll('button').forEach((b) => b.classList.remove('aktif'));
-      e.currentTarget.classList.add('aktif');
+      tombol.classList.add('aktif');
       kosongkan(isi).append(memuat());
       kosongkan(isi).append(await t.render());
     },
@@ -56,6 +57,9 @@ async function penggunaTab() {
             onclick: () => formPengguna(u, muat) }, 'Ubah'),
           izin('admin.update') && el('button.btn.kecil', {
             onclick: () => resetSandi(u) }, 'Reset'),
+          izin('admin.update') && u.mfa_enabled && u.id !== negara.user.id && el('button.btn.kecil', {
+            title: 'Nonaktifkan MFA pengguna ini (mis. perangkat autentikator hilang)',
+            onclick: () => resetMfa(u, muat) }, 'Reset MFA'),
           izin('admin.delete') && u.id !== negara.user.id && el('button.btn.kecil.polos', {
             onclick: async () => {
               if (!await konfirmasi(`Hapus pengguna "${u.username}"?`, { ya: 'Hapus', jenis: 'bahaya' })) return;
@@ -110,14 +114,15 @@ async function formPengguna(data, saatSelesai) {
     kaki: [
       el('button.btn', { onclick: () => tutup() }, 'Batal'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const nilai = bacaForm(f);
           if (isBaru) await api.post('/api/admin/users', nilai);
           else await api.put(`/api/admin/users/${data.id}`, nilai);
           toast('Pengguna tersimpan', 'sukses');
           tutup(); saatSelesai?.();
-        } catch (err) { galat(err); e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); tombol.disabled = false; }
       } }, 'Simpan'),
     ],
   });
@@ -147,6 +152,30 @@ function resetSandi(u) {
   });
 }
 
+/** Menonaktifkan MFA pengguna lain, mis. bila perangkat autentikatornya hilang. */
+function resetMfa(u, saatSelesai) {
+  const tutup = modal({
+    judul: 'Reset MFA', lebar: 'sempit',
+    isi: el('div.notis.peringatan', [el('div.isi', [
+      el('strong', `Nonaktifkan MFA untuk "${u.username}"?`),
+      el('div.kecil', 'Kunci rahasia autentikator dihapus. Pengguna dapat masuk hanya dengan kata sandi '
+        + 'sampai ia mengaktifkan MFA kembali. Lakukan hanya setelah identitas pengguna diverifikasi.'),
+    ])]),
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Batal'),
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          const h = await api.post(`/api/admin/users/${u.id}/reset-mfa`, {});
+          toast('MFA dinonaktifkan', 'sukses', h.pesan);
+          tutup(); saatSelesai?.();
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Nonaktifkan MFA'),
+    ],
+  });
+}
+
 // ------------------------------ Peran ------------------------------
 
 async function peranTab() {
@@ -172,44 +201,138 @@ async function peranTab() {
 async function pengaturanTab() {
   const wadah = el('div');
   const d = await api.get('/api/admin/settings');
-  const grup = {};
-  for (const s of d.data) {
-    const g = s.key.split('.')[0];
-    (grup[g] ||= []).push(s);
-  }
-  const LABEL = { koperasi: 'Identitas Koperasi', shu: 'Pembagian SHU (AD/ART)',
-    pinjaman: 'Parameter Pinjaman', loyalty: 'Program Loyalti', coa: 'Pemetaan Akun Default' };
-
+  const bolehUbah = izin('admin.update');
+  const nilaiAwal = { ...d.map };
   const semuaInput = {};
-  for (const [g, items] of Object.entries(grup)) {
-    wadah.append(panel(LABEL[g] || judul(g), el('div.baris-form', items.map((s) => {
-      const inp = input(s.key, { nilai: s.value ?? '' });
-      semuaInput[s.key] = inp;
-      return kolom(s.keterangan || s.key, inp, { bantuan: el('code', s.key).textContent });
-    }))));
+
+  const LABEL = { koperasi: 'Identitas Koperasi', shu: 'Pembagian SHU (AD/ART)',
+    pinjaman: 'Parameter Pinjaman', loyalty: 'Program Loyalti', akuntansi: 'Akuntansi',
+    coa: 'Pemetaan Akun Jurnal Otomatis', kelompok: 'Kelompok Akun Laporan' };
+  const URUTAN = ['koperasi', 'shu', 'pinjaman', 'loyalty', 'akuntansi', 'coa', 'kelompok'];
+  const ANGKA = ['shu', 'pinjaman', 'loyalty'];
+  // Pengaturan yang tidak boleh diubah dari antarmuka (hanya ditampilkan)
+  const HANYA_BACA = ['mode_demo'];
+
+  const grup = {};
+  const keterangan = {};
+  for (const s of d.data) {
+    keterangan[s.key] = s.keterangan;
+    if (HANYA_BACA.includes(s.key)) continue;
+    (grup[s.key.split('.')[0]] ||= []).push(s.key);
+  }
+  // Pemetaan & kelompok akun mengikuti daftar resmi server, termasuk kunci
+  // yang belum tersimpan - supaya yang belum diatur tetap terlihat.
+  if (d.pemetaan_akun) grup.coa = d.pemetaan_akun.map((p) => p.key);
+  if (d.kelompok_akun) {
+    const resmi = d.kelompok_akun.map((k) => k.key);
+    grup.kelompok = [...resmi, ...(grup.kelompok || []).filter((k) => !resmi.includes(k))];
+  }
+  const pemetaan = Object.fromEntries((d.pemetaan_akun || []).map((p) => [p.key, p]));
+  const kelompok = Object.fromEntries((d.kelompok_akun || []).map((k) => [k.key, k]));
+  const daftarAkun = d.daftar_akun || [];
+
+  /** Pilihan akun untuk satu pemetaan: tipe sesuai; kas/bank hanya akun bertanda kas/bank. */
+  function pilihAkun(key, nilai) {
+    const p = pemetaan[key];
+    const opsi = daftarAkun
+      .filter((a) => !p?.tipe || a.tipe === p.tipe)
+      .filter((a) => !['coa.kas', 'coa.bank'].includes(key) || Number(a.is_kas) || Number(a.is_bank))
+      .map((a) => ({ nilai: a.kode, teks: `${a.kode} — ${a.nama}` }));
+    if (nilai && !opsi.some((o) => o.nilai === nilai)) {
+      opsi.push({ nilai, teks: `${nilai} (tidak aktif / tidak sesuai - pilih ulang)` });
+    }
+    return pilih(key, [{ nilai: '', teks: '- belum diatur -' }, ...opsi], nilai);
   }
 
+  function kendali(key) {
+    const g = key.split('.')[0];
+    const nilai = d.map[key] ?? '';
+    if (g === 'coa') {
+      return kolom(pemetaan[key]?.label || keterangan[key] || key, pilihAkun(key, nilai), {
+        bantuan: nilai ? key : el('span.neg', `${key} — belum diatur; jurnal otomatis terkait akan ditolak`),
+      });
+    }
+    if (g === 'kelompok') {
+      return kolom(kelompok[key]?.label || keterangan[key] || key, input(key, { nilai }),
+        { bantuan: `${key} — awalan kode akun dipisah koma, mis. 1-11,1-12` });
+    }
+    if (key === 'akuntansi.recurring_otomatis') {
+      return kolom(keterangan[key] || key, pilih(key, [{ nilai: '1', teks: 'Ya' }, { nilai: '0', teks: 'Tidak' }],
+        nilai === '' ? '1' : nilai), { bantuan: key });
+    }
+    const inp = ANGKA.includes(g) ? input(key, { tipe: 'number', step: 'any', nilai }) : input(key, { nilai });
+    return kolom(keterangan[key] || key, inp, { bantuan: key });
+  }
+
+  function bangunGrup(g, keys) {
+    const kolomGrup = keys.map((key) => {
+      const k = kendali(key);
+      const node = k.querySelector('[name]');
+      if (!bolehUbah) node.disabled = true;
+      semuaInput[key] = node;
+      return k;
+    });
+    if (g !== 'coa') return el('div.baris-form', kolomGrup);
+    // Pemetaan akun dikelompokkan menurut tipe akun supaya mudah ditelusuri
+    const perTipe = {};
+    keys.forEach((key, i) => (perTipe[pemetaan[key]?.tipe || 'lainnya'] ||= []).push(kolomGrup[i]));
+    return el('div', [
+      el('div.kecil.lembut.mb16', 'Akun yang dipakai jurnal otomatis setiap modul. Produk, barang, '
+        + 'rekening bank, dan aset yang tidak menentukan akunnya sendiri memakai pemetaan ini. '
+        + 'Hanya akun aktif yang dapat dijurnal dan bertipe sesuai yang dapat dipilih.'),
+      ...Object.entries(perTipe).map(([tipe, isi]) => el('div', [
+        el('div.tebal.kecil.lembut.mb8', judul(tipe)),
+        el('div.baris-form', isi),
+      ])),
+    ]);
+  }
+
+  const kunciGrup = [...URUTAN.filter((g) => grup[g]), ...Object.keys(grup).filter((g) => !URUTAN.includes(g))];
+  for (const g of kunciGrup) wadah.append(panel(LABEL[g] || judul(g), bangunGrup(g, grup[g])));
+
+  const hanyaBaca = HANYA_BACA.filter((k) => d.map[k] !== undefined);
+  if (hanyaBaca.length) {
+    wadah.append(panel('Informasi Sistem (hanya baca)', el('dl.deskripsi', hanyaBaca.flatMap((k) => [
+      el('dt', keterangan[k] || k),
+      el('dd', [k === 'mode_demo' ? (d.map[k] === '1' ? 'Ya' : 'Tidak') : d.map[k], ' ',
+        el('span.mono.kecil.samar', k)]),
+    ]))));
+  }
+
+  // Ringkasan total alokasi SHU - diperbarui langsung saat angka diketik
   if (grup.shu) {
-    const total = grup.shu.reduce((s, x) => s + Number(x.value || 0), 0);
-    wadah.insertBefore(el('div.notis', { class: Math.abs(total - 100) < 0.01 ? 'sukses' : 'bahaya' },
-      [el('div.isi', [
-        el('strong', `Total alokasi SHU saat ini: ${total}%`),
-        el('div.kecil', Math.abs(total - 100) < 0.01
-          ? 'Sesuai ketentuan — total alokasi harus tepat 100%.'
-          : 'Total alokasi wajib tepat 100%. Perbaiki sebelum menyimpan.'),
-      ])]), wadah.firstChild);
+    const judulShu = el('strong');
+    const catatanShu = el('div.kecil');
+    const banner = el('div.notis', [el('div.isi', [judulShu, catatanShu])]);
+    const hitungShu = () => {
+      const total = grup.shu.reduce((s, k) => s + (Number(semuaInput[k].value) || 0), 0);
+      const pas = Math.abs(total - 100) < 0.01;
+      banner.className = `notis ${pas ? 'sukses' : 'bahaya'}`;
+      judulShu.textContent = `Total alokasi SHU: ${Math.round(total * 100) / 100}%`;
+      catatanShu.textContent = pas ? 'Sesuai ketentuan — total alokasi harus tepat 100%.'
+        : 'Total alokasi wajib tepat 100%. Perbaiki sebelum menyimpan.';
+    };
+    for (const k of grup.shu) semuaInput[k].addEventListener('input', hitungShu);
+    hitungShu();
+    wadah.insertBefore(banner, wadah.firstChild);
   }
 
-  if (izin('admin.update')) {
+  if (bolehUbah) {
     wadah.append(el('button.btn.utama', { onclick: async (e) => {
-      e.currentTarget.disabled = true;
+      const tombol = e.currentTarget;
+      // Hanya parameter yang berubah yang dikirim, supaya jejak audit ringkas
+      const nilai = {};
+      for (const [k, inp] of Object.entries(semuaInput)) {
+        if (String(inp.value) !== String(nilaiAwal[k] ?? '')) nilai[k] = inp.value;
+      }
+      if (!Object.keys(nilai).length) { toast('Tidak ada parameter yang berubah', 'info'); return; }
+      tombol.disabled = true;
       try {
-        const nilai = {};
-        for (const [k, inp] of Object.entries(semuaInput)) nilai[k] = inp.value;
         await api.put('/api/admin/settings', { settings: nilai });
-        toast('Parameter sistem tersimpan', 'sukses');
-      } catch (err) { galat(err); } finally { e.currentTarget.disabled = false; }
-    } }, 'Simpan Seluruh Parameter'));
+        Object.assign(nilaiAwal, nilai);
+        toast('Parameter sistem tersimpan', 'sukses', `${Object.keys(nilai).length} parameter diperbarui`);
+      } catch (err) { galat(err); } finally { tombol.disabled = false; }
+    } }, 'Simpan Perubahan Parameter'));
   }
   return wadah;
 }
@@ -289,19 +412,7 @@ async function sistemTab() {
         el('dt', 'Waktu aktif'), el('dd', `${Math.floor(s.uptime_detik / 60)} menit`),
         el('dt', 'Penggunaan memori'), el('dd', `${s.memori_mb} MB`),
       ])),
-      panel('Keamanan Akun Anda', el('div', [
-        el('dl.deskripsi.mb16', [
-          el('dt', 'Pengguna'), el('dd', negara.user.username),
-          el('dt', 'Peran'), el('dd', negara.user.role_info?.nama),
-          el('dt', 'MFA'), el('dd', negara.user.mfa_enabled
-            ? el('span.pos', '✓ Aktif') : el('span.neg', 'Belum diaktifkan')),
-        ]),
-        el('div.gap8', [
-          el('button.btn', { onclick: gantiSandi }, 'Ganti Kata Sandi'),
-          !negara.user.mfa_enabled && el('button.btn.utama', { onclick: siapkanMfa },
-            'Aktifkan MFA'),
-        ].filter(Boolean)),
-      ])),
+      panel('Keamanan Akun Anda', keamananAkun()),
     ]),
     panelTabel(`Sesi Aktif (${sesi.data.length})`, tabel([
       { judul: 'Token', render: (x) => el('span.mono.kecil.samar', x.token) },
@@ -315,14 +426,65 @@ async function sistemTab() {
       el('div.kecil.lembut.mb8', 'Salinan basis data disimpan pada direktori data server. '
         + 'Lakukan pencadangan berkala dan simpan salinan di lokasi terpisah.'),
       el('button.btn.utama', { onclick: async (e) => {
-        e.currentTarget.disabled = true;
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
         try {
           const h = await api.post('/api/admin/backup', {});
           toast('Pencadangan berhasil', 'sukses', h.berkas);
-        } catch (err) { galat(err); } finally { e.currentTarget.disabled = false; }
+        } catch (err) { galat(err); } finally { tombol.disabled = false; }
       } }, 'Buat Cadangan Sekarang'),
     ])) : null,
   ]);
+}
+
+/** Isi panel keamanan akun sendiri; dibangun ulang setelah status MFA berubah. */
+function keamananAkun() {
+  const wadah = el('div');
+  const bangun = () => kosongkan(wadah).append(
+    el('dl.deskripsi.mb16', [
+      el('dt', 'Pengguna'), el('dd', negara.user.username),
+      el('dt', 'Peran'), el('dd', negara.user.role_info?.nama),
+      el('dt', 'MFA'), el('dd', negara.user.mfa_enabled
+        ? el('span.pos', '✓ Aktif') : el('span.neg', 'Belum diaktifkan')),
+    ]),
+    el('div.gap8', [
+      el('button.btn', { onclick: gantiSandi }, 'Ganti Kata Sandi'),
+      negara.user.mfa_enabled
+        ? el('button.btn.polos', { onclick: () => nonaktifkanMfa(bangun) }, 'Nonaktifkan MFA')
+        : el('button.btn.utama', { onclick: () => siapkanMfa(bangun) }, 'Aktifkan MFA'),
+    ]),
+  );
+  bangun();
+  return wadah;
+}
+
+/** Menonaktifkan MFA akun sendiri; server mensyaratkan kata sandi saat ini. */
+function nonaktifkanMfa(saatSelesai) {
+  const f = el('div', [
+    el('div.notis.peringatan', [el('div.isi', [
+      el('strong', 'Nonaktifkan MFA'),
+      el('div.kecil', 'Tanpa MFA, akun Anda hanya dilindungi kata sandi. Kunci autentikator lama '
+        + 'dihapus sehingga perlu dipindai ulang bila MFA diaktifkan kembali.'),
+    ])]),
+    kolom('Kata Sandi Saat Ini', input('sandi', { tipe: 'password', autocomplete: 'current-password' }),
+      { wajib: true }),
+  ]);
+  const tutup = modal({
+    judul: 'Nonaktifkan MFA', lebar: 'sempit', isi: f,
+    kaki: [
+      el('button.btn', { onclick: () => tutup() }, 'Batal'),
+      el('button.btn.bahaya', { onclick: async (e) => {
+        const tombol = e.currentTarget;
+        tombol.disabled = true;
+        try {
+          await api.post('/api/auth/mfa/nonaktifkan', bacaForm(f));
+          negara.user.mfa_enabled = 0;
+          toast('MFA dinonaktifkan', 'sukses');
+          tutup(); saatSelesai?.();
+        } catch (err) { galat(err); tombol.disabled = false; }
+      } }, 'Nonaktifkan'),
+    ],
+  });
 }
 
 function gantiSandi() {
@@ -346,7 +508,7 @@ function gantiSandi() {
   });
 }
 
-async function siapkanMfa() {
+async function siapkanMfa(saatSelesai) {
   try {
     const h = await api.post('/api/auth/mfa/siapkan', {});
     const f = el('div', [
@@ -371,7 +533,7 @@ async function siapkanMfa() {
             await api.post('/api/auth/mfa/aktifkan', bacaForm(f));
             toast('MFA berhasil diaktifkan', 'sukses');
             negara.user.mfa_enabled = 1;
-            tutup();
+            tutup(); saatSelesai?.();
           } catch (err) { galat(err); }
         } }, 'Aktifkan'),
       ],

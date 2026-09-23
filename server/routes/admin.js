@@ -101,6 +101,28 @@ router.post('/api/admin/users/:id/reset-sandi', 'admin.update', ({ params, body,
   return { berhasil: true, pesan: `Kata sandi ${u.username} berhasil direset dan seluruh sesinya dikeluarkan.` };
 });
 
+/**
+ * Menonaktifkan MFA pengguna lain (mis. perangkat autentikator hilang).
+ * Kolom yang dikosongkan sama dengan /api/auth/mfa/nonaktifkan. Akun sendiri
+ * harus lewat jalur tersebut karena mensyaratkan kata sandi.
+ */
+router.post('/api/admin/users/:id/reset-mfa', 'admin.update', ({ params, ctx }) => {
+  const id = idParam(params);
+  const u = get('SELECT id, username, mfa_enabled, mfa_secret FROM users WHERE id = ?', [id]);
+  if (!u) throw notFound('Pengguna tidak ditemukan');
+  if (u.id === ctx?.user?.id) {
+    throw conflict('MFA akun Anda sendiri dinonaktifkan melalui menu Keamanan Akun Anda',
+      'Menu tersebut meminta kata sandi Anda sebagai konfirmasi.');
+  }
+  if (!u.mfa_enabled && !u.mfa_secret) throw conflict(`MFA pengguna "${u.username}" memang belum aktif`);
+  run('UPDATE users SET mfa_enabled = 0, mfa_secret = NULL WHERE id = ?', [id]);
+  logAudit(ctx, { aksi: 'update', modul: 'admin', entitas_id: id,
+    keterangan: `MFA pengguna "${u.username}" dinonaktifkan oleh administrator`,
+    before: { mfa_enabled: u.mfa_enabled }, after: { mfa_enabled: 0 } });
+  return { berhasil: true, mfa_enabled: 0,
+    pesan: `MFA ${u.username} dinonaktifkan. Minta pengguna mengaktifkannya kembali setelah masuk.` };
+});
+
 router.delete('/api/admin/users/:id', 'admin.delete', ({ params, ctx }) => {
   const id = idParam(params);
   const u = get('SELECT * FROM users WHERE id = ?', [id]);
