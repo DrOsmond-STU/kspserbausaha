@@ -431,7 +431,10 @@ router.post('/api/rat/:id/hadir', 'rat.update', ({ params, body, ctx }) => {
 router.post('/api/rat/:id/voting', 'rat.create', ({ params, body, ctx }) => {
   const id = idParam(params);
   if (!get('SELECT id FROM rat WHERE id = ?', [id])) throw notFound('Data RAT tidak ditemukan');
-  const opsi = Array.isArray(body.opsi) && body.opsi.length >= 2 ? body.opsi : ['Setuju', 'Tidak Setuju', 'Abstain'];
+  // Opsi voting selalu berupa teks pendek (disimpan sebagai JSON dan ditampilkan ke anggota).
+  const opsiMasuk = Array.isArray(body.opsi)
+    ? body.opsi.map((o) => String(o ?? '').trim().slice(0, 100)).filter(Boolean).slice(0, 20) : [];
+  const opsi = opsiMasuk.length >= 2 ? opsiMasuk : ['Setuju', 'Tidak Setuju', 'Abstain'];
   const { lastInsertRowid } = run(
     `INSERT INTO rat_voting(rat_id, agenda_id, judul, opsi, status) VALUES(?,?,?,?,'draft')`,
     [id, body.agenda_id || null, str(body, 'judul', { max: 200 }), JSON.stringify(opsi)]);

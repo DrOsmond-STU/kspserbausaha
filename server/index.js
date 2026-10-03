@@ -5,7 +5,7 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, extname, normalize, dirname } from 'node:path';
+import { join, extname, normalize, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
@@ -105,7 +105,7 @@ async function sajikanStatis(req, res, pathname) {
   if (berversi) pathname = pathname.replace(AWALAN_VERSI, '');
   const bersih = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   let file = join(PUBLIC_DIR, bersih === '/' ? 'index.html' : bersih);
-  if (!file.startsWith(PUBLIC_DIR)) {
+  if (file !== PUBLIC_DIR && !file.startsWith(PUBLIC_DIR + sep)) {
     sendText(res, 403, 'Akses ditolak');
     return;
   }
@@ -269,7 +269,8 @@ const server = http.createServer(async (req, res) => {
       error: true,
       pesan: status >= 500 ? 'Terjadi kesalahan pada server' : err.message,
       detail: err.detail || null,
-      ...(process.env.NODE_ENV !== 'production' && status >= 500 ? { debug: err.message } : {}),
+      // Pesan teknis (mis. galat SQL) hanya dikirim bila diaktifkan eksplisit, bukan bawaan.
+      ...(process.env.ECMS_DEBUG === '1' && status >= 500 ? { debug: err.message } : {}),
     });
   }
 });

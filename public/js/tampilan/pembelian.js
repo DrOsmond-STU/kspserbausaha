@@ -245,9 +245,9 @@ export async function render(param) {
   const isi = el('div');
   const daftarTab = [
     { judul: 'Dokumen Pembelian', render: dokumenTab },
-    { judul: 'Utang Usaha', render: () => hutangTab('hutang') },
+    izin('akuntansi.view') && { judul: 'Utang Usaha', render: () => hutangTab('hutang') },
     { judul: 'Evaluasi Supplier', render: supplierTab },
-  ];
+  ].filter(Boolean);
   const bilah = el('div.tab', daftarTab.map((t, i) => el('button', {
     class: i === 0 ? 'aktif' : '',
     onclick: async (e) => {

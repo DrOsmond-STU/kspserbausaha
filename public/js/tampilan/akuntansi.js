@@ -670,7 +670,7 @@ async function detailRecurring(id, saatSelesai) {
     el('div.tabel-bungkus', [tabel([
       { judul: 'Akun', render: (l) => el('span.mono.kecil', l.coa_kode) },
       { judul: 'Nama Akun', kunci: 'nama', render: (l) => namaAkun[l.coa_kode] || '-' },
-      { judul: 'Keterangan', render: (l) => el('span.kecil.lembut', l.keterangan || '-') },
+      { judul: 'Keterangan', render: (l) => el('span.kecil.lembut', [String(l.keterangan || '-')]) },
       { judul: 'Debit', kunci: 'debit', angka: true, render: (l) => (l.debit ? rp(l.debit) : '-') },
       { judul: 'Kredit', kunci: 'kredit', angka: true, render: (l) => (l.kredit ? rp(l.kredit) : '-') },
     ], template, { kaki: { nama: 'TOTAL', debit: rp(nilaiTemplate(r)), kredit: rp(nilaiTemplate(r)) } })]),

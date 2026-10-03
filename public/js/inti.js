@@ -38,6 +38,18 @@ export const api = {
  * Membuat elemen: el('div.kelas#id', {attr}, [anak])
  * Anak berupa string disisipkan sebagai teks (aman dari injeksi HTML).
  */
+/**
+ * Kunci khusus untuk mengisi innerHTML lewat el(). Sengaja berupa Symbol:
+ * data dari API (hasil JSON.parse) tidak mungkin memuat kunci Symbol, sehingga
+ * objek data yang tidak sengaja masuk sebagai argumen kedua el() tidak pernah
+ * dapat menyuntikkan HTML.
+ */
+export const HTML = Symbol('html');
+
+/** Skema URL yang dapat menjalankan skrip bila dipasang pada href/src. */
+const URL_BERBAHAYA = /^\s*(javascript|vbscript|data:(?!image\/(png|jpe?g|gif|webp)[;,]))/i;
+const ATRIBUT_URL = new Set(['href', 'src', 'action', 'formaction', 'xlink:href', 'srcdoc']);
+
 export function el(tag, props = {}, anak = []) {
   // Pemisahan selektor: nama tag diikuti token #id dan .kelas dalam urutan bebas,
   // sehingga "div.halaman#halaman" maupun "div#halaman.halaman" sama-sama sah.
@@ -58,14 +70,16 @@ export function el(tag, props = {}, anak = []) {
   const propsPolos = props === null || props === undefined
     || (typeof props === 'object' && !Array.isArray(props) && !(props instanceof Node));
   if (!propsPolos) { anak = props; props = {}; }
+  if (propsPolos && props && props[HTML] !== undefined) node.innerHTML = props[HTML];
   for (const [k, v] of Object.entries(props || {})) {
     if (v === null || v === undefined || v === false) continue;
     if (k === 'class') node.className = `${node.className} ${v}`.trim();
-    else if (k === 'html') node.innerHTML = v;
     else if (k === 'teks') node.textContent = v;
-    else if (k === 'gaya') Object.assign(node.style, v);
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === 'gaya') { if (typeof v === 'object') Object.assign(node.style, v); }
+    else if (k.startsWith('on')) { if (typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v); }
     else if (k === 'nilai') node.value = v;
+    else if (k === 'html' || k === 'innerHTML' || k === 'outerHTML') continue; // hanya lewat kunci HTML
+    else if (ATRIBUT_URL.has(k.toLowerCase()) && URL_BERBAHAYA.test(String(v))) continue;
     else if (v === true) node.setAttribute(k, '');
     else node.setAttribute(k, v);
   }

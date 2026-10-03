@@ -728,7 +728,9 @@ export function validasiTemplate(lines) {
   let k = 0;
   const bersih = lines.map((l) => {
     const baris = { coa_kode: String(l.coa_kode || '').trim(), debit: rupiah(l.debit || 0),
-      kredit: rupiah(l.kredit || 0), keterangan: l.keterangan || null };
+      kredit: rupiah(l.kredit || 0),
+      // Selalu teks: template disimpan sebagai JSON dan dirender kembali di layar.
+      keterangan: l.keterangan == null || l.keterangan === '' ? null : String(l.keterangan).slice(0, 200) };
     if (!baris.coa_kode) throw badRequest('Setiap baris template wajib memiliki akun');
     if (baris.debit < 0 || baris.kredit < 0) throw badRequest('Nilai debit/kredit tidak boleh negatif');
     if (baris.debit > 0 && baris.kredit > 0) throw badRequest(`Baris akun ${baris.coa_kode} tidak boleh berisi debit dan kredit sekaligus`);

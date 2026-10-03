@@ -493,7 +493,8 @@ function bentukKartu(k, c, doc = document) {
     buat('span', { opacity: '.75', minWidth: '92px' }, label), buat('strong', {}, String(nilai ?? '-')),
   ]);
   let foto = null;
-  if (k.foto && /^(data:image\/|https?:\/\/|\/)/.test(k.foto)) {
+  // Hanya gambar tertanam atau berkas di server ini (bukan URL luar yang dapat dipakai pelacakan).
+  if (k.foto && /^(data:image\/(png|jpe?g|webp);|\/(?!\/))/.test(k.foto)) {
     foto = doc.createElement('img');
     foto.src = k.foto;
     foto.alt = k.nama;

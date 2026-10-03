@@ -522,7 +522,13 @@ function unduh(jenis, wadah) {
     // Tabel berhalaman hanya menggambar satu halaman; ekspor memakai seluruh baris.
     const t = tampil.closest('.tabel-berhalaman')?.tabelLengkap?.() || tampil;
     t.querySelectorAll('tr').forEach((tr) => {
-      const sel = [...tr.children].map((td) => `"${td.textContent.trim().replace(/"/g, '""')}"`);
+      // Sel yang diawali = + - @ dinetralkan (diberi ') agar tidak dijalankan sebagai rumus saat dibuka
+      // di Excel; angka negatif seperti "-1.000" dibiarkan apa adanya.
+      const sel = [...tr.children].map((td) => {
+        let v = td.textContent.trim();
+        if (/^[=@\t\r]/.test(v) || /^[+-](?![\d.,\s]*$)/.test(v.replace(/^Rp\s*/, ''))) v = `'${v}`;
+        return `"${v.replace(/"/g, '""')}"`;
+      });
       if (sel.length) baris.push(sel.join(';'));
     });
     baris.push('');

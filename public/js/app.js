@@ -1,7 +1,7 @@
 /**
  * Kerangka aplikasi: autentikasi, navigasi, dan perutean tampilan.
  */
-import { api, el, kosongkan, toast, galat, memuat, modal, kolom, input, bacaForm } from './inti.js';
+import { api, el, HTML, kosongkan, toast, galat, memuat, modal, kolom, input, bacaForm } from './inti.js';
 import { MENU, TAMPILAN } from './menu.js';
 import { ikon, lambang } from './ikon.js';
 import { dataCetak, segarkanDataCetak } from './cetak.js';
@@ -83,7 +83,7 @@ function layarMasuk(pesanAwal) {
   // layar sempit (lihat app.css) sehingga formulir tidak pernah terdesak.
   const panelMerek = el('section.masuk-merek', [
     // Pola ubin dekoratif; murni hiasan sehingga disembunyikan dari pembaca layar.
-    el('div.masuk-pola', { 'aria-hidden': 'true', html: POLA_MASUK }),
+    el('div.masuk-pola', { 'aria-hidden': 'true', [HTML]: POLA_MASUK }),
     el('div.merek-atas', [
       isiTanda(el('span.tanda-masuk'), kop.logo, 26),
       el('div', { gaya: { minWidth: 0 } }, [el('div.nama', 'ECMS'), el('div.tag', kop.nama || 'Koperasi Serba Usaha')]),

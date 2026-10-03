@@ -9,7 +9,9 @@ export const MENU = [
     item: [
       { rute: '/', nama: 'Dasbor Eksekutif', ikon: 'dasbor', izin: 'dashboard.view' },
       { rute: '/bi', nama: 'Business Intelligence', ikon: 'analitik', izin: 'bi.view' },
-      { rute: '/portal', nama: 'Portal Anggota', ikon: 'ponsel', izin: 'portal.view' },
+      // Portal hanya berguna bagi akun yang tertaut data anggota; super admin
+      // (izin "*") tanpa tautan anggota tidak perlu melihat menu yang selalu ditolak.
+      { rute: '/portal', nama: 'Portal Anggota', ikon: 'ponsel', izin: 'portal.view', syarat: (u) => !!u?.anggota_id },
     ],
   },
   {

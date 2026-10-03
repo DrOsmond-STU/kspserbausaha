@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { badRequest } from './lib/http.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.ECMS_DATA_DIR || join(__dirname, '..', 'data');
@@ -67,24 +68,41 @@ export function migrate() {
 const plain = (row) => (row ? { ...row } : row);
 
 /** SELECT banyak baris. */
+/**
+ * Semua kueri memakai parameter posisional (?). node:sqlite memperlakukan
+ * objek pada posisi pertama sebagai kumpulan parameter bernama, sehingga nilai
+ * JSON berbentuk objek/larik dari klien akan menggeser seluruh pengikatan
+ * (nilai kolom tertukar, WHERE id = NULL). Nilai seperti itu ditolak di sini
+ * sekali untuk semua rute; nilai boolean disimpan sebagai 1/0.
+ */
+function ikat(params) {
+  return params.map((v) => {
+    if (typeof v === 'boolean') return v ? 1 : 0;
+    if (v !== null && typeof v === 'object' && !(v instanceof Uint8Array)) {
+      throw badRequest('Format data tidak valid: nilai harus berupa teks atau angka');
+    }
+    return v;
+  });
+}
+
 export function all(sql, params = []) {
-  return db.prepare(sql).all(...params).map(plain);
+  return db.prepare(sql).all(...ikat(params)).map(plain);
 }
 
 /** SELECT satu baris (atau undefined). */
 export function get(sql, params = []) {
-  return plain(db.prepare(sql).get(...params));
+  return plain(db.prepare(sql).get(...ikat(params)));
 }
 
 /** INSERT/UPDATE/DELETE. Mengembalikan { changes, lastInsertRowid }. */
 export function run(sql, params = []) {
-  const r = db.prepare(sql).run(...params);
+  const r = db.prepare(sql).run(...ikat(params));
   return { changes: Number(r.changes), lastInsertRowid: Number(r.lastInsertRowid) };
 }
 
 /** Nilai skalar kolom pertama baris pertama. */
 export function scalar(sql, params = [], fallback = 0) {
-  const row = db.prepare(sql).get(...params);
+  const row = db.prepare(sql).get(...ikat(params));
   if (!row) return fallback;
   const v = Object.values(row)[0];
   return v === null || v === undefined ? fallback : v;

@@ -5,7 +5,7 @@
  * Pengguna dengan admin.view dapat melihat; perubahan memerlukan admin.update.
  */
 import {
-  api, el, kosongkan, memuat, kolom, toast, galat, konfirmasi, status, tgl,
+  api, el, HTML, kosongkan, memuat, kolom, toast, galat, konfirmasi, status, tgl,
 } from '../inti.js';
 import { izin, negara, segarkanIdentitas } from '../app.js';
 import { cetakDokumen, htmlTtd, segarkanDataCetak } from '../cetak.js';
@@ -328,7 +328,7 @@ function editorTtd(j, { ubah, profil, sumber, muatUlang }) {
         nama: p.nama || (p.pengguna ? namaPengguna : '') || (p.sumber ? profil[p.sumber] || '' : '') })),
     };
     const html = htmlTtd(ttd);
-    kosongkan(pratinjau).append(html ? el('div', { html })
+    kosongkan(pratinjau).append(html ? el('div', { [HTML]: html })
       : el('div.kecil.samar.tengah', { gaya: { padding: '18px 0' } }, 'Cetakan jenis ini tidak memuat blok tanda tangan.'));
   }
 
